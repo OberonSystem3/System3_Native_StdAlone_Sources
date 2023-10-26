@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
+MODULE PCI;	(** non-portable *)	(* P. Ryser *)
 
 	IMPORT SYSTEM, Kernel;
 	
@@ -25,7 +24,7 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 		Adr3Reg* = 1CH; Adr4Reg* = 20H; Adr5Reg* = 24H;
 		CISReg* = 28H; SubvReg* = 2CH; ROMReg* = 30H; IntlReg* = 3CH;
 		
-		debug = TRUE;
+		debug = FALSE;
 		
 		Done* = 0;	NoPCI* = -1;  NoBios32* = -1;
 		
@@ -68,7 +67,7 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 		pciEntry: LONGINT;
 
 	PROCEDURE -BiosServiceDirectory(sadr, sid, fs: LONGINT; VAR badr, len, entry: LONGINT): CHAR;
-	CODE
+	CODE {SYSTEM.i386}
 		DB 55H	(* push ebp *)
 		DB 8BH, 0ECH	(* mov ebp, esp *)
 		DB 66H, 8CH, 0C8H	(* mov ax, cs *)
@@ -86,7 +85,6 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 		DB 89H, 16H	(* mov [esi], edx *)
 		DB 5DH	(*  pop ebp *)
 		DB 081H, 0C4H, 018H, 0H, 0H, 0H		(* add esp, 24 *)
-(*		DB 0C2H, 00H, 18H	(* ret 24 *) *)
 	END BiosServiceDirectory;
 
 	PROCEDURE FindBios32Service*(serviceId, serviceFkt: LONGINT; VAR serviceAdr, serviceLen, entryOffset: LONGINT): LONGINT;
@@ -111,7 +109,7 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 				chksum := 0; i := 0;
 				WHILE i < 16 DO
 					chksum := chksum + ORD(s[i]);
-					IF debug THEN Kernel.WriteInt(ORD(s[i]), 1); Kernel.WriteChar(" ") END;
+					IF FALSE & debug THEN Kernel.WriteInt(ORD(s[i]), 1); Kernel.WriteChar(" ") END;
 					INC(i)
 				END;
 				chksum := chksum MOD 256;
@@ -121,22 +119,22 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 		bios32 := chksum = 0;
 		IF bios32 THEN
 			SYSTEM.MOVE(SYSTEM.ADR(s[0]), SYSTEM.ADR(Bios32Def), 16);
-			IF debug THEN
-				Kernel.WriteString("Bios32 detected at address: "); Kernel.WriteHex(adr-16, 8); Kernel.WriteLn;
-				Kernel.WriteString("Bios32 Information:"); Kernel.WriteLn;
-				Kernel.WriteString("   Sig: ");
+			Kernel.WriteString("PCI Bios32:"); Kernel.WriteHex(adr-16, 9); Kernel.WriteLn;
+			IF FALSE THEN
+				Kernel.WriteString("  Sig: ");
 				Kernel.WriteChar(Bios32Def.sig[0]); Kernel.WriteChar(Bios32Def.sig[1]);
-				Kernel.WriteChar(Bios32Def.sig[2]); Kernel.WriteChar(Bios32Def.sig[3]); Kernel.WriteLn;
-				Kernel.WriteString("   Entry: "); Kernel.WriteHex(Bios32Def.entry, 8); Kernel.WriteLn;
-				Kernel.WriteString("   Revision: "); Kernel.WriteInt(ORD(Bios32Def.rev), 1); Kernel.WriteLn;
-				Kernel.WriteString("   Length: "); Kernel.WriteInt(ORD(Bios32Def.len)*16, 1); Kernel.WriteLn;
-				Kernel.WriteString("   Checksum: "); Kernel.WriteInt(ORD(Bios32Def.chksum), 1); Kernel.WriteLn;
-			END;
-		END;
+				Kernel.WriteChar(Bios32Def.sig[2]); Kernel.WriteChar(Bios32Def.sig[3]);
+				Kernel.WriteString(", Entry: "); Kernel.WriteHex(Bios32Def.entry, 8);
+				Kernel.WriteString(", Revision: "); Kernel.WriteInt(ORD(Bios32Def.rev), 1);
+				Kernel.WriteString(", Length: "); Kernel.WriteInt(ORD(Bios32Def.len)*16, 1);
+				Kernel.WriteString(", Checksum: "); Kernel.WriteInt(ORD(Bios32Def.chksum), 1);
+				Kernel.WriteLn
+			END
+		END
 	END DetectBios32;
 
 		PROCEDURE -pcicall(entry:LONGINT; VAR eax,ebx,ecx,edx,esi,edi:LONGINT; VAR eflags: SET);
-		CODE
+		CODE {SYSTEM.i386}
 			DB 55H				 (* push ebp *)
 			DB 8BH, 0ECH				 (* mov ebp, esp *)
 			DB 8CH, 0C8H				 (* mov eax, cs *)
@@ -174,27 +172,19 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 			DB 89H, 18H				 (* mov [eax], ebx *)
 			DB 5DH				 (* pop ebp *)
 			DB 081H, 0C4H, 020H, 0H, 0H, 0H				 (* add esp, 32 *)
-(*			DB 0C2H, 00H, 20H			(* ret 32 *) *)
 		END pcicall;
-
-(*
-	PROCEDURE ASSERT(b: BOOLEAN; nr: LONGINT);
-	BEGIN
-		IF ~b THEN HALT(100) END
-	END ASSERT;
-*)
 
 	PROCEDURE OutRegs(eax, ebx, ecx, edx, esi, edi: LONGINT; eflags: SET);
 	BEGIN
-	(*
-		Kernel.WriteString("   eax: "); Kernel.WriteHex(eax, 8); Kernel.WriteLn;
-		Kernel.WriteString("   ebx: "); Kernel.WriteHex(ebx, 8); Kernel.WriteLn;
-		Kernel.WriteString("   ecx: "); Kernel.WriteHex(ecx, 8); Kernel.WriteLn;
-		Kernel.WriteString("   edx: "); Kernel.WriteHex(edx, 8); Kernel.WriteLn;
-		Kernel.WriteString("   esi: "); Kernel.WriteHex(esi, 8); Kernel.WriteLn;
-		Kernel.WriteString("   edi: "); Kernel.WriteHex(edi, 8); Kernel.WriteLn;
-		Kernel.WriteString("   eflags: "); Kernel.WriteHex(SYSTEM.VAL(LONGINT, eflags), 8); Kernel.WriteLn
-	*)
+		IF debug THEN
+			Kernel.WriteString("   eax: "); Kernel.WriteHex(eax, 8); Kernel.WriteLn;
+			Kernel.WriteString("   ebx: "); Kernel.WriteHex(ebx, 8); Kernel.WriteLn;
+			Kernel.WriteString("   ecx: "); Kernel.WriteHex(ecx, 8); Kernel.WriteLn;
+			Kernel.WriteString("   edx: "); Kernel.WriteHex(edx, 8); Kernel.WriteLn;
+			Kernel.WriteString("   esi: "); Kernel.WriteHex(esi, 8); Kernel.WriteLn;
+			Kernel.WriteString("   edi: "); Kernel.WriteHex(edi, 8); Kernel.WriteLn;
+			Kernel.WriteString("   eflags: "); Kernel.WriteHex(SYSTEM.VAL(LONGINT, eflags), 8); Kernel.WriteLn
+		END
 	END OutRegs;
 
 	PROCEDURE PCIPresent*(VAR version, lastPCIbus, hwMech: LONGINT): LONGINT;
@@ -425,7 +415,7 @@ MODULE PCI;	(* Contributed by P. Ryser to the System 3 project *)
 		res := FindBios32Service(PCIServiceId, 0, adr, len, entry);
 		pci := res = Done;
 		IF pci THEN
-			pciEntry := adr+entry;
+			pciEntry := adr+entry
 		END
 	END DetectPCI;
 

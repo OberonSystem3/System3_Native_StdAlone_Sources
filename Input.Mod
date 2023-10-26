@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Input;	(* pjm *)
+MODULE Input;	(** portable, except where noted *)	(* pjm *)
 
 (*
 	Native Oberon Input, pjm 09.06.95
@@ -30,7 +29,7 @@ IMPORT
 	Files, Display, Kernel, V24, SYSTEM;
 
 CONST
-	TimeUnit* = 1000;	(** timer ticks per second (platform dependent). *)
+	TimeUnit* = 1000;	(** portable, but VAR on other ports *)	(** timer ticks per second (platform dependent). *)
 
 	SHIFT* = 0;  CTRL* = 1;  ALT* = 2;	(** for GetShiftState *)
 	
@@ -41,28 +40,58 @@ CONST
 	LCtrl = 5;  RCtrl = 6;  LShift = 7;  RShift = 8;  GreyEsc = 9;
 	Resetting = 10;  SetTypematic = 11;  SendingLEDs = 12;
 	DeadKey = 0;
+	
+	AUX = -1;  NONE = -2;
+	
+	Trace = FALSE;
 
-		(* mouse types: Microsoft, Mouse Systems Corp, MMseries, Logitech, Mouse Systems Corp alt, MouseMan/TrackMan, PS/2 mouse *)
-	MS = 0;  MSC = 1;  MM = 2;  Logi = 3;  MSC2 = 4;  LogiMan = 5;  PS2 = 6;
+		(* mouse types *)
+	MinType = 0;  MaxType = 9;
+	MS = 0;  MSC1 = 1;  MM = 2;  Logi = 3;  MSC2 = 4;  LogiMan = 5;  PS2 = 6;  MSI = 7;  MSC3 = 8;  MSC4 = 9;
+(* Native.Install.Text & build tool
+	0  Microsoft serial (2-button)
+	1  Mouse Systems Corp serial type a (dtr on, rts on)
+	2  Logitech serial Type a (old models)
+	3  Logitech serial Type b (old models)
+	4  Mouse Systems Corp serial type b (dtr off, rts off)
+	5  Logitech serial Type c (new models)
+	6  PS/2 mouse (default)
+	7  Microsoft serial IntelliMouse
+	8  Mouse Systems Corp serial type c (dtr off, rts on)
+	9  Mouse Systems Corp serial type d (dtr on, rts off)
+	
+	MT=PS2  PS/2 or built-in
+	MT=LM1  Logitech 1
+	MT=LM2  Logitech 2
+	MT=LM3  Logitech 3
+	MT=MS1  Mouse Systems 1
+	MT=MS2  Mouse Systems 2
+	MT=MS3  Mouse Systems 3
+	MT=MS4  Mouse Systems 4
+	MT=MSM  Microsoft (2-button)
+	MT=MSI  Microsoft IntelliMouse
+	MP=1
+	MP=2
+*)
 
 VAR
 	mouseErrors, auxoverflows: LONGINT;
 	
 		(* mouse state *)
-	maxWidth, maxHeight, mouseX, mouseY: LONGINT;
-	port, rate: INTEGER;	(* Serial mouse port, bps and report rate (if supported) *)
+	minX, minY, maxX, maxY, mouseX, mouseY: LONGINT;
+	port, oldport, newport, rate: INTEGER;	(* Serial mouse port, bps and report rate (if supported) *)
 	bps: LONGINT;
-	first, twobutton, qp: BOOLEAN;	(* flags for mouse *)
 	type: SHORTINT;	(* mouse type *)
+	buttons: SHORTINT;	(* -2, -3, 2, 3 *)
+	mapkeys: ARRAY 8 OF SET;
 	mbufp, numb: SHORTINT;	(* buffer pointer & protocol bytes *)
 	mbuf: ARRAY 5 OF SET;	(* protocol buffer *)
 	mask0, val0, mask1, val1, lastkeys: SET;	(* protocol parameters *)
 	auxbuf: ARRAY AuxSize OF CHAR;	(* aux port buffer *)
 	auxhd, auxtl: INTEGER;	(* aux buffer pointers *)
-	available: PROCEDURE(port: LONGINT): LONGINT;	(* serial or aux *)
-	read: PROCEDURE(port: LONGINT;  VAR c: SYSTEM.BYTE;  VAR res: LONGINT);	(* serial or aux *)
 	threshold: INTEGER;	(* speedup threshold *)
 	speedup: LONGINT;
+	auxinit: BOOLEAN;
 
 		(* keyboard state *)
 	buffer: ARRAY 1+BufSize OF CHAR;	(* first byte not used (security) *)
@@ -99,13 +128,13 @@ VAR
 		6	40	 >  dead key number (0-7), must match current dead key flag
 		7	80	/
 	
-	The table is scanned sequentially (speed not critical).  Ctrl/Ctrl-Alt Break & Ctrl-F10
+	The table is scanned sequentially (speed not critical).  Ctrl-Break, Ctrl-F10 and Ctrl-Alt-Del
 	are always defined and are not in the table.   The control keys are also always defined. *)
 
 (* TableUS - US keyboard translation table (dead keys: ^=1, '=2, `=3, ~=4, "=5) *)
 
 PROCEDURE TableUS(): LONGINT;
-CODE
+CODE {SYSTEM.i386}
 	CALL L1
 L1:
 	POP EAX
@@ -214,7 +243,7 @@ BEGIN
 END TableFromFile;
 
 PROCEDURE -CoreHalt(n: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	INT 3
 END CoreHalt;
 
@@ -287,12 +316,12 @@ END Translate;
 (* Wait - Wait for keyboard serial port to acknowledge byte. *)
 
 PROCEDURE Wait;
-VAR t: LONGINT; s: SET;
+VAR t: Kernel.MilliTimer; s: SET;
 BEGIN
-	t := Kernel.GetTimer();
+	Kernel.SetTimer(t, Kernel.TimeUnit DIV 50);	(* wait up to 17 ms *)
 	REPEAT
 		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s))
-	UNTIL ~(1 IN s) OR (Kernel.GetTimer() - t > 5)	(* wait up to 17 ms *)
+	UNTIL ~(1 IN s) OR Kernel.Expired(t)
 END Wait;
 
 (* SendByte - Send a byte to the keyboard. *)
@@ -333,7 +362,7 @@ END LedKey;
 (* DisableInterrupts - Disable interrupts and return original flags state *)
 
 PROCEDURE -DisableInterrupts(): SET;
-CODE
+CODE {SYSTEM.i386}
 	PUSHFD
 	POP EAX
 	CLI
@@ -342,7 +371,7 @@ END DisableInterrupts;
 (* RestoreInterrupts - Set flags state to restore interrupts to previous state *)
 
 PROCEDURE -RestoreInterrupts(state: SET);
-CODE
+CODE {SYSTEM.i386}
 	POPFD
 END RestoreInterrupts;
 
@@ -427,7 +456,7 @@ PROCEDURE -CS(): LONGINT
 *)
 
 PROCEDURE -CS(): LONGINT;
-CODE
+CODE {SYSTEM.i386}
 	XOR EAX, EAX
 	MOV AX, CS
 END CS;
@@ -487,7 +516,7 @@ BEGIN
 	IF k[i] = "." THEN table := TableFromFile(k)
 	ELSE table := TableUS()
 	END;
-		(* Get compatability option *)
+		(* Get compatibility option *)
 	Kernel.GetConfig("EscCompat", k);
 	escNeutralise := (k # "0");
 		(* install interrupt *)
@@ -504,23 +533,16 @@ BEGIN
 		EXCL(s, 7);  SYSTEM.PORTOUT(61H, SYSTEM.VAL(CHAR, s));	(* ack *)
 		DEC(i)
 	END;
-	flags := {SetTypematic, NumLock};
+	flags := {SetTypematic};
+	Kernel.GetConfig("NumLock", k);
+	IF k[0] = "1" THEN INCL(flags, NumLock) END;
 	SendByte(60H, 0F3X)	(* settypedel, will cause Ack from keyboard *)
 END InitKeyboard;
 
 (* ---- PS/2 aux port driver ---- *)
 
-PROCEDURE Detect82C710(): BOOLEAN;
-VAR b: CHAR;  i: INTEGER;
-BEGIN
-	SYSTEM.PORTOUT(2FAH, 55X);  SYSTEM.PORTOUT(3FAH, 0AAX);  SYSTEM.PORTOUT(3FAH, 36X);
-	SYSTEM.PORTOUT(3FAH, 0E4X);  SYSTEM.PORTOUT(2FAH, 1BX);
-	SYSTEM.PORTOUT(390H, 0FX);  SYSTEM.PORTIN(391H, b);
-	RETURN b = 0E4X
-END Detect82C710;
-
 PROCEDURE PollAux;
-VAR s: SET;  t: LONGINT;  i: SHORTINT;
+VAR s: SET;  t: Kernel.MilliTimer;  i: SHORTINT;
 BEGIN
 	i := 10;	(* up to 0.2s! *)
 	LOOP
@@ -528,7 +550,8 @@ BEGIN
 		IF (s * {0,1} = {}) OR (i = 0) THEN EXIT END;
 		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
 		IF s * {0,5} = {0,5} THEN SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s)) END;	(* byte avail *)
-		t := Kernel.GetTimer();  REPEAT UNTIL Kernel.GetTimer() - t > TimeUnit DIV 50;	(* 20ms *)
+		Kernel.SetTimer(t, TimeUnit DIV 50);	(* 20ms *)
+		REPEAT UNTIL Kernel.Expired(t);
 		DEC(i)
 	END
 END PollAux;
@@ -540,13 +563,14 @@ BEGIN
 END WriteDev;
 
 PROCEDURE WriteAck(b: CHAR);
-VAR s: SET;  t: LONGINT;  i: SHORTINT;
+VAR s: SET;  t: Kernel.MilliTimer;  i: SHORTINT;
 BEGIN
 	WriteDev(b);  i := 10;	(* up to 0.2s! *)
 	LOOP
 		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
 		IF (s * {0,5} = {0,5}) OR (i = 0) THEN EXIT END;
-		t := Kernel.GetTimer();  REPEAT UNTIL Kernel.GetTimer() - t > TimeUnit DIV 50;	(* 20ms *)
+		Kernel.SetTimer(t, TimeUnit DIV 50);	(* 20ms *)
+		REPEAT UNTIL Kernel.Expired(t);
 		DEC(i)
 	END;
 	IF i # 0 THEN SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s)) END	(* byte avail *)
@@ -568,132 +592,164 @@ BEGIN
 	END
 END AuxInterrupt;
 
-PROCEDURE ReadAux(port: LONGINT;  VAR c: SYSTEM.BYTE;  VAR res: LONGINT);
-VAR state: SET;
+PROCEDURE SerialRead(port: LONGINT;  VAR c: SYSTEM.BYTE);
+VAR state: SET;  res: LONGINT;
 BEGIN
-	REPEAT UNTIL auxhd # auxtl;
-	state := DisableInterrupts();
-	c := auxbuf[auxhd];  auxhd := (auxhd+1) MOD AuxSize;
-	RestoreInterrupts(state);
-	res := 0
-END ReadAux;
+	IF port = AUX THEN
+		REPEAT UNTIL auxhd # auxtl;
+		state := DisableInterrupts();
+		c := auxbuf[auxhd];  auxhd := (auxhd+1) MOD AuxSize;
+		RestoreInterrupts(state);
+		res := 0
+	ELSE
+		V24.Receive(port, c, res)
+	END
+END SerialRead;
 
-PROCEDURE AvailableAux(port: LONGINT): LONGINT;
+PROCEDURE SerialWrite(port: LONGINT;  c: SYSTEM.BYTE);
+VAR res: LONGINT;
+BEGIN
+	IF port # AUX THEN
+		V24.Send(port, c, res)
+	END
+END SerialWrite;
+
+PROCEDURE SerialAvailable(port: LONGINT): LONGINT;
 VAR n: LONGINT;  state: SET;
 BEGIN
-	state := DisableInterrupts();
-	n := auxtl-auxhd;
-	RestoreInterrupts(state);
-	IF n < 0 THEN INC(n, AuxSize) END;
+	IF port = AUX THEN
+		state := DisableInterrupts();
+		n := auxtl-auxhd;
+		RestoreInterrupts(state);
+		IF n < 0 THEN INC(n, AuxSize) END
+	ELSIF port # NONE THEN
+		n := V24.Available(port)
+	END;
 	RETURN n
-END AvailableAux;
+END SerialAvailable;
 
-PROCEDURE InitAux;
+PROCEDURE StartAux;
 VAR state: SET;
 BEGIN
-	PollAux;
-	SYSTEM.PORTOUT(64H, 0A8X);	(* enable aux *)
-	WriteAck(0F3X);  WriteAck(CHR(rate));	(* set sample rate (was 100) *)
-	WriteAck(0E8X);  WriteAck(3X);	(* 8 counts/mm *)
-	WriteAck(0E7X);	(* 2:1 scale *)
-	PollAux;
 	state := DisableInterrupts();
 	auxhd := 0;  auxtl := 0;  
 	RestoreInterrupts(state);
-	Kernel.InstallIP(AuxInterrupt, Kernel.IRQ+12);
-	WriteDev(0F4X);	(* enable aux device *)
-	WriteCmd(47X);	(* controller interrupts on *)
-	PollAux
-END InitAux;
+	IF ~auxinit THEN
+		auxinit := TRUE;
+		PollAux;
+		SYSTEM.PORTOUT(64H, 0A8X);	(* enable aux *)
+		WriteAck(0F3X);  WriteAck(CHR(rate));	(* set sample rate (was 100) *)
+		WriteAck(0E8X);  WriteAck(3X);	(* 8 counts/mm *)
+		WriteAck(0E7X);	(* 2:1 scale *)
+		PollAux;
+		Kernel.InstallIP(AuxInterrupt, Kernel.IRQ+12);
+		WriteDev(0F4X);	(* enable aux device *)
+		WriteCmd(47X);	(* controller interrupts on *)
+		PollAux
+	END
+END StartAux;
 
 (* ---- Mouse driver ---- *)
 
 (* SetSpeed - Set mouse speed *)
 
 PROCEDURE SetSpeed(old, new: LONGINT);
-VAR word, stop, par: INTEGER;  c: CHAR;  t: LONGINT;
+VAR word, stop, par: INTEGER;  c: CHAR;  res: LONGINT;  timer: Kernel.MilliTimer;
 BEGIN
-	IF type # PS2 THEN
-		IF first THEN first := FALSE ELSE V24.Stop(port) END;
+	IF port # AUX THEN
+		IF (oldport # NONE) & (oldport # AUX) THEN V24.Stop(oldport) END;
+		oldport := port;
 		CASE type OF
 			MS:  word := 7;  stop := V24.Stop1;  par := V24.ParNo |
-			MSC, MSC2:  word := 8;  stop := V24.Stop2;  par := V24.ParNo |
+			MSC1, MSC2, MSC3, MSC4:  word := 8;  stop := V24.Stop2;  par := V24.ParNo |
 			MM:  word := 8;  stop := V24.Stop1;  par := V24.ParOdd |
 			Logi:  word := 8;  stop := V24.Stop2;  par := V24.ParNo |
-			LogiMan:  word := 7;  stop := V24.Stop1;  par := V24.ParNo
+			LogiMan:  word := 7;  stop := V24.Stop1;  par := V24.ParNo |
+			MSI:  word := 7;  stop := V24.Stop1;  par := V24.ParNo
 		END;
 		IF (type = Logi) OR (type = LogiMan) THEN
-			V24.Start(port, old, word, par, stop, t);
-			IF t # 0 THEN HALT(99) END;
-			IF new = 9600 THEN c := "q"
-			ELSIF new = 4800 THEN c := "p"
-			ELSIF new = 2400 THEN c := "o"
-			ELSE c := "n"
-			END;
-			V24.Send(port, "*", t);  V24.Send(port, c, t);
-			t := Kernel.GetTimer();  REPEAT UNTIL Kernel.GetTimer() - t > TimeUnit DIV 10;
-			V24.Stop(port)
+			V24.Start(port, old, word, par, stop, res);
+			IF res = V24.Ok THEN
+				IF new = 9600 THEN c := "q"
+				ELSIF new = 4800 THEN c := "p"
+				ELSIF new = 2400 THEN c := "o"
+				ELSE c := "n"
+				END;
+				SerialWrite(port, "*");  SerialWrite(port, c);
+				Kernel.SetTimer(timer, TimeUnit DIV 10);
+				REPEAT UNTIL Kernel.Expired(timer);
+				V24.Stop(port)
+			END
 		END;
-		V24.Start(port, new, word, par, stop, t);
-		IF t # 0 THEN HALT(99) END
+		V24.Start(port, new, word, par, stop, res);
+		IF res = V24.Ok THEN
+			V24.SetMC(port, {V24.DTR, V24.RTS})
+		END
 	END
 END SetSpeed;
 
 (* InitMouse - Initialise mouse.
 	"type" - mouse type from list
-	"port" - V24.COM[12]
+	"port" - V24.COM[12], AUX
 	"bps" - V24.BPS*
 	"rate" - sample rate (not all mice support this) *)
 
 PROCEDURE InitMouse;
-VAR c: CHAR;  t, res: LONGINT;
+VAR c: CHAR;  t, res: LONGINT;  timer: Kernel.MilliTimer;
 BEGIN
-	available := V24.Available;  read := V24.Receive;
-	IF type = PS2 THEN
-		IF Detect82C710() THEN qp := TRUE END;	(* QuickPort mouse not supported *)
-		InitAux;  available := AvailableAux;  read := ReadAux
-	ELSIF type = LogiMan THEN
-		SetSpeed(1200, 1200);
-		V24.Send(port, "*", t);  V24.Send(port, "X", t);
-		SetSpeed(1200, bps)
+	port := newport;
+	mouseX := Display.Width DIV 2;  mouseY := Display.Height DIV 2;
+	mouseErrors := 0;  auxoverflows := 0;
+	IF (oldport # NONE) & (oldport # AUX) THEN V24.Stop(oldport) END;
+	oldport := NONE;
+	IF port = AUX THEN
+		StartAux;  oldport := port
 	ELSE
-		SetSpeed(9600, bps);
-		SetSpeed(4800, bps);
-		SetSpeed(2400, bps);
-		SetSpeed(1200, bps);
-		IF type = Logi THEN
-			V24.Send(port, "S", t);  type := MM;  SetSpeed(bps, bps);  type := Logi
-		END;
-			(* set sample rate *)
-		IF rate <= 0 THEN c := "O"	(* continuous - don't use *)
-		ELSIF rate <= 15 THEN c := "J"	(* 10 Hz *)
-		ELSIF rate <= 27 THEN c := "K"	(* 20 *)
-		ELSIF rate <= 42 THEN c := "L"	(* 35 *)
-		ELSIF rate <= 60 THEN c := "R"	(* 50 *)
-		ELSIF rate <= 85 THEN c := "M"	(* 70 *)
-		ELSIF rate <= 125 THEN c := "Q"	(* 100 *)
-		ELSE c := "N"	(* 150 *)
-		END;
-		V24.Send(port, c, t);
-		IF type = MSC2 THEN
-			V24.ClearMC(port, {V24.DTR, V24.RTS})
+		IF type = LogiMan THEN
+			SetSpeed(1200, 1200);
+			SerialWrite(port, "*");  SerialWrite(port, "X");
+			SetSpeed(1200, bps)
+		ELSE
+			SetSpeed(9600, bps);
+			SetSpeed(4800, bps);
+			SetSpeed(2400, bps);
+			SetSpeed(1200, bps);
+			IF type = Logi THEN
+				SerialWrite(port, "S");  type := MM;  SetSpeed(bps, bps);  type := Logi
+			END;
+				(* set sample rate *)
+			IF rate <= 0 THEN c := "O"	(* continuous - don't use *)
+			ELSIF rate <= 15 THEN c := "J"	(* 10 Hz *)
+			ELSIF rate <= 27 THEN c := "K"	(* 20 *)
+			ELSIF rate <= 42 THEN c := "L"	(* 35 *)
+			ELSIF rate <= 60 THEN c := "R"	(* 50 *)
+			ELSIF rate <= 85 THEN c := "M"	(* 70 *)
+			ELSIF rate <= 125 THEN c := "Q"	(* 100 *)
+			ELSE c := "N"	(* 150 *)
+			END;
+			SerialWrite(port, c);
+			IF type = MSC2 THEN V24.ClearMC(port, {V24.DTR, V24.RTS})
+			ELSIF type = MSC3 THEN V24.ClearMC(port, {V24.DTR})
+			ELSIF type = MSC4 THEN V24.ClearMC(port, {V24.RTS})
+			END
 		END
 	END;
 	mbufp := 0;  lastkeys := {};
 		(* protocol parameters *)
 	CASE type OF
 		MS:  numb := 3;  mask0 := {6};  val0 := {6};  mask1 := {6};  val1 := {} |
-		MSC, MSC2:  numb := 5;  mask0 := {3..7};  val0 := {7};  mask1 := {};  val1 := {} |
+		MSC1, MSC2, MSC3, MSC4:  numb := 5;  mask0 := {3..7};  val0 := {7};  mask1 := {};  val1 := {} |
 		MM:  numb := 3;  mask0 := {5..7};  val0 := {7};  mask1 := {7};  val1 := {} |
 		Logi:  numb := 3;  mask0 := {5..7};  val0 := {7};  mask1 := {7};  val1 := {} |
 		LogiMan:  numb := 3;  mask0 := {6};  val0 := {6};  mask1 := {6};  val1 := {} |
-		PS2:  numb := 3;  mask0 := {6,7};  val0 := {};  mask1 := {};  val1 := {}
+		PS2:  numb := 3;  mask0 := {6,7};  val0 := {};  mask1 := {};  val1 := {} |
+		MSI: numb := 4;  mask0 := {6};  val0 := {6};  mask1 := {6};  val1 := {}
 	END;
 		(* ignore the first few bytes from the mouse (e.g. Logitech MouseMan Sensa) *)
-	t := Kernel.GetTimer();
+	Kernel.SetTimer(timer, TimeUnit DIV 4);	(* wait 1/4s *)
 	REPEAT
-		IF available(port) > 0 THEN read(port, c, res) END
-	UNTIL Kernel.GetTimer() - t > TimeUnit DIV 2	(* wait 0.5s *)
+		IF SerialAvailable(port) > 0 THEN SerialRead(port, c) END
+	UNTIL Kernel.Expired(timer)
 END InitMouse;
 
 (* GetMouseEvent - Read a mouse event *)
@@ -701,8 +757,8 @@ END InitMouse;
 PROCEDURE GetMouseEvent(VAR keys: SET;  VAR dx, dy: INTEGER): BOOLEAN;
 VAR b: SET;  res: LONGINT;
 BEGIN
-	WHILE available(port) > 0 DO
-		b := {};  read(port, SYSTEM.VAL(CHAR, b), res);
+	WHILE SerialAvailable(port) > 0 DO
+		b := {};  SerialRead(port, SYSTEM.VAL(CHAR, b));
 			(* check for resync *)
 		IF (mbufp # 0) & (type # PS2) & ((b * mask1 # val1) OR (b = {7})) THEN mbufp := 0 END;
 		IF (mbufp = 0) & (b * mask0 # val0) THEN
@@ -725,7 +781,7 @@ BEGIN
 						IF 4 IN mbuf[0] THEN INCL(keys, 0) END;
 						dx := LONG(SYSTEM.VAL(SHORTINT, SYSTEM.LSH(mbuf[0] * {0,1}, 6) + mbuf[1] * {0..5}));
 						dy := LONG(SYSTEM.VAL(SHORTINT, SYSTEM.LSH(mbuf[0] * {2,3}, 4) + mbuf[2] * {0..5})) |
-					MSC, MSC2:
+					MSC1, MSC2, MSC3, MSC4:
 						keys := {0..2} - (mbuf[0] * {0..2});
 						dx := LONG(SYSTEM.VAL(SHORTINT, mbuf[1])) + LONG(SYSTEM.VAL(SHORTINT, mbuf[3]));
 						dy := -(LONG(SYSTEM.VAL(SHORTINT, mbuf[2])) + LONG(SYSTEM.VAL(SHORTINT, mbuf[4]))) |
@@ -743,7 +799,16 @@ BEGIN
 						dx := SYSTEM.VAL(INTEGER, mbuf[1]);
 						IF 4 IN mbuf[0] THEN DEC(dx, 256) END;
 						dy := -SYSTEM.VAL(INTEGER, mbuf[2]);
-						IF 5 IN mbuf[0] THEN INC(dy, 256) END
+						IF 5 IN mbuf[0] THEN INC(dy, 256) END |
+					MSI:
+						keys := {};
+						IF 4 IN mbuf[0] THEN INCL(keys, 0) END;
+						IF 5 IN mbuf[0] THEN INCL(keys, 2) END;
+						IF 3 IN mbuf[3] THEN INCL(keys, 3) END;
+						IF 4 IN mbuf[3] THEN INCL(keys, 1) END;
+						IF ~(3 IN mbuf[3]) & (mbuf[3] * {0..2} # {}) THEN INCL(keys, 4) END;
+						dx := LONG(SYSTEM.VAL(SHORTINT, SYSTEM.LSH(mbuf[0] * {0,1}, 6) + mbuf[1] * {0..7}));
+						dy := LONG(SYSTEM.VAL(SHORTINT, SYSTEM.LSH(mbuf[0] * {2,3}, 4) + mbuf[2] * {0..7}))
 				END; (* CASE *)
 				mbufp := 0;
 				RETURN TRUE
@@ -753,50 +818,6 @@ BEGIN
 	keys := lastkeys;  dx := 0;  dy := 0;
 	RETURN FALSE
 END GetMouseEvent;
-
-PROCEDURE ConfigMouse;
-VAR s: ARRAY 10 OF CHAR;  i: SHORTINT;
-BEGIN
-	Kernel.GetConfig("MouseType", s);
-	IF s = "" THEN type := PS2
-	ELSE
-		type := SHORT(ORD(s[0])-48);
-		IF (type < MS) OR (type > PS2) OR (s[1] # 0X) THEN HALT(99) END
-	END;
-	Kernel.GetConfig("Buttons", s);
-	twobutton := (type = MS) OR (s[0] = "2");
-	Kernel.GetConfig("MousePort", s);
-	IF (s = "") OR (s[0] = "1") THEN port := 0
-	ELSIF s[0] = "2" THEN port := 1
-	ELSE HALT(99)
-	END;
-	Kernel.GetConfig("MouseBPS", s);
-	IF (s = "") OR (s = "1200") THEN bps := 1200
-	ELSIF s = "9600" THEN bps := 9600
-	ELSE HALT(99)
-	END;
-	Kernel.GetConfig("MouseRate", s);
-	IF s = "" THEN rate := 100
-	ELSE
-		rate := 0;  i := 0;
-		WHILE s[i] # 0X DO rate := rate*10+ORD(s[i])-48; INC(i) END;
-		IF (rate <= 0) OR (rate > 150) THEN HALT(99) END
-	END;
-	Kernel.GetConfig("Threshold", s);
-	IF s = "" THEN threshold := 5
-	ELSE
-		threshold := 0;  i := 0;
-		WHILE s[i] # 0X DO threshold := threshold*10+ORD(s[i])-48; INC(i) END
-	END;
-	IF threshold <= 0 THEN threshold := 1 END;
-	Kernel.GetConfig("Speedup", s);
-	IF s = "" THEN speedup := 15
-	ELSE
-		speedup := 0;  i := 0;
-		WHILE s[i] # 0X DO speedup := speedup*10+ORD(s[i])-48; INC(i) END
-	END;
-	IF speedup <= 0 THEN speedup := 10 END
-END ConfigMouse;
 
 (* ---- Interface ---- *)
 
@@ -816,7 +837,7 @@ END Available;
 0, 1, 2 (i.e. 1 is the middle mouse button). For example, when the left and middle 
 buttons are pressed, keys will be set to {1, 2}. *)
 PROCEDURE Mouse*(VAR keys: SET; VAR x, y: INTEGER);
-VAR dx, dy: INTEGER;  ok: BOOLEAN;  state: SET;
+VAR dx, dy: INTEGER;  ok: BOOLEAN;  rawkeys, state: SET;
 BEGIN
 	IF Kernel.break THEN Kernel.break := FALSE; CoreHalt(13) END;
 	IF ScrollLock IN flags THEN
@@ -830,28 +851,40 @@ BEGIN
 		kdx := 0;  kdy := 0;
 		RestoreInterrupts(state)
 	ELSE
-		REPEAT
-			ok := GetMouseEvent(keys, dx, dy);
+		REPEAT	(* get all available mouse events, or until keys change *)
+			ok := GetMouseEvent(rawkeys, dx, dy);
 			IF (ABS(dx) > threshold) OR (ABS(dy) > threshold) THEN
 				dx := SHORT(dx*speedup DIV 10); dy := SHORT(dy*speedup DIV 10)
 			END;
-			IF twobutton THEN
-				IF (flags * {LCtrl, RCtrl} # {}) THEN INCL(keys, 1)
-				ELSE EXCL(keys, 1)
-				END
-			END;
 			INC(mouseX, LONG(dx));  INC(mouseY, LONG(dy))
-		UNTIL ~ok OR (keys # lastkeys);
-		lastkeys := keys
+		UNTIL ~ok OR (rawkeys # lastkeys);
+		IF ~(1 IN lastkeys) & (1 IN rawkeys) THEN	(* mouse generated middle button *)
+			IF buttons = -3 THEN buttons := 3 END	(* switch off emulation in this case *)
+		END;
+		lastkeys := rawkeys;	(* save last known mouse key state *)
+			(* middle button emulation *)
+		IF buttons # 3 THEN	(* -2, 2, -3 *)
+			IF buttons = 2 THEN	(* Ctrl is middle button *)
+				IF flags * {LCtrl, RCtrl} # {} THEN INCL(rawkeys, 1)
+				ELSE EXCL(rawkeys, 1)
+				END
+			ELSE	(* MM OR Ctrl is middle button *)
+				IF flags * {LCtrl, RCtrl} # {} THEN INCL(rawkeys, 1) END
+			END
+		END;
+			(* key mapping *)
+		keys := mapkeys[SYSTEM.VAL(LONGINT, rawkeys * {0,1,2})]
 	END;
-	IF mouseX < 0 THEN mouseX := 0 END;
-	IF mouseX > maxWidth THEN mouseX := maxWidth END;
-	IF mouseY < 0 THEN mouseY := 0 END;
-	IF mouseY > maxHeight THEN mouseY := maxHeight END;
+	IF mouseX < minX THEN mouseX := minX
+	ELSIF mouseX > maxX THEN mouseX := maxX
+	END;
+	IF mouseY < minY THEN mouseY := minY
+	ELSIF mouseY > maxY THEN mouseY := maxY
+	END;
 	x := SHORT(mouseX);
 	y := SHORT(mouseY);
 	y := (Display.Height - 1) - y;
-	IF (x >= Display.Width) THEN x := Display.Width - 1 END
+	IF x >= Display.Width THEN x := Display.Width - 1 END
 END Mouse;
 
 (** Read a character from the keyboard buffer. Blocks if no character is available. *)
@@ -872,12 +905,6 @@ BEGIN
 	RETURN Kernel.GetTimer()
 END  Time;
 
-(** Restricts the extent of the mouse coordinates returned by Mouse. *)
-PROCEDURE SetMouseLimits*(w, h: INTEGER);
-BEGIN
-	maxWidth := w-1;  maxHeight := h-1
-END SetMouseLimits;
-
 (** Return the state of the shift keys. *)
 PROCEDURE KeyState*(VAR keys: SET);
 BEGIN
@@ -886,6 +913,127 @@ BEGIN
 	IF flags * {LCtrl, RCtrl} # {} THEN INCL(keys, CTRL) END;
 	IF flags * {LShift, RShift} # {} THEN INCL(keys, SHIFT) END
 END KeyState;
+
+(** Restricts the extent of the mouse coordinates returned by Mouse. *)
+PROCEDURE SetMouseLimits*(x, y, w, h: INTEGER);	(** non-portable *)
+BEGIN
+	y := Display.Height-1 - y;
+	minX := x;  maxY := y;  maxX := x + w-1;  minY := y - (h-1)
+END SetMouseLimits;
+
+PROCEDURE SetMouseType(s: ARRAY OF CHAR);
+BEGIN
+	type := MinType-1;
+	IF (s[0] >= "0") & (s[0] <= "9") THEN	(* old style config *)
+		type := SHORT(ORD(s[0])-ORD("0"))
+	ELSE	(* new style config *)
+		IF s = "" THEN
+			(* default if none specified *)
+		ELSIF (CAP(s[0]) = "L") & (CAP(s[1]) = "M") THEN	(* Logitech *)
+			CASE s[2] OF
+				"1": type := LogiMan
+				|"2": type := MM
+				|"3": type := Logi
+			END
+		ELSIF (CAP(s[0]) = "M") & (CAP(s[1]) = "S") THEN	(* Mouse Systems or Microsoft *)
+			IF CAP(s[2]) = "M" THEN type := MS
+			ELSIF CAP(s[2]) = "I" THEN type := MSI
+			ELSE
+				CASE s[2] OF
+					"1": type := MSC1
+					|"2": type := MSC2
+					|"3": type := MSC3
+					|"4": type := MSC4
+				END
+			END
+		ELSIF CAP(s[0]) = "P" THEN	(* PS/2 *)
+			type := PS2
+		END
+	END;
+	IF (type < MinType) OR (type > MaxType) THEN type := PS2 END;	(* unknown mouse type *)
+	IF type = PS2 THEN newport := AUX END;
+	IF Trace THEN
+		Kernel.WriteString("MouseType=");  Kernel.WriteInt(type, 1);
+		Kernel.WriteChar(" ");  Kernel.WriteInt(newport, 1);
+		Kernel.WriteLn
+	END;
+	InitMouse
+END SetMouseType;
+
+(** Configure input device parameters.  Normally only used by installation program. *)
+PROCEDURE Configure*(config, value: ARRAY OF CHAR);	(** non-portable *)
+VAR i: SHORTINT;  mk: ARRAY 3 OF LONGINT;
+BEGIN
+	IF Trace THEN
+		Kernel.WriteString("Input: ");  Kernel.WriteString(config);  Kernel.WriteChar("=");
+		Kernel.WriteString(value);  Kernel.WriteLn
+	END;
+	IF config = "MT" THEN	(* mouse type *)
+		SetMouseType(value)
+	ELSIF config = "MP" THEN	(* mouse port *)
+		IF (value[0] >= "1") & (value[0] <= "4") THEN
+			newport := V24.COM1 + (ORD(value[0])-ORD("1"))
+		ELSE
+			newport := V24.COM1
+		END
+	ELSIF config = "MB" THEN	(* mouse buttons *)
+		IF value = "2" THEN buttons := 2
+		ELSIF value = "3" THEN buttons := 3
+		ELSIF value = "-2" THEN buttons := -2
+		ELSE buttons := -3	(* default MM and Ctrl *)
+		END
+	ELSIF config = "MM" THEN	(* mouse key remapping *)
+		mk[0] := 0;  mk[1] := 1;  mk[2] := 2;
+		IF value[0] # 0X THEN
+			mk[0] := ORD(value[0])-48;
+			IF value[1] # 0X THEN
+				mk[1] := ORD(value[1])-48;
+				IF value[2] # 0X THEN
+					mk[2] := ORD(value[2])-48
+				END
+			END
+		END;
+		FOR i := 0 TO 7 DO
+			mapkeys[i] := {};
+			IF 0 IN SYSTEM.VAL(SET, i) THEN INCL(mapkeys[i], mk[0]) END;
+			IF 1 IN SYSTEM.VAL(SET, i) THEN INCL(mapkeys[i], mk[1]) END;
+			IF 2 IN SYSTEM.VAL(SET, i) THEN INCL(mapkeys[i], mk[2]) END
+		END
+	ELSE
+		IF Trace THEN Kernel.WriteString("Unknown setting");  Kernel.WriteLn END
+	END
+END Configure;
+
+PROCEDURE Setting(name: ARRAY OF CHAR);
+VAR s: ARRAY 16 OF CHAR;
+BEGIN
+	Kernel.GetConfig(name, s);  Configure(name, s)
+END Setting;
+
+PROCEDURE ConfigMouse;
+VAR s: ARRAY 16 OF CHAR;  i: SHORTINT;
+BEGIN
+		(* boot-time settings *)
+	Kernel.GetConfig("MouseBPS", s);
+	IF s = "9600" THEN bps := 9600 ELSE bps := 1200 END;
+		(* rate *)
+	Kernel.GetConfig("MouseRate", s);
+	rate := 0;  i := 0;
+	WHILE s[i] # 0X DO rate := rate*10+ORD(s[i])-48; INC(i) END;
+	IF (rate <= 0) OR (rate > 150) THEN rate := 100 END;
+		(* threshold *)
+	Kernel.GetConfig("Threshold", s);
+	threshold := 0;  i := 0;
+	WHILE s[i] # 0X DO threshold := threshold*10+ORD(s[i])-48; INC(i) END;
+	IF threshold <= 0 THEN threshold := 5 END;
+		(* speedup *)
+	Kernel.GetConfig("Speedup", s);
+	speedup := 0;  i := 0;
+	WHILE s[i] # 0X DO speedup := speedup*10+ORD(s[i])-48; INC(i) END;
+	IF speedup <= 0 THEN speedup := 15 END;
+	Setting("MP");  Setting("MB");  Setting("MM");
+	Setting("MT")	(* also calls InitMouse *)
+END ConfigMouse;
 
 PROCEDURE *UnsafeBreak;
 VAR note1, note2, note3: ARRAY 32 OF CHAR;
@@ -919,9 +1067,9 @@ BEGIN
 	breakproc := UnsafeBreak;
 	InitKeyboard;
 		(* initialise mouse state *)
-	maxWidth := Display.Width-1;  maxHeight := Display.Height-1;  auxoverflows := 0;
-	mouseX := 0;  mouseY := 0;  first := TRUE;  mouseErrors := 0;
-	ConfigMouse;  InitMouse
+	SetMouseLimits(0, 0, Display.Width, Display.Height);
+	oldport := NONE;  auxinit := FALSE;
+	ConfigMouse
 END Input.
 
 (** Remarks:
@@ -938,7 +1086,15 @@ Some other important codes are:
 	DOWN ARROW	0C2X
 	LEFT ARROW	0C4X
 	INSERT	0A0X
+	DELETE	0A1X
+	PAGE-UP	0A2X
+	PAGE-DOWN	0A3X
+	ä, Ä	131, 128
+	ö, Ö	132, 129
+	ü, Ü	133, 130
+	ß	150
 
-2. On some platforms, SetMouseLimits may not influence the physical movement 
-of the mouse cursor itself, only the magnitude of the coordinates returned by Mouse.
+The module EditKeys allows you to determine the keyboard code of any key pressed. 
+For cross-platform portability, Oberon does not normally support all keys available 
+on your keyboard.
 *)

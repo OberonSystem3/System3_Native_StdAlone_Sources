@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,14 +13,13 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Oberon; (*JG 22.7.94*)
+MODULE Oberon;	(** portable, except where noted *) (*JG 22.7.94*)
 
 (** Oberon system manager for dispatch of keyboard and mouse input, 
 scheduling of tasks, cursor handling and command execution.
 *)
 
-  IMPORT
-  	Kernel, Modules, Display, Input, Objects, Viewers, Fonts, Texts, Files;
+  IMPORT Kernel, Modules, Display, Input, Objects, Viewers, Fonts, Texts, Files;
 
   CONST
 
@@ -123,7 +121,7 @@ scheduling of tasks, cursor handling and command execution.
 	OpenText*: PROCEDURE (title: ARRAY OF CHAR; T: Texts.Text; W, H: INTEGER);
 
     CurTask: Task;
-	NextTask*: Task;	(** for internal use. *)
+	NextTask*: Task;	(** non-portable, for internal use. *)
 
     DW, DH, CL, W0, H0, H1, H2, H3: INTEGER;
 
@@ -135,10 +133,10 @@ scheduling of tasks, cursor handling and command execution.
 
 	conftext: Texts.Text;
 	conftime, confdate: LONGINT;
-
+	
   (*clocks*)
 
-(** Get time (t) and date (d).  day = d MOD 32, month = d DIV 32 MOD 16, year = d DIV 512 MOD 128,
+(** Get time (t) and date (d).  day = d MOD 32, month = d DIV 32 MOD 16, year = 1900+d DIV 512,
 	hour = t DIV 4096 MOD 32, minute = t DIV 64 MOD 64, second = t MOD 64 *)
      PROCEDURE GetClock* (VAR t, d: LONGINT);
      BEGIN Kernel.GetClock(t, d)
@@ -161,7 +159,7 @@ scheduling of tasks, cursor handling and command execution.
   	BEGIN
 		Display.GetClip(cx, cy, cw, ch);
 		Display.SetClip(0, 0, Display.Width, Display.Height);
-		Display.CopyPattern(Display.FG, Display.arrow, X, Y - 15, 2);
+		Display.CopyPattern(Display.FG, Display.arrow, X, Y - 14, 2);
 		Display.SetClip(cx, cy, cw, ch)
   	END FlipArrow;
 
@@ -262,10 +260,10 @@ This is required before drawing inside the area X, Y, W, H. *)
 and height H. The display is appended to the display space starting at X position 
 Viewers.curW. Normally this procedure is only called once to configure the 
 default layout of the Oberon screen. *) 
-    PROCEDURE OpenDisplay* (UW, SW, H: INTEGER);
+    PROCEDURE OpenDisplay* (UW, SW, H: INTEGER);	(** non-portable *)
        VAR Filler: Viewers.Viewer;
     BEGIN
-       Input.SetMouseLimits(Viewers.curW + UW + SW, H);
+       Input.SetMouseLimits(0, 0, Viewers.curW + UW + SW, H);
        Display.ReplConst(FillerColor, Viewers.curW, 0, UW + SW, H, 0);
        NEW(Filler); Filler.handle := HandleFiller;
        Viewers.InitTrack(UW, H, Filler); (*init user track*)
@@ -409,7 +407,11 @@ Modules.resMsg contains an explanation of what went wrong when res # 0. *)
         name[j - i] := 0X;
         P := Modules.ThisCommand(Mod, name);
         IF Modules.res = 0 THEN
-          Par := par; Par.vwr := Viewers.This(par.frame.X, par.frame.Y); P; res := 0;
+          Par := par;
+          IF par.frame # NIL THEN
+          	Par.vwr := Viewers.This(par.frame.X, par.frame.Y)
+          END;
+          P; res := 0;
         ELSE res := Modules.res
         END
       ELSE res := Modules.res
@@ -426,11 +428,7 @@ Time indicates the time of selection; time < 0 indicate that no text is currentl
     END GetSelection;
 
     PROCEDURE *GC (me: Task);
-      VAR T: LONGINT;
-    BEGIN T := Input.Time();
-      IF  T <= MAX(LONGINT) - GCInterval THEN GCTask.time := T + GCInterval
-        ELSE GCTask.time := 0
-      END;
+    BEGIN GCTask.time := Input.Time() + GCInterval;
       Kernel.GC
     END GC;
 
@@ -453,12 +451,9 @@ by calling its handler when the system has nothing else to do. *)
       END
     END Remove;
 
-(** Request a garbage collection to be done. The GC will take place at 
-the earliest possible opportunity, typically when all background tasks 
-have been serviced.  *)
+(** Request a garbage collection to be done. The GC will take place immediately. *)
     PROCEDURE Collect*;
-    BEGIN Kernel.GC;
-      GCTask.time := Input.Time()
+    BEGIN Kernel.GC	(* independent of GC task *)
     END Collect;
 
 (** Set the default font used when typing characters. *)
@@ -480,7 +475,8 @@ have been serviced.  *)
     Group = { Entry }.
     Entry = [ Name "=" ] Value.
     Value = Token | "{" Group "}".
-    Token = any token from Texts.Scanner, where "{" and "}" must occur pairwise. *)
+    Token = any token from Texts.Scanner, where "{" and "}" must occur pairwise. 
+    A named group is refered to as a "section". *)
 
   PROCEDURE SkipGroup (VAR S: Texts.Scanner);
     VAR openBraces: INTEGER;
@@ -539,6 +535,15 @@ have been serviced.  *)
     IF ~done OR (conftext.len = 0) THEN S.class := Texts.Inval END
   END OpenScanner;
 
+    PROCEDURE UpdateDisplay;
+    VAR dcm: Display.ControlMsg;  cm: ControlMsg;
+    BEGIN
+    	cm.F := NIL;  cm.id := neutralize;  Display.Broadcast(cm);
+    	FadeCursor(Mouse);  FadeCursor(Pointer);
+    	dcm.F := NIL;  dcm.id := Display.suspend;  Display.Broadcast(dcm);
+    	dcm.F := NIL;  dcm.id := Display.restore;  Display.Broadcast(dcm)
+    END UpdateDisplay;
+    
 	PROCEDURE ResetPalette;
 	VAR F: Files.File; R: Files.Rider; i, cols: INTEGER; r, g, b: CHAR;
 	BEGIN
@@ -550,8 +555,12 @@ have been serviced.  *)
 				Files.Read(R, r); Files.Read(R, g); Files.Read(R, b);
 				Display.SetColor(i, ORD(r), ORD(g), ORD(b))
 			END
+		ELSE
+			FOR i := 0 TO cols-1 DO Display.SetColor(i, 255, 255, 255) END;
+			Display.SetColor(Display.FG, 0, 0, 0)
 		END;
-		ScreenOn := TRUE
+		ScreenOn := TRUE;
+		IF Display.TrueColor(0) THEN UpdateDisplay END
 	END ResetPalette;
 
     PROCEDURE ToggleScreen;
@@ -571,17 +580,9 @@ have been serviced.  *)
    			Display.SetColor(i, r, g, b)
     		END
  	   END;
- 	   ScreenOn := ~ScreenOn
+ 	   ScreenOn := ~ScreenOn;
+		IF Display.TrueColor(0) THEN UpdateDisplay END
     END ToggleScreen;
-    
-    PROCEDURE UpdateDisplay;
-    VAR dcm: Display.ControlMsg;  cm: ControlMsg;
-    BEGIN
-    	cm.F := NIL;  cm.id := neutralize;  Display.Broadcast(cm);
-    	FadeCursor(Mouse);  FadeCursor(Pointer);
-    	dcm.F := NIL;  dcm.id := Display.suspend;  Display.Broadcast(dcm);
-    	dcm.F := NIL;  dcm.id := Display.restore;  Display.Broadcast(dcm)
-    END UpdateDisplay;
     
 (** Main Oberon task dispatcher. Reads the mouse position and characters 
 typed, informing the viewer of the display space of events using the 
@@ -620,7 +621,7 @@ the garbage collector, if no mouse or keyboard events are arriving. *)
             M.res := minint; Objects.Stamp(M);
             V := Viewers.This(M.X, M.Y); V.handle(V, M);
             Input.Mouse(keys, X, Y)
-          UNTIL keys = {};
+          UNTIL (keys = {}) OR (Input.Available() # 0);
           DEC(GCTask.time, ActVal)
         ELSE (*keys = {}*)
           M.F := NIL; M.id := track; M.keys := keys; M.X := X; M.Y := Y; 
@@ -629,10 +630,10 @@ the garbage collector, if no mouse or keyboard events are arriving. *)
           V := Viewers.This(X, Y); V.handle(V, M);
           Input.Mouse(keys, X, Y);
           IF (keys = {}) & (X = M.X) & (Y = M.Y) & (Input.Available() = 0) THEN
+            Kernel.Idle(0);
             CurTask := NextTask; NextTask := CurTask.next;
-            IF CurTask.time <= Input.Time() THEN
-              CurTask.handle(CurTask); CurTask := NIL
-            END;
+            IF CurTask.time - Input.Time() <= 0 THEN CurTask.handle(CurTask) END;
+            CurTask := NIL;
             Input.Mouse(keys, X, Y)
           END
         END
@@ -668,6 +669,7 @@ BEGIN
   H1 := DH DIV 5;
   H0 := DH DIV 10;
 
+  ScreenOn := TRUE; ResetPalette;
   W0 := DW DIV 8 * 5;
   OpenDisplay(W0, DW - W0, DH);
   Display.SetMode(0, {});
@@ -683,7 +685,6 @@ BEGIN
   CurCol := Display.FG;
   CurOff := 0;
 
-  ScreenOn := TRUE; ResetPalette;
   conftime := -1; confdate := -1; NEW(conftext);
   
   LoadSystem
@@ -699,7 +700,7 @@ Oberon.Par is a pointer to a parameter record specifying a parameter text, a
 position in that text, and details what objects are involved in the commands. 
 The vwr field of the ParRec points to the viewer in which the command was executed. 
 The frame field of the ParRec points to the direct child of the vwr (the menu or the 
-main frame) from which the command was executed. This semantic is compatible 
+main frame) from which the command was executed. This semantics is compatible 
 with older Oberon applications and is seldomly used today. The obj field of the 
 ParRec points to the object (normally a frame) that executed the command. 
 The Oberon.Par pointer is initialized before command execution to the parameter 

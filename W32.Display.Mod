@@ -14,12 +14,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Display;	
-(* Name: Module SDisplay.Mod	*)
-(* Type: ET4000W32					*)
-(* Date: 24.11.93							*)
-(* Author: ARD							*)
-(* pjm 08.02.96, ported to Native Oberon 2.05 *)
+MODULE Display;	(* ET4000W32 ARD/pjm *)
 
 	IMPORT Kernel, SYSTEM, Objects;
 	
@@ -35,6 +30,8 @@ MODULE Display;
 		get* = 0; set* = 1; reset* = 2; (*SelectMsg id*)
 		drop* = 0; integrate* = 1; (*ConsumeMsg id*)
 		
+		unknown* = 0; index8* = 8; color555* = 16; color565* = 17; color664* = 18; color888* = 24; color8888* = 32;
+	
 		(* ACL Registers, queued *)
 		PatAdr = 80H;
 		SrcAdr = 84H;
@@ -66,8 +63,12 @@ MODULE Display;
 		Base = 0BFF00H;
 		MMU = 0B8000H;
 		
-	TYPE Pattern* = LONGINT;
-			PatternPtr = POINTER TO RECORD w, h, pixmap: SHORTINT END;
+	TYPE Color* = LONGINT;
+			Pattern* = LONGINT;
+			PatternPtr = POINTER TO RECORD
+				w, h: CHAR;
+				pixmap: ARRAY 8192 OF CHAR
+			END;
 			List = POINTER TO ListDesc;
 			ListDesc = RECORD
 				next: List;
@@ -128,22 +129,24 @@ MODULE Display;
 		Bottom*, (* bottom of primary map *)
 		UBottom*, (* bottom of secondary map *)
 		Width*, (* map width *)
-		Height*: (* map hight*)
-			INTEGER;
+		Height*: INTEGER; (* map hight*)
 			
-		arrow*, star*, cross*, downArrow*, hook*: Pattern;
+		arrow*, star*, cross*, downArrow*, hook*,
 		grey0*, grey1*, grey2*, ticks*, solid*: Pattern;
 
 		Broadcast*: MsgProc;
 
 		dmem, lasty: LONGINT;
 		
-		Pat: List;
+		pattern: List;
 
-		clipx, clipy, clipright, cliptop, height, width: INTEGER;	(* clipping variables *)
+		palette: ARRAY 256 OF LONGINT;
 		
-	PROCEDURE max (i, j: INTEGER): INTEGER; BEGIN IF i >= j THEN RETURN i ELSE RETURN j END END max;
-	PROCEDURE min (i, j: INTEGER): INTEGER; BEGIN  IF i >= j THEN RETURN j ELSE RETURN i END END min;
+		clipx, clipy, clipright, cliptop, height, width: LONGINT;	(* clipping variables *)
+		depth: INTEGER;
+
+	PROCEDURE max (i, j: LONGINT): LONGINT; BEGIN IF i >= j THEN RETURN i ELSE RETURN j END END max;
+	PROCEDURE min (i, j: LONGINT): LONGINT; BEGIN  IF i >= j THEN RETURN j ELSE RETURN i END END min;
 	
 	PROCEDURE Wait;
 	VAR i: SHORTINT;
@@ -151,20 +154,20 @@ MODULE Display;
 		REPEAT SYSTEM.GET(Base+AccStat, i) UNTIL ~ODD(i) & ~ODD(i DIV 2);
 	END Wait;
 	
-	PROCEDURE Map*(X: INTEGER): LONGINT;
+	PROCEDURE Map*(x: LONGINT): LONGINT;
 	BEGIN RETURN 0A0000H
 	END Map;
 	
-	PROCEDURE AdjustClip*(X, Y, W, H: INTEGER);
-	VAR right, top: INTEGER;
+	PROCEDURE AdjustClip*(x, y, w, h: LONGINT);
+	VAR right, top: LONGINT;
 	BEGIN 
-		right := X + W; top := Y + H; clipx := max(clipx, X); clipy := max(clipy, Y); 
-		clipright := min(right, clipright); cliptop := min(top, cliptop);
+		right := x + w; top := y + h; clipx := max(clipx, x); clipy := max(clipy, y); 
+		clipright := min(right, clipright); cliptop := min(top, cliptop)
 	END AdjustClip;
 
 	PROCEDURE GetDim*(pat: Pattern; VAR w, h: INTEGER);
-	VAR s: SHORTINT;
-	BEGIN SYSTEM.GET(pat, s); w := s; SYSTEM.GET(pat+1, s); h := s; 
+	VAR s: CHAR;
+	BEGIN SYSTEM.GET(pat, s); w := ORD(s); SYSTEM.GET(pat+1, s); h := ORD(s)
 	END GetDim;
 
 	PROCEDURE ResetClip*;
@@ -174,7 +177,7 @@ MODULE Display;
 		cliptop := height
 	END ResetClip;
 	
-	PROCEDURE SetClip*(x, y, w, h: INTEGER);
+	PROCEDURE SetClip*(x, y, w, h: LONGINT);
 	BEGIN  
 		clipright := x+w;
 		cliptop := y+h;
@@ -183,237 +186,186 @@ MODULE Display;
 	
 	PROCEDURE GetClip*(VAR x, y, w, h: INTEGER);
 	BEGIN 
-		x := clipx; y := clipy; w := clipright - clipx; h := cliptop - clipy
+		x := SHORT(clipx); y := SHORT(clipy); w := SHORT(clipright - clipx); h := SHORT(cliptop - clipy)
 	END GetClip;
 
-	PROCEDURE SetColor*(col, red, green, blue: INTEGER);	(* 0 <= col, red, green, blue < 256 *)
-	CODE
-		CMP col[EBP], 0
-		JNE setcol
-		
-		MOV AX, red[EBP]
-		OR AX, green[EBP]
-		OR AX, blue[EBP]
-		JZ setover
-		MOV AH, 15
-setover:
-		MOV DX, 3DAH
-		IN AL,DX
-		MOV DX, 3C0H
-		MOV AL, 11H
-		OUT DX, AL
-		MOV AL, AH
-		OUT DX, AL
-		MOV AL, 20H
-		OUT DX,AL
-		
-setcol:
-		MOV AX, col[EBP]
-		MOV DX, 3C8H
-		OUT DX, AL
-		INC DX	; DX = 3C9H
-
-		MOV AX,red[EBP]
-		ADD AX,4
-		SHR AX,2
-		DEC AX
-		OUT DX,AL	; (red + 4) DIV 4 - 1
-		
-		MOV AX,green[EBP]
-		ADD AX,4
-		SHR AX,2
-		DEC AX
-		OUT DX,AL	; (green + 4) DIV 4 - 1
-
-		MOV AX,blue[EBP]
-		ADD AX,4
-		SHR AX,2
-		DEC AX
-		OUT DX,AL	; (blue + 4) DIV 4 - 1
+	PROCEDURE SetColor*(col: Color; red, green, blue: LONGINT);	(* 0 <= col, red, green, blue < 256 *)
+	VAR ch: CHAR;
+	BEGIN
+		palette[col] := ASH(ASH(red, 8) + green, 8) + blue;
+		IF (col = 0) OR (col = 15) THEN	(* either 0 or 15 must be black.  set the border to black. *)
+				(* note: use the palette for the border colour too *)
+			SYSTEM.PORTIN(3DAH, ch);
+			SYSTEM.PORTOUT(3C0H, 11X);
+			IF (red = 0) & (green = 0) & (blue = 0) THEN SYSTEM.PORTOUT(3C0H, CHR(col))
+			ELSE SYSTEM.PORTOUT(3C0H, CHR(15-col))
+			END;
+			SYSTEM.PORTOUT(3C0H, 20X)
+		END;
+		SYSTEM.PORTOUT(3C8H, CHR(col));
+		SYSTEM.PORTOUT(3C9H, CHR(red DIV 4));
+		SYSTEM.PORTOUT(3C9H, CHR(green DIV 4));
+		SYSTEM.PORTOUT(3C9H, CHR(blue DIV 4))
 	END SetColor;
 
-	PROCEDURE GetColor*(col: INTEGER; VAR red, green, blue: INTEGER);
-	CODE
-		MOV AX, col[EBP]
-		MOV DX, 3C7H
-		OUT DX, AL
-		INC DX
-		INC DX	; DX = 3C9H
-
-		XOR AH, AH
-		IN AL, DX
-		MOV BX,AX
-		SHL BX,2
-		SHR AX,4
-		ADD AX,BX
-		MOV EBX, red[EBP]
-		MOV [EBX], AX
-
-		XOR AH, AH
-		IN AL, DX
-		MOV BX,AX
-		SHL BX,2
-		SHR AX,4
-		ADD AX,BX
-		MOV EBX, green[EBP]
-		MOV [EBX], AX
-
-		XOR AH, AH
-		IN AL, DX
-		MOV BX,AX
-		SHL BX,2
-		SHR AX,4
-		ADD AX,BX
-		MOV EBX, blue[EBP]
-		MOV [EBX], AX
+	PROCEDURE GetColor*(col: Color; VAR red, green, blue: INTEGER);
+	BEGIN
+		IF col >= 0 THEN col := palette[col] END;
+		red := SHORT(ASH(col, -16) MOD 256);
+		green := SHORT(ASH(col, -8) MOD 256);
+		blue := SHORT(col MOD 256)
 	 END GetColor;
 	
-	PROCEDURE Dot*(col, x, y, mode: INTEGER);
+	PROCEDURE RGB*(red, green, blue: LONGINT): Color;
+	BEGIN
+		RETURN MIN(LONGINT) + ASH(red, 16) + ASH(green, 8) + blue
+	END RGB;
+
+	PROCEDURE Dot*(col: Color; x, y, mode: LONGINT);
 	VAR dest: LONGINT;
 	BEGIN
-		IF (y < clipy) OR (y >= cliptop) THEN RETURN END;
-		IF (x < clipx) OR (x >=  clipright) THEN RETURN END;
-		dest := (LONG(Height)-1 - y) * Width + x;
-		IF mode = invert THEN SYSTEM.PUT(Base+FgRop, 066X) ELSE SYSTEM.PUT(Base+FgRop, 0CCX) END;
-		Wait;
-		SYSTEM.PUT(Base+XCnt, LONG(0));
-		SYSTEM.PUT(Base+YCnt, LONG(0));
-		SYSTEM.PUT(Base+RoutCtrl, 1X);
-		SYSTEM.PUT(Base, dest);
-		SYSTEM.PUT(MMU, LONG(col));
+		IF (y >= clipy) & (y < cliptop) & (x >= clipx) & (x < clipright) THEN
+			dest := (LONG(Height)-1 - y) * Width + x;
+			IF mode = invert THEN SYSTEM.PUT(Base+FgRop, 066X) ELSE SYSTEM.PUT(Base+FgRop, 0CCX) END;
+			Wait;
+			SYSTEM.PUT(Base+XCnt, LONG(0));
+			SYSTEM.PUT(Base+YCnt, LONG(0));
+			SYSTEM.PUT(Base+RoutCtrl, 1X);
+			SYSTEM.PUT(Base, dest);
+			SYSTEM.PUT(MMU, col)
+		END
 	END Dot;
 
-	PROCEDURE CopyBlock*(SX, SY, W, H, DX, DY, mode: INTEGER);
-	VAR src, dst: LONGINT; 
-			top, right, dX, dY: INTEGER;
+	PROCEDURE CopyBlock*(sx, sy, w, h, dx, dy, mode: LONGINT);
+	VAR src, dst, top, right, dX, dY: LONGINT;
 	BEGIN
-		right := DX + W; top := DY + H; dX := DX; dY := DY;
-		IF DX < clipx THEN W := W - (clipx - DX); DX := clipx END; 
-		IF DY < clipy THEN H := H - (clipy - DY); DY := clipy END;
-		IF  clipright < right THEN  W :=  clipright - DX END; 
-		IF cliptop  < top THEN H := cliptop - DY END;
-		IF (W <= 0) OR (H <= 0) THEN RETURN END;
-		SX := SX - (dX - DX);
-		SY := SY - (dY - DY);
-		src := (LONG(Height) - SY - H) * Width + SX;
-		dst := (LONG(Height) - DY - H) * Width + DX;
-		IF src = dst THEN RETURN END;
-
-		Wait;
-		SYSTEM.PUT(Base+XCnt, LONG(0));
-		SYSTEM.PUT(Base+YCnt, LONG(0));
-		SYSTEM.PUT(Base+RoutCtrl, 0X);
-		SYSTEM.PUT(Base+XYDir, 0X);
-		SYSTEM.PUT(Base+FgRop, 0AAX);
-		SYSTEM.PUT(Base+SrcAdr, dst);
-		SYSTEM.PUT(Base+DestAdr, dst);
-		SYSTEM.PUT(Base+OpState, 9X);
-
-		Wait;
-		SYSTEM.PUT(Base+XCnt, W-1);
-		SYSTEM.PUT(Base+YCnt, H-1);
-		IF dst > src THEN
-			src := src + W-1 + Width * (LONG(H)-1); 
-			dst := dst + W-1 + Width * (LONG(H)-1);
-			SYSTEM.PUT(Base+XYDir, 3X);
-		ELSE SYSTEM.PUT(Base+XYDir, 0X) END;
-		SYSTEM.PUT(Base+FgRop, 0CCX);
-		SYSTEM.PUT(Base+RoutCtrl, 0X);
-		SYSTEM.PUT(Base+DestAdr, dst);
-		SYSTEM.PUT(Base+SrcAdr, src);
-		SYSTEM.PUT(Base+OpState, 9X);
-		SYSTEM.PUT(Base+XYDir, 0X);
+		right := dx + w; top := dy + h; dX := dx; dY := dy;
+		IF dx < clipx THEN w := w - (clipx - dx); dx := clipx END; 
+		IF dy < clipy THEN h := h - (clipy - dy); dy := clipy END;
+		IF clipright < right THEN  w :=  clipright - dx END; 
+		IF cliptop  < top THEN h := cliptop - dy END;
+		IF (w > 0) & (h > 0) THEN
+			sx := sx - (dX - dx);
+			sy := sy - (dY - dy);
+			src := (LONG(Height) - sy - h) * Width + sx;
+			dst := (LONG(Height) - dy - h) * Width + dx;
+			IF src # dst THEN
+				Wait;
+				SYSTEM.PUT(Base+XCnt, LONG(0));
+				SYSTEM.PUT(Base+YCnt, LONG(0));
+				SYSTEM.PUT(Base+RoutCtrl, 0X);
+				SYSTEM.PUT(Base+XYDir, 0X);
+				SYSTEM.PUT(Base+FgRop, 0AAX);
+				SYSTEM.PUT(Base+SrcAdr, dst);
+				SYSTEM.PUT(Base+DestAdr, dst);
+				SYSTEM.PUT(Base+OpState, 9X);
+				Wait;
+				SYSTEM.PUT(Base+XCnt, SHORT(w-1));
+				SYSTEM.PUT(Base+YCnt, SHORT(h-1));
+				IF dst > src THEN
+					src := src + w-1 + Width * (h-1); 
+					dst := dst + w-1 + Width * (h-1);
+					SYSTEM.PUT(Base+XYDir, 3X)
+				ELSE
+					SYSTEM.PUT(Base+XYDir, 0X)
+				END;
+				SYSTEM.PUT(Base+FgRop, 0CCX);
+				SYSTEM.PUT(Base+RoutCtrl, 0X);
+				SYSTEM.PUT(Base+DestAdr, dst);
+				SYSTEM.PUT(Base+SrcAdr, src);
+				SYSTEM.PUT(Base+OpState, 9X);
+				SYSTEM.PUT(Base+XYDir, 0X)
+			END
+		END
 	END CopyBlock;
 
-	PROCEDURE SetMode*(X: INTEGER; s: SET);
-	BEGIN END SetMode;
+	PROCEDURE SetMode*(x: LONGINT; s: SET);
+	BEGIN
+	END SetMode;
 	
-	PROCEDURE CopyPatternAsm(cpX, cpY, cpW, cpH: INTEGER;  pat: LONGINT;  VAR buf: ARRAY OF INTEGER);
-	VAR cpw, cpsw, cph: SHORTINT;
-	CODE
-		MOV BX,cpW[EBP]
-		ADD   BX,7
-		SHR   BX,3
-		MOV   cpw[EBP],BL	; cpw := cpW DIV 8
-		MOV   ESI,pat[EBP]
-		XOR   EAX,EAX
-		MOV   AL,[ESI]
-		ADD   AX,7
-		SHR   AX,3
-		MOV   cpsw[EBP],AL	; cpsw := p.w DIV 8
+	PROCEDURE CopyPatternAsm(cpX, cpY, cpW, cpH, pat: LONGINT;  VAR buf: ARRAY OF INTEGER);
+	VAR cpw, cpsw, cph: LONGINT;
+	CODE {SYSTEM.i386}
+		MOV EBX,cpW[EBP]
+		ADD EBX,7
+		SHR EBX,3
+		MOV cpw[EBP],EBX	; cpw := cpW DIV 8
+		MOV ESI,pat[EBP]
+		XOR EAX,EAX
+		MOV AL,[ESI]
+		ADD EAX,7
+		SHR EAX,3
+		MOV cpsw[EBP],EAX	; cpsw := p.w DIV 8
 		MOV EDI,buf[EBP]
-		MOV   AX,cpW[EBP]
-		MOV   [EDI],AL	; new p.w
-		INC   EDI
-		MOV   AX,cpH[EBP]	; new p.h
-		MOV   [EDI],AL
-		INC   EDI
-		MOVSX BX,cpsw[EBP]
-		MOV   AX,cpY[EBP]
-		IMUL  AX,BX
-		MOVSX EAX,AX
-		ADD   ESI,EAX
-		MOV   CX,cpX[EBP]
-		SHR   CX,3
-		MOVSX ECX,CX
-		ADD   ESI,ECX
-		ADD   ESI,2	; ESI := Sourcepos for Copyloop
-		MOV   cph[EBP],0	; init loop variables
-		MOV DH, 0
-		MOV   DL,cph[EBP]
-		MOV   CX,cpX[EBP]
-		AND   CX,7	; cpX MOD 8
+		MOV EAX,cpW[EBP]
+		MOV [EDI],AL	; new p.w
+		INC EDI
+		MOV EAX,cpH[EBP]	; new p.h
+		MOV [EDI],AL
+		INC EDI
+		MOV EBX,cpsw[EBP]
+		MOV EAX,cpY[EBP]
+		IMUL EAX,EBX
+		ADD ESI,EAX
+		MOV ECX,cpX[EBP]
+		SHR ECX,3
+		ADD ESI,ECX
+		ADD ESI,2	; ESI := Sourcepos for Copyloop
+		MOV cph[EBP],0	; init loop variables
+		MOV EDX,cph[EBP]
+		MOV  ECX,cpX[EBP]
+		AND ECX,7	; cpX MOD 8
 loopcp:
-		CMP   cpH[EBP],DX
-		JLE   l7cp	; height reached ?
+		CMP   cpH[EBP],EDX
+		JLE l7cp	; height reached ?
 		MOV   EAX,[ESI]
-		SHR   EAX,CL	; in proper position
-		PUSH  ECX
-		MOV   EBX,-2
-		MOV CX,cpW[EBP]
-		SHL   EBX,CL
+		SHR EAX,CL	; in proper position
+		PUSH ECX
+		MOV EBX,-2
+		MOV ECX,cpW[EBP]
+		SHL EBX,CL
 		SHR EBX, 1
-		NOT   EBX
-		AND   EAX,EBX
-		POP   ECX
-		MOV   [EDI],EAX	; copy for a new pattern
-		MOVSX EAX,cpsw[EBP]
-		ADD   ESI,EAX	; one line in source up
-		MOVSX EAX,cpw[EBP]
-		ADD   EDI,EAX	; one line at destination up
-		INC   DX
-		JMP   loopcp
+		NOT EBX
+		AND EAX,EBX
+		POP ECX
+		MOV [EDI],EAX	; copy for a new pattern
+		MOV EAX,cpsw[EBP]
+		ADD ESI,EAX	; one line in source up
+		MOV EAX,cpw[EBP]
+		ADD EDI,EAX	; one line at destination up
+		INC EDX
+		JMP loopcp
 l7cp:
 	END CopyPatternAsm;
 	
-	PROCEDURE CopyPattern*(col: INTEGER; pat: LONGINT; X, Y, mode: INTEGER);
+	PROCEDURE CopyPattern*(col: Color; pat: Pattern; x, y, mode: LONGINT);
 	VAR dest, i: LONGINT; 
-			w, h: SHORTINT; 
-			x, y, cpX, cpY, cpW, cpH, nofbytes: INTEGER;
+			w, h: CHAR; 
+			lx, ly, cpX, cpY, cpW, cpH, nofbytes: LONGINT;
 			buf: ARRAY 256 OF INTEGER;
 			onebyte: CHAR;
 			doublefill: ARRAY 4 OF CHAR;
 	BEGIN
-		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h); 
-		cpW := w + X; cpH := h + Y; 
-		x := X; y := Y;
-		IF X < clipx THEN X := clipx END;
-		IF Y < clipy THEN Y := clipy END;
+		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h);
+		cpW := ORD(w) + x; cpH := ORD(h) + y; 
+		lx := x; ly := y;
+		IF x < clipx THEN x := clipx END;
+		IF y < clipy THEN y := clipy END;
 		IF cpW > clipright THEN cpW := clipright END;
 		IF cpH > cliptop THEN cpH := cliptop END;
-		cpW := cpW - X; cpH := cpH - Y; 
-		cpX := X - x; cpY := Y - y;
+		cpW := cpW - x; cpH := cpH - y; 
+		cpX := x - lx; cpY := y - ly;
 		IF (cpW <= 0) OR (cpH <= 0) OR (cpX < 0) OR (cpY < 0) THEN RETURN END;
-		IF (cpW # w) OR (cpH # h) THEN
+		IF (cpW # ORD(w)) OR (cpH # ORD(h)) THEN
 			CopyPatternAsm(cpX, cpY, cpW, cpH, pat, buf);
 			pat := SYSTEM.ADR(buf[0])
 		END;
-		dest := (LONG(Height)-1-Y) * Width + X;
+		dest := (LONG(Height)-1-y) * Width + x;
 		doublefill[0] := CHR(col); doublefill[1] := CHR(col); doublefill[2] := CHR(col); doublefill[3] := CHR(col);
 		SYSTEM.GET(pat, w); 
 		SYSTEM.GET(pat+1, h);
 		INC(pat, 2);
-		nofbytes := (w+7) DIV 8;
+		nofbytes := (ORD(w)+7) DIV 8;
 		
 		Wait;
 		SYSTEM.PUT(Base+FgRop, 0CCX);
@@ -429,28 +381,27 @@ l7cp:
 		SYSTEM.PUT(Base+PatAdr, lasty);
 		SYSTEM.PUT(Base+PatWrap, 2X);
 		SYSTEM.PUT(Base+XYDir, 2X);
-		SYSTEM.PUT(Base+YCnt, h-1);
-		SYSTEM.PUT(Base+XCnt, w-1);
+		SYSTEM.PUT(Base+YCnt, SHORT(ORD(h)-1));
+		SYSTEM.PUT(Base+XCnt, SHORT(ORD(w)-1));
 		SYSTEM.PUT(Base+RoutCtrl, 2X);
 		SYSTEM.PUT(Base, dest);
 		SYSTEM.PUT(Base+BusSize, 0X);
-		FOR i := 0 TO nofbytes*h-1 DO SYSTEM.GET(pat+i, onebyte); SYSTEM.PUT(MMU, onebyte) END;
+		FOR i := 0 TO nofbytes*ORD(h)-1 DO SYSTEM.GET(pat+i, onebyte); SYSTEM.PUT(MMU, onebyte) END;
 		SYSTEM.PUT(Base+BusSize, 2X);
 	END CopyPattern;
 
-	PROCEDURE ReplConst*(col, X, Y, W, H, mode: INTEGER);
-	VAR dest: LONGINT; 
-			right, top: INTEGER;
+	PROCEDURE ReplConst*(col: Color; x, y, w, h, mode: LONGINT);
+	VAR dest, right, top: LONGINT; 
 			doublefill: ARRAY 4 OF CHAR;
 	BEGIN
-		top := Y + H; right := X + W; 
-		IF X < clipx THEN X := clipx END;
-		IF Y < clipy THEN Y := clipy END;
-		IF  clipright < right THEN right :=  clipright END; 
+		top := y + h; right := x + w; 
+		IF x < clipx THEN x := clipx END;
+		IF y < clipy THEN y := clipy END;
+		IF  clipright < right THEN right := clipright END;
 		IF cliptop < top THEN top := cliptop END;
-		W := right - X; H := top - Y;
-		IF (W <= 0) OR (H <= 0) OR (X < 0) OR (Y < 0) THEN RETURN END;
-		dest := (Height - Y - LONG(H)) * Width + X;
+		w := right - x; h := top - y;
+		IF (w <= 0) OR (h <= 0) OR (x < 0) OR (y < 0) THEN RETURN END;
+		dest := (Height - y - h) * Width + x;
 		doublefill[0] := CHR(col); doublefill[1] := CHR(col); doublefill[2] := CHR(col); doublefill[3] := CHR(col);
 		Wait;
 		SYSTEM.PUT(Base+FgRop, 0CCX);
@@ -466,52 +417,60 @@ l7cp:
 		SYSTEM.PUT(Base+SrcAdr, lasty);
 		SYSTEM.PUT(Base+DestAdr, dest);
 		SYSTEM.PUT(Base+XYDir, 0X);
-		SYSTEM.PUT(Base+XCnt, W-1);
-		SYSTEM.PUT(Base+YCnt, H-1);
+		SYSTEM.PUT(Base+XCnt, SHORT(w-1));
+		SYSTEM.PUT(Base+YCnt, SHORT(h-1));
 		SYSTEM.PUT(Base+RoutCtrl, 0X);
 		SYSTEM.PUT(Base+OpState, 9X);
-		SYSTEM.PUT(Base+SrcWrap, 0FFX);
+		SYSTEM.PUT(Base+SrcWrap, 0FFX)
 	END ReplConst;
 
-	PROCEDURE FillPattern*(col: INTEGER; pat: Pattern; pX, pY, X, Y, W, H, mode: INTEGER);
-	VAR dest, vertoff, fourbytes, mod: LONGINT; 
-			w, h, origh, off: SHORTINT; right, top: INTEGER;
+	PROCEDURE FillPattern*(col: Color; pat: Pattern; px, py, x, y, w, h, mode: LONGINT);
+	VAR dest, vertoff, fourbytes, mod, pw, ph, origh, off, right, top: LONGINT; ch: CHAR;
 			doublefill: ARRAY 4 OF CHAR;
 	BEGIN 
 		doublefill[0] := CHR(col); doublefill[1] := CHR(col); doublefill[2] := CHR(col); doublefill[3] := CHR(col);
-		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h); origh := h; INC(pat, 2);
-		IF (w # 16) & (w # 32) THEN RETURN END;
-		top := Y + H; right := X + W; 
-		IF X < clipx THEN X := clipx END;
-		IF Y < clipy THEN Y := clipy END;
-		IF  clipright < right THEN right :=  clipright END; 
+		SYSTEM.GET(pat, ch); pw := ORD(ch);
+		SYSTEM.GET(pat+1, ch); ph := ORD(ch); origh := ph; INC(pat, 2);
+		IF (pw # 16) & (pw # 32) THEN RETURN END;
+		top := y + h; right := x + w; 
+		IF x < clipx THEN x := clipx END;
+		IF y < clipy THEN y := clipy END;
+		IF clipright < right THEN right := clipright END; 
 		IF cliptop < top THEN top := cliptop END;
-		W := right - X; H := top - Y;
-		IF (W <= 0) OR (H <= 0) OR (X < 0) OR (Y < 0) THEN RETURN END;
-		dest := (LONG(Height)-1 - Y) * Width + X;
-		off := SHORT((X - pX) MOD 32);
-		vertoff := ((Y - pY) MOD h) * (w DIV 8);
+		w := right - x; h := top - y;
+		IF (w <= 0) OR (h <= 0) OR (x < 0) OR (y < 0) THEN RETURN END;
+		dest := (LONG(Height)-1 - y) * Width + x;
+		off := (x - px) MOD 32;
+		vertoff := ((y - py) MOD h) * (w DIV 8);
 		Wait;	(* Foreground color *)
 		SYSTEM.PUT(Base+FgRop, 0CCX);
 		SYSTEM.PUT(Base+XCnt, LONG(31));
 		SYSTEM.PUT(Base+YCnt, LONG(0));
 		SYSTEM.PUT(Base, lasty);
 		SYSTEM.PUT(Base+RoutCtrl, 1X);
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
-		mod := (LONG(w DIV 8)*origh);
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
+		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
+		mod := (w DIV 8)*origh;
 		Wait;
 		SYSTEM.PUT(Base+SrcWrap, 5X);
 		SYSTEM.PUT(Base+PatWrap, 5X);
 		SYSTEM.PUT(Base+YCnt, LONG(0));
 		SYSTEM.PUT(Base+XYDir, 2X);
 		SYSTEM.PUT(Base+BgRop, 0CCX);
-		WHILE H > 0 DO
+		WHILE h > 0 DO
 			SYSTEM.GET(pat+vertoff, fourbytes); 
-			IF w = 16 THEN vertoff := (vertoff + 2) MOD mod; fourbytes := fourbytes*10000H + fourbytes MOD 10000H;
-			ELSE vertoff := (vertoff + 4) MOD mod END;
+			IF pw = 16 THEN
+				vertoff := (vertoff + 2) MOD mod;
+				fourbytes := fourbytes*10000H + fourbytes MOD 10000H;
+			ELSE
+				vertoff := (vertoff + 4) MOD mod
+			END;
 			fourbytes := SYSTEM.ROT(fourbytes, -off);
 			Wait;
 			SYSTEM.PUT(Base+FgRop, 0F0X);
@@ -525,9 +484,8 @@ l7cp:
 				Wait;	(* clear color *)
 				SYSTEM.PUT(Base+FgRop, 0FFX);
 				SYSTEM.PUT(Base, lasty+64);
-				SYSTEM.PUT(MMU, fourbytes);
+				SYSTEM.PUT(MMU, fourbytes)
 			END;
-			
 			Wait;
 			IF mode = invert THEN SYSTEM.PUT(Base+FgRop, 066X)
 			ELSIF mode = replace THEN SYSTEM.PUT(Base+FgRop, 0CCX)
@@ -536,99 +494,32 @@ l7cp:
 				SYSTEM.PUT(Base+FgRop, 0CEX)
 			 END;
 			SYSTEM.PUT(Base+SrcAdr, lasty+96);
-			SYSTEM.PUT(Base+XCnt, W-1);
+			SYSTEM.PUT(Base+XCnt, SHORT(w-1));
 			SYSTEM.PUT(Base+RoutCtrl, 0X);
 			SYSTEM.PUT(Base+DestAdr, dest);
 			SYSTEM.PUT(Base+OpState, 9X);
-			DEC(H); DEC(dest, LONG(Width))
+			DEC(h); DEC(dest, LONG(Width))
 		END;
-		SYSTEM.PUT(Base+SrcWrap, 0FFX);
+		SYSTEM.PUT(Base+SrcWrap, 0FFX)
 	END FillPattern;
 	
-	PROCEDURE ReplPattern*(col: INTEGER; pat: Pattern; X, Y, W, H, mode: INTEGER);
-	VAR dest, vertoff, fourbytes, mod: LONGINT; 
-			w, h, origh, off: SHORTINT; right, top: INTEGER;
-			doublefill: ARRAY 4 OF CHAR;
-	BEGIN 
-		doublefill[0] := CHR(col); doublefill[1] := CHR(col); doublefill[2] := CHR(col); doublefill[3] := CHR(col);
-		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h); origh := h; INC(pat, 2);
-		IF (w # 16) & (w # 32) THEN RETURN END;
-		top := Y + H; right := X + W; 
-		IF X < clipx THEN X := clipx END;
-		IF Y < clipy THEN Y := clipy END;
-		IF  clipright < right THEN right :=  clipright END; 
-		IF cliptop < top THEN top := cliptop END;
-		W := right - X; H := top - Y;
-		IF (W <= 0) OR (H <= 0) OR (X < 0) OR (Y < 0) THEN RETURN END;
-		dest := (LONG(Height) -1 - Y) * Width + X;
-		off := SHORT(X MOD 32);
-		vertoff := (Y MOD h) * (w DIV 8);
-		Wait;	(* Foreground color *)
-		SYSTEM.PUT(Base+FgRop, 0CCX);
-		SYSTEM.PUT(Base+XCnt, LONG(31));
-		SYSTEM.PUT(Base+YCnt, LONG(0));
-		SYSTEM.PUT(Base, lasty);
-		SYSTEM.PUT(Base+RoutCtrl, 1X);
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); 
-		SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill))); SYSTEM.PUT(MMU, SYSTEM.VAL(SET, SYSTEM.VAL(SET, doublefill)));
-		mod := (LONG(w DIV 8)*origh);
-		Wait;
-		SYSTEM.PUT(Base+YCnt, LONG(0));
-		SYSTEM.PUT(Base+BgRop, 0CCX);
-		SYSTEM.PUT(Base+SrcWrap, 5X);
-		SYSTEM.PUT(Base+PatWrap, 5X);
-		SYSTEM.PUT(Base+XYDir, 2X);
-		WHILE H > 0 DO
-			SYSTEM.GET(pat+vertoff, fourbytes); 
-			IF w = 16 THEN vertoff := (vertoff + 2) MOD mod; fourbytes := fourbytes*10000H + fourbytes MOD 10000H
-			ELSE vertoff := (vertoff + 4) MOD mod END;
-			fourbytes := SYSTEM.ROT(fourbytes, -off);
-			Wait;
-			SYSTEM.PUT(Base+FgRop, 0F0X);
-			SYSTEM.PUT(Base+SrcAdr, lasty+32);
-			SYSTEM.PUT(Base+PatAdr, lasty);
-			SYSTEM.PUT(Base+XCnt, LONG(31));
-			SYSTEM.PUT(Base+RoutCtrl, 2X);
-			SYSTEM.PUT(Base, lasty + 96);
-			SYSTEM.PUT(MMU, fourbytes);
-			IF mode = paint THEN
-				Wait;	(* clear color *)
-				SYSTEM.PUT(Base+FgRop, 0FFX);
-				SYSTEM.PUT(Base, lasty+64);
-				SYSTEM.PUT(MMU, fourbytes);
-			END;
-			
-			Wait;
-			IF mode = invert THEN SYSTEM.PUT(Base+FgRop, 066X)
-			ELSIF mode = replace THEN SYSTEM.PUT(Base+FgRop, 0CCX)
-			ELSE 
-				SYSTEM.PUT(Base+PatAdr, lasty+64);
-				SYSTEM.PUT(Base+FgRop, 0CEX)
-			END;
-			SYSTEM.PUT(Base+SrcAdr, lasty+96);
-			SYSTEM.PUT(Base+XCnt, W-1);
-			SYSTEM.PUT(Base+RoutCtrl, 0X);
-			SYSTEM.PUT(Base+DestAdr, dest);
-			SYSTEM.PUT(Base+OpState, 9X);
-			DEC(H); DEC(dest, LONG(Width))
-		END;
-		SYSTEM.PUT(Base+SrcWrap, 0FFX);
+	PROCEDURE ReplPattern*(col: Color; pat: Pattern; x, y, w, h, mode: LONGINT);
+	BEGIN
+		FillPattern(col, pat, 0, 0, x, y, w, h, mode)
 	END ReplPattern;
 
-	PROCEDURE NewPattern*(width, height: INTEGER; VAR image: ARRAY OF SET): Pattern;
-	VAR len, src, dest: LONGINT; i: INTEGER; p: PatternPtr;  pl: List;
-	BEGIN 
-		len := (width+7) DIV 8;
-		SYSTEM.NEW(p, 4+len*height); p.w := SHORT(width); p.h := SHORT(height);
-		src := SYSTEM.ADR(image); dest := SYSTEM.ADR(p.pixmap);
+	PROCEDURE NewPattern*(w, h: LONGINT; VAR image: ARRAY OF SET): Pattern;
+	VAR len, src, dest, i: LONGINT;  p: PatternPtr;  pl: List;
+	BEGIN
+		len := (w+7) DIV 8;
+		SYSTEM.NEW(p, 4+len*h);  p.w := CHR(w);  p.h := CHR(h);
+		src := SYSTEM.ADR(image[0]);  dest := SYSTEM.ADR(p.pixmap[0]);
 		i := 0;
-		WHILE i < height DO SYSTEM.MOVE(src, dest, len); INC(src, 4); INC(dest, len); INC(i) END;
-		NEW(pl);  pl.pat := p;  pl.next := Pat;  Pat := pl;	(* put in list to avoid GC *)
+		WHILE i < h DO SYSTEM.MOVE(src, dest, len);  INC(src, 4);  INC(dest, len);  INC(i) END;
+		NEW(pl);  pl.pat := p;  pl.next := pattern;  pattern := pl;	(* put in list to avoid GC *)
 		RETURN SYSTEM.ADR(p.w)
 	END NewPattern;
-	
+
 	PROCEDURE CreatePatterns;
 	VAR image: ARRAY 16 OF SET;
 	BEGIN
@@ -784,39 +675,62 @@ l7cp:
 		
 		image[0] := -{};
 		image[1] := -{};
-		solid := NewPattern(16, 2, image);
-		
+		image[2] := -{};
+		image[3] := -{};
+		image[4] := -{};
+		image[5] := -{};
+		image[6] := -{};
+		image[7] := -{};
+		solid := NewPattern(16, 8, image)
 	END CreatePatterns;
 	
-	PROCEDURE Depth*(X: INTEGER): INTEGER;
-	BEGIN RETURN 8 END Depth;
-	
-	PROCEDURE DisplayBlock*(B:LONGINT; DX, DY, W, H, SX, SY, mode:INTEGER);
-	VAR src, dst, width, i, base: LONGINT; data: CHAR; mmu : LONGINT;
+	PROCEDURE Depth*(x: LONGINT): INTEGER;
 	BEGIN
-		dst := Width*(LONG(Height)-2-SY) + SX;
-		SYSTEM.GET(B+8, width);
-		SYSTEM.GET(B+12, base);
-		src := base + width * DY + DX;
+		RETURN depth
+	END Depth;
+	
+	PROCEDURE TrueColor*(x: LONGINT): BOOLEAN;
+	BEGIN
+		RETURN FALSE
+	END TrueColor;
+
+	PROCEDURE DisplayBlock*(adr, dx, dy, w, h, sx, sy, mode: LONGINT);
+	VAR src, dst, width, i, base: LONGINT; data: CHAR; mmu: LONGINT;
+	BEGIN
+		dst := Width*(LONG(Height)-1-sy) + sx;
+		SYSTEM.GET(adr+8, width);
+		SYSTEM.GET(adr+12, base);
+		src := base + width * dy + dx;
 		Wait;
-		SYSTEM.PUT(Base+XCnt, W-1);
+		SYSTEM.PUT(Base+XCnt, SHORT(w-1));
 		SYSTEM.PUT(Base+YCnt, LONG(0));
 		SYSTEM.PUT(Base+RoutCtrl, 1X);
 		SYSTEM.PUT(Base+XYDir, 0X);
 		SYSTEM.PUT(Base+BusSize, 0X);
 		IF mode = invert THEN SYSTEM.PUT(Base+FgRop, 066X)
-		ELSE SYSTEM.PUT(Base+FgRop, 0CCX) END;
+		ELSE SYSTEM.PUT(Base+FgRop, 0CCX)
+		END;
 		mmu := MMU;
-		WHILE H > 0 DO
+		WHILE h > 0 DO
 			Wait;
 			SYSTEM.PUT(Base, dst);
-			SYSTEM.MOVE(src,mmu,W);
+			SYSTEM.MOVE(src,mmu,w);
 			DEC(dst, LONG(Width)); INC(src, width);
-			DEC(H);
+			DEC(h)
 		END;
-		SYSTEM.PUT(Base+BusSize, 2X);
+		SYSTEM.PUT(Base+BusSize, 2X)
 	END DisplayBlock;
 
+	PROCEDURE TransferFormat*(x: LONGINT): LONGINT;
+	BEGIN
+		RETURN unknown
+	END TransferFormat;
+
+	PROCEDURE TransferBlock*(VAR buf: ARRAY OF CHAR;  ofs, stride, x, y, w, h, mode: LONGINT);
+	BEGIN
+		HALT(99)
+	END TransferBlock;
+	
 	PROCEDURE Init;
 	BEGIN
 		Wait; 		
@@ -845,26 +759,29 @@ l7cp:
 		SYSTEM.PUT(MMU, LONG(LONG(BG))); SYSTEM.PUT(MMU, LONG(LONG(BG)));
 	END Init;
 	
-	PROCEDURE GetVal(str: ARRAY OF CHAR): LONGINT;
+	PROCEDURE GetVal(str: ARRAY OF CHAR;  default: LONGINT): LONGINT;
 	VAR i: SHORTINT;  v, sgn: LONGINT;  s: ARRAY 10 OF CHAR;
 	BEGIN
 		Kernel.GetConfig(str, s);
-		v := 0;  i := 0;
-		WHILE s[i] # 0X DO v := v*10+(ORD(s[i])-48); INC(i) END;
+		IF s[0] = 0X THEN
+			v := default
+		ELSE
+			v := 0;  i := 0;
+			WHILE s[i] # 0X DO v := v*10+(ORD(s[i])-48); INC(i) END
+		END;
 		RETURN v
 	END GetVal;
 
 BEGIN
-	Width := SHORT(GetVal("DWidth"));
-	IF Width = 0 THEN Width := 1024 END;	(* assume 1024 if not specified *)
-	Height := SHORT(GetVal("DHeight"));
-	IF Height = 0 THEN Height := 768 END;	(* assume 768 if not specified *)
-	dmem := GetVal("DMem")*1024;
-	IF dmem = 0 THEN dmem := 1024*1024 END;	(* assume 1Mb if not specified *)
+	depth := SHORT(GetVal("Color", 1));	(* assume 1 if not specified *)
+	IF depth = 0 THEN depth := 1 ELSE depth := 8 END;
+	Width := SHORT(GetVal("DWidth", 1024));	(* assume 1024 if not specified *)
+	Height := SHORT(GetVal("DHeight", 768));	(* assume 768 if not specified *)
+	dmem := GetVal("DMem", 1024)*1024;	(* assume 1Mb if not specified *)
 	UBottom := Height - SHORT(dmem DIV Width) + 1;
 	Left:= 0; ColLeft:= 0; Bottom:= 0;
 	lasty := LONG(Height-UBottom)*Width;
-	Pat := NIL;
+	pattern := NIL;
 	Init; 
 
 	width := Width;

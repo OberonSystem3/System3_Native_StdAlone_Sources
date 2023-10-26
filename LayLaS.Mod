@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,25 +13,25 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE LayLaS;	(*	Jörg Derungs, 31.7.1996	*)
+MODULE LayLaS;	(** portable *)	(*	Jörg Derungs, 31.7.1996	*)
 
 IMPORT Texts, Oberon, Layouts;
 
 CONST	(** symbol constants *)
 		null* = 0;
 		(** special caracters *)
-		open* = 1;	close* = 2;	equal* = 4;	lbrak* = 6;	rbrak* = 7;
+		open* = 1; close* = 2; equal* = 4; lbrak* = 6; rbrak* = 7;
 		(** argument types *)
-		String* = 20;	Int* = 21;	Real* = 22;	Char* = 23;	Bool* = 24;	Qualident* = 28;	Ident* = 29;
+		String* = 20; Int* = 21; Real* = 22; Char* = 23; Bool* = 24; Qualident* = 28; Ident* = 29;
 		(** operators *)
-		Config* = 30;	New* = 31;	HList* = 32;	VList* = 33;	Table* = 34;	Place* = 35;
-		Deep* = 37;	Shallow* = 38;	Include* = 39;
-		Def* = 40;	Set* = 41;	Params* = 42;	Layout* = 43;	Attributes* = 44;	Links* = 45;
-		Virtual* = 46;	Default* = 47;	Break* = 48;	Span* = 49;
+		Config* = 30; New* = 31; HList* = 32; VList* = 33; Table* = 34; Place* = 35;
+		Deep* = 37; Shallow* = 38; Include* = 39;
+		Def* = 40; Set* = 41; Params* = 42; Layout* = 43; Attributes* = 44; Links* = 45;
+		Virtual* = 46; Default* = 47; Break* = 48; Span* = 49;
 		(** special values *)
-		Left* = Layouts.Left;	Right* = Layouts.Right;	Bottom* = Layouts.Bottom;	Top* = Layouts.Top;
-		Center* = Layouts.Center;	Static* = Layouts.Static;	Dynamic* = Layouts.Dynamic;
-		Hor* = Layouts.Hor;	Vert* = Layouts.Vert;
+		Left* = Layouts.Left; Right* = Layouts.Right; Bottom* = Layouts.Bottom; Top* = Layouts.Top;
+		Center* = Layouts.Center; Static* = Layouts.Static; Dynamic* = Layouts.Dynamic;
+		Hor* = Layouts.Hor; Vert* = Layouts.Vert;
 
 		strlen = 256;
 		idlen = 64;
@@ -52,11 +51,11 @@ VAR  reader : Texts.Reader;
 		char* : CHAR;
 		bool* : BOOLEAN;
 
-PROCEDURE Pos* () : LONGINT;
+PROCEDURE Pos* () : LONGINT;		(**	Position of scanner in text	*)
 BEGIN	RETURN Texts.Pos(reader)
 END Pos;
 
-PROCEDURE Mark* (pos : LONGINT; t : ARRAY OF CHAR);
+PROCEDURE Mark* (pos : LONGINT; t : ARRAY OF CHAR);		(**	Write error message t to Log	*)
 VAR p : LONGINT;
 BEGIN	p := Pos ();
 	IF p > errpos THEN
@@ -149,7 +148,7 @@ BEGIN	sym := Ident;
 	IF i = idlen THEN Mark (Pos (), "Identifier too long"); ident[i-1] := 0X ELSE ident[i] := 0X END;
 END ReadIdent;
 
-PROCEDURE Get* (VAR sym : INTEGER);
+PROCEDURE Get* (VAR sym : INTEGER);		(**	Get next symbol	*)
 BEGIN
 	IF eot THEN Mark (Pos (), "end of text") END;
 	WHILE (ch <= ' ') & (~eot) DO ReadChar END;
@@ -159,7 +158,7 @@ BEGIN
 	| '[' : ReadChar; sym := lbrak
 	| ']' : ReadChar; sym := rbrak
 	| '-' : ReadChar; IF (ch >= '0') & (ch <= '9') THEN ReadNumber (sym); int := -int; real := -real
-								ELSE Mark (Pos (), "number expected") END
+								ELSE sym := null END
 	| '=' : ReadChar; sym := equal
 	| '{' : Comment; Get (sym)
 	| '"', "'" : ReadString (sym)
@@ -208,7 +207,7 @@ BEGIN
 	eot := FALSE;
 END OpenText;
 
-PROCEDURE Init*;
+PROCEDURE Init*;		(**	to be executed before reading the layout	*)
 BEGIN
 	error := FALSE;
 END Init;

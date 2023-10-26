@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,15 +13,13 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Files;  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
+MODULE Files;	(** portable *)  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
 
-(* Native file system *)
-
-(** The Files module implements the Oberon file system. *)
-
-(* Note: InstFiles contains a copy of this module *)
+(* Native file system.  Note: InstFiles contains a copy of this module *)
 
 	IMPORT FileDir, SYSTEM, Disk, Kernel;
+
+(** The Files module implements the Oberon file system. *)
 
 	(*A file consists of a sequence of pages. The first page
 		contains the header. Part of the header is the page table, an array
@@ -37,7 +34,7 @@ MODULE Files;  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
 				InitHint = 200*29;
 
 	TYPE  DiskAdr = LONGINT;
-				File*   = POINTER TO Handle;	(** A file descriptor *)
+				File*   = POINTER TO Handle;	(** file descriptor *)
 				Buffer   = POINTER TO BufferRecord;
 
 				FileHd  = POINTER TO FileDir.FileHeader;
@@ -89,53 +86,6 @@ MODULE Files;  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
 
 	VAR root: File;  (*list of open files with dummy first node*)
 
-	(* Copy - Copy size bytes from source to dest.  (No overlap allowed) *)
-	
-	PROCEDURE Copy(source, dest, size: LONGINT);
-	CODE
-		MOV ESI, source[EBP]
-		MOV EDI, dest[EBP]
-		MOV ECX, size[EBP]
-		CLD
-		CMP ECX, 8
-		JB bytemove
-		XOR EAX, EAX
-		SHRD EAX, ESI, 2
-		JZ copyd
-		TEST EDI, 3
-		JZ copyd
-		SHRD EAX, EDI, 2
-		SHR EAX, 28
-		CMP AL, 10
-		JZ mov2
-		CMP AL, 5
-		JZ mov3
-		NOT AL
-		AND AL, 5
-		JNZ copyd
-		MOVSB
-		DEC ECX
-		JMP copyd
-	mov3:
-		MOVSB
-		DEC ECX
-	mov2:
-		MOVSW
-		SUB ECX, 2
-	copyd:
-		SHRD EAX, ECX, 2
-		SHR ECX, 2
-		REP MOVSD
-		SHLD ECX, EAX, 2
-	bytemove:
-		REP MOVSB
-	END Copy;
-
-	PROCEDURE -CoreHalt(n: LONGINT);
-	CODE
-		INT 3
-	END CoreHalt;
-
 	PROCEDURE Check(VAR s: ARRAY OF CHAR;
 											VAR name: FileDir.FileName; VAR res: INTEGER);
 		VAR i: INTEGER; ch: CHAR;
@@ -149,7 +99,7 @@ MODULE Files;  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
 				IF ~(("A" <= CAP(ch)) & (CAP(ch) <= "Z")
 					OR ("0" <= ch) & (ch <= "9") OR (ch = ".")) THEN res := 3; EXIT
 				END ;
-				IF i = FileDir.FnLength THEN res := 4; EXIT END ;
+				IF i = FileDir.FnLength-1 THEN res := 4; EXIT END
 			END
 		ELSIF ch = 0X THEN name[0] := 0X; res := -1
 		ELSE res := 3
@@ -293,7 +243,6 @@ MODULE Files;  (*NW 11.1.86 / 28.8.92 / pjm 17.04.97 *)
 				WHILE (f # NIL) & (f.sec[0] # header) DO f := f.next END ;
 				IF f = NIL THEN
 					NEW(buf); buf.apos := 0; buf.next := buf; buf.mod := FALSE;
-					head := SYSTEM.VAL(FileHd, SYSTEM.ADR(buf.data));
 					
 					Disk.GetSector(header, buf.data);
 					head := SYSTEM.VAL(FileHd, SYSTEM.ADR(buf.data));
@@ -354,16 +303,14 @@ directory with the same name. The file is automatically closed. *)
 			IF ~f.registered & (f.name # "") THEN
 				FileDir.Insert(f.name, f.sec[0]); f.registered := TRUE;
 				f.next := root.next; root.next := f
-			END;
-			(*Disk.ResetDisk*)
+			END
 		END
 	END Register;
 
 (** Flushes the changes made to a file to disk. Register will automatically Close a file. *) 
 	PROCEDURE Close*(f: File);
 	BEGIN
-		IF f # NIL THEN Unbuffer(f) END;
-		(*Disk.ResetDisk*)
+		IF f # NIL THEN Unbuffer(f) END
 	END Close;
 
 (*
@@ -386,8 +333,7 @@ other references exist to the file.  The normal way to delete is file is to use 
 			END ;
 			REPEAT DEC(i); Disk.FreeSector(f.sec[i]); f.sec[i] := 0
 			UNTIL i = 0;
-			f.nofbufs := 1; f.firstbuf.next := NIL; f.modH := TRUE;
-			(*Disk.ResetDisk*)
+			f.nofbufs := 1; f.firstbuf.next := NIL; f.modH := TRUE
 		END
 	END Purge;
 *)
@@ -397,12 +343,12 @@ other references exist to the file.  The normal way to delete is file is to use 
 	BEGIN RETURN LONG(f.aleng)*SS + f.bleng - HS
 	END Length;
 
-(** Returns the time (t) and date (d) of a file. *)
+(** Returns the time (t) and date (d) when a file was last modified. *)
 	PROCEDURE GetDate*(f: File; VAR t, d: LONGINT);
 	BEGIN t := f.time; d := f.date
 	END GetDate;
 
-(** Sets the time (t) and date (d) of a file. *)
+(** Sets the modification time (t) and date (d) of a file. *)
 	PROCEDURE SetDate*(f: File; t, d: LONGINT);
 	BEGIN f.modH := TRUE; f.time := t; f.date := d
 	END SetDate;
@@ -433,14 +379,15 @@ at different locations in a file. A Rider cannot be positioned beyond the end of
 	BEGIN RETURN r.file
 	END Base;
 
-(** Read a byte from a file, advancing the Rider one byte further. R.eof indicates if the end 
-of the file has been reached. *)
+(** Read a byte from a file, advancing the Rider one byte further.  R.eof indicates if the end 
+of the file has been passed. *)
 	PROCEDURE Read*(VAR r: Rider; VAR x: SYSTEM.BYTE);
 		VAR buf: Buffer;
 	BEGIN
-		IF r.apos # r.buf.apos THEN r.buf := GetBuf(r.file, r.apos) END ;
-		IF r.bpos < r.buf.lim THEN
-			x := r.buf.data.B[r.bpos]; INC(r.bpos)
+		buf := r.buf;
+		IF r.apos # buf.apos THEN buf := GetBuf(r.file, r.apos); r.buf := buf END ;
+		IF r.bpos < buf.lim THEN
+			x := buf.data.B[r.bpos]; INC(r.bpos)
 		ELSIF r.apos < r.file.aleng THEN
 			INC(r.apos);
 			buf := Buf(r.file, r.apos);
@@ -455,20 +402,21 @@ of the file has been reached. *)
 	END Read;
 
 (** Reads a sequence of length n bytes into the buffer x, advancing the Rider. Less bytes 
-will be read when reading over the length of the file. r.res indicates the number of unread bytes. *)
+will be read when reading over the length of the file. r.res indicates the number of unread bytes. 
+x must be big enough to hold n bytes. *)
 	PROCEDURE ReadBytes*(VAR r: Rider; VAR x: ARRAY OF SYSTEM.BYTE; n: LONGINT);
 		VAR src, dst, m: LONGINT; buf: Buffer;
 	BEGIN dst := SYSTEM.ADR(x[0]);
-		IF LEN(x) < n THEN CoreHalt(19) END ;
+		IF LEN(x) < n THEN SYSTEM.HALT(19) END ;
 		IF r.apos # r.buf.apos THEN r.buf := GetBuf(r.file, r.apos) END ;
 		LOOP
 			IF n <= 0 THEN EXIT END ;
 			src := SYSTEM.ADR(r.buf.data.B[0]) + r.bpos; m := r.bpos + n;
 			IF m <= r.buf.lim THEN
-				Copy(src, dst, n); r.bpos := SHORT(m); r.res := 0; EXIT
+				SYSTEM.MOVE(src, dst, n); r.bpos := SHORT(m); r.res := 0; EXIT
 			ELSIF r.buf.lim = SS THEN
 				m := r.buf.lim - r.bpos;
-				IF m > 0 THEN Copy(src, dst, m); INC(dst, m); DEC(n, m) END ;
+				IF m > 0 THEN SYSTEM.MOVE(src, dst, m); INC(dst, m); DEC(n, m) END ;
 				IF r.apos < r.file.aleng THEN
 					INC(r.apos); r.bpos := 0; buf := Buf(r.file, r.apos);
 					IF buf = NIL THEN
@@ -479,7 +427,7 @@ will be read when reading over the length of the file. r.res indicates the numbe
 				ELSE r.res := n; r.eof := TRUE; EXIT
 				END
 			ELSE m := r.buf.lim - r.bpos;
-				IF m > 0 THEN Copy(src, dst, m); r.bpos := r.buf.lim END ;
+				IF m > 0 THEN SYSTEM.MOVE(src, dst, m); r.bpos := r.buf.lim END ;
 				r.res := n - m; r.eof := TRUE; EXIT
 			END
 		END
@@ -533,14 +481,14 @@ Portable routines to read the standard Oberon types.
 	PROCEDURE ReadNum*(VAR R: Rider; VAR x: LONGINT);
 		VAR ch: CHAR; n: INTEGER; y: LONGINT;
 	BEGIN n := 0; y := 0; Read(R, ch);
-		WHILE ch >= 80X DO INC(y, SYSTEM.LSH(LONG(ch) - 128, n)); INC(n, 7); Read(R, ch) END;
-		x := ASH(SYSTEM.LSH(LONG(ch), 25), n-25) + y
+		WHILE ch >= 80X DO INC(y, SYSTEM.LSH(LONG(ORD(ch)) - 128, n)); INC(n, 7); Read(R, ch) END;
+		x := ASH(SYSTEM.LSH(LONG(ORD(ch)), 25), n-25) + y
 	END ReadNum;
 
 	PROCEDURE NewExt(f: File);
 		VAR i, k: INTEGER; ext: Index;
 	BEGIN k := (f.aleng - STS) DIV XS;
-		IF k = FileDir.ExTabSize THEN CoreHalt(18) END ;
+		IF k = FileDir.ExTabSize THEN SYSTEM.HALT(18) END ;
 		NEW(ext); ext.adr := 0; ext.mod := TRUE; f.ext[k] := ext; i := XS;
 		REPEAT DEC(i); ext.sec.x[i] := 0 UNTIL i = 0
 	END NewExt;
@@ -571,18 +519,18 @@ Portable routines to read the standard Oberon types.
 	PROCEDURE WriteBytes*(VAR r: Rider; VAR x: ARRAY OF SYSTEM.BYTE; n: LONGINT);
 		VAR src, dst, m: LONGINT; f: File; buf: Buffer;
 	BEGIN src := SYSTEM.ADR(x[0]);
-		IF LEN(x) < n THEN CoreHalt(19) END ;
+		IF LEN(x) < n THEN SYSTEM.HALT(19) END ;
 		IF r.apos # r.buf.apos THEN r.buf := GetBuf(r.file, r.apos) END ;
 		LOOP
 			IF n <= 0 THEN EXIT END ;
 			r.buf.mod := TRUE; dst := SYSTEM.ADR(r.buf.data.B[0]) + r.bpos; m := r.bpos + n;
 			IF m <= r.buf.lim THEN
-				Copy(src, dst, n); r.bpos := SHORT(m); EXIT
+				SYSTEM.MOVE(src, dst, n); r.bpos := SHORT(m); EXIT
 			ELSIF m <= SS THEN
-				Copy(src, dst, n); r.bpos := SHORT(m);
+				SYSTEM.MOVE(src, dst, n); r.bpos := SHORT(m);
 				r.file.bleng := SHORT(m); r.buf.lim := SHORT(m); r.file.modH := TRUE; EXIT
 			ELSE m := SS - r.bpos;
-				IF m > 0 THEN Copy(src, dst, m); INC(src, m); DEC(n, m) END ;
+				IF m > 0 THEN SYSTEM.MOVE(src, dst, m); INC(src, m); DEC(n, m) END ;
 				f := r.file; WriteBuf(f, r.buf); INC(r.apos); r.bpos := 0; buf := Buf(f, r.apos);
 				IF buf = NIL THEN
 					IF r.apos <= f.aleng THEN ReadBuf(f, r.buf, r.apos)
@@ -595,7 +543,7 @@ Portable routines to read the standard Oberon types.
 		END
 	END WriteBytes;
 
-(*
+(**
 Portable routines to write the standard Oberon types.
 *)
 
@@ -650,8 +598,7 @@ Portable routines to write the standard Oberon types.
 				Disk.GetSector(adr, head); head.mark := FileDir.HeaderMark+1; Disk.PutSector(adr, head)
 			ELSE
 				res := 2
-			END;
-			(*Disk.ResetDisk*)
+			END
 		END
 	END Delete;
 
@@ -672,8 +619,7 @@ Portable routines to write the standard Oberon types.
 					FileDir.Insert(newbuf, adr);
 					Disk.GetSector(adr, head); head.name := newbuf; Disk.PutSector(adr, head)
 				ELSE res := 2
-				END;
-				(*Disk.ResetDisk*)
+				END
 			END
 		END
 	END Rename;
@@ -691,4 +637,21 @@ BEGIN
 	FileDir.Init
 END Files.
 
-TraceFiles.Show
+(** Remarks:
+
+1. Oberon uses the little-endian byte ordering for exchanging files between different Oberon platforms.
+
+2. Files are separate entities from directory entries. Files may be anonymous by having no name and not being registered in a
+	directory. Files only become visible to other clients of the Files module by explicitly passing a File descriptor or by registering
+	a file and then opening it from the other client. Deleting a file of which a file descriptor is still available, results in the file
+	becoming anonymous. The deleted file may be re-registered at any time.
+
+3. Files and their access mechanism (Riders) are separated. A file might have more than one rider operating on it at different
+	offsets in the file.
+
+4. The garbage collector will automatically close files when they are not required any more. File buffers will be discarded
+	without flushing them to disk.  Use the Close procedure to update modified files on disk.
+
+5. Relative and absolute filenames written in the directory syntax of the host operating system are used. By convention, Oberon
+	filenames consists of the letters A..Z, a..z, 0..9, and ".". The directory separator is typically / or :. Oberon filenames are
+	case sensitive. *)

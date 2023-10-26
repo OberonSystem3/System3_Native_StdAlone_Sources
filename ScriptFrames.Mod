@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
+MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 
 	IMPORT Texts, Fonts, Objects, Oberon, Styles, Input, Display, Modules, Printer;
 (*hyph*)
@@ -36,8 +35,6 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		SpcW = 3;
 		ML = 2;	MM = 1;	MR = 0;
 
-		BackCol = 14;	BarCol = 13;
-		
 		LeftMode = {Styles.left};
 		RightMode = {Styles.right};
 		AdjMode = {Styles.left, Styles.right};
@@ -45,8 +42,8 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	
 		car = 0; sel = 1; arrow = -1;	(* MarkMsg id *)
 		
-		ScnUnit = 10000;	(* size of a pixel in universal coords *)
-
+		OpenCmd = "Script.Open";
+	
 	TYPE
 		Box = POINTER TO BoxDesc;
 		Line = POINTER TO LineDesc;
@@ -86,7 +83,6 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		mark = 0: no mark*)
 
 		Formatter = RECORD(Texts.Reader)
-			s: Styles.Style;
 			len, W: LONGINT;
 			w, asr, dsr, nSpc: INTEGER;
 			hide: BOOLEAN;
@@ -128,6 +124,8 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	
 		pL: Line;	(*prev line while printing*)
 		show: PROCEDURE(F: Frame; pos: LONGINT);
+		
+		FullColor, BackCol, BarCol: INTEGER;
 
 	PROCEDURE Min (i, j: LONGINT): LONGINT;
 	BEGIN IF i >= j THEN RETURN j ELSE RETURN i END
@@ -148,7 +146,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 			WHILE L # F.trailer DO
 				IF org = obj.stamp THEN	(*display line*)
 					X := x+F.X+F.left;
-					Display.FillPattern(col, Display.grey2, X, Y-1, X, Y-1, F.W-F.left-F.right, 1, Display.replace);
+					Display.FillPattern(col, Display.grey2, X, Y-1, X, Y-1, F.W-F.left-F.right, 1, Display.paint);
 					obj := obj.slink
 				END;
 				INC(org, L.len); DEC(Y, L.h); L := L.next
@@ -183,8 +181,8 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 
 	PROCEDURE InvertRect(F: Frame; x, y, X, Y, W, H: INTEGER);
 	BEGIN INC(X, x+F.X); INC(Y, y+F.Y); Oberon.RemoveMarks(X, Y, W, H);
-		IF X + W <= x+F.X + F.W THEN Display.ReplConst(Display.FG, X, Y, W, H, Display.invert)
-		ELSIF X < x+F.X + F.W THEN Display.ReplConst(Display.FG, X, Y, x+F.X + F.W - X, H, Display.invert)
+		IF X + W <= x+F.X + F.W THEN Display.ReplConst(FullColor, X, Y, W, H, Display.invert)
+		ELSIF X < x+F.X + F.W THEN Display.ReplConst(FullColor, X, Y, x+F.X + F.W - X, H, Display.invert)
 		END;
 	END InvertRect;
 
@@ -236,7 +234,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	PROCEDURE FlipCaret (F: Frame; x, y: INTEGER);
 	BEGIN
 		IF (F.carLoc.y >= 10) & (F.carLoc.x + 12 < F.W) THEN
-			Display.CopyPattern(Display.FG, Display.hook, x+F.X + F.carLoc.x, y+F.Y + F.carLoc.y - 10, Display.invert)
+			Display.CopyPattern(FullColor, Display.hook, x+F.X + F.carLoc.x, y+F.Y + F.carLoc.y - 10, Display.invert)
 		END
 	END FlipCaret;
 
@@ -311,7 +309,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END InvertArea;
 
 	PROCEDURE FlipSelection (F: Frame; x, y: INTEGER; VAR beg, end: Location);
-	VAR L: Line; Y, H, d: INTEGER;
+	VAR L: Line; Y: INTEGER;
 	BEGIN
 		L := beg.lin; Y := beg.y - L.dsr;	(* Y = bottom of line *)
 		IF L = end.lin THEN InvertArea(F, L, x, y, beg.x, Y, end.x - beg.x)
@@ -353,7 +351,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END Objs;	*)
 	
 	PROCEDURE Clone(obj: Objects.Object; id: INTEGER; VAR new: Objects.Object);
-	VAR M: Objects.CopyMsg; N: Objects.BindMsg;
+	VAR M: Objects.CopyMsg;
 	BEGIN M.id := id; Objects.Stamp(M); obj.handle(obj, M); new := M.obj;	(* copy *)
 		(*IF lib # NIL THEN N.lib := lib; Objects.Stamp(N); new.handle(new, N) END	(* bind *)*)
 	END Clone;
@@ -361,9 +359,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	PROCEDURE SaveAndCopy(F: Frame; text: Texts.Text; beg, end: LONGINT; VAR W: Texts.Writer);
 	VAR
 		R: Texts.Finder;
-		ch: CHAR;
 		obj, new: Objects.Object;
-		lib: Objects.Library;
 	BEGIN
 		IF end > text.len THEN end := text.len END;
 		Texts.OpenFinder(R, text, beg);
@@ -392,7 +388,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 
 	PROCEDURE StyleFrame(F: Frame; st: Styles.Style; X: INTEGER): Objects.Object;
 	VAR G: Display.Frame;
-	BEGIN G := Styles.NewFrame(st); G.W := SHORT(st.paraW DIV ScnUnit);
+	BEGIN G := Styles.NewFrame(st); G.W := SHORT(st.paraW DIV Display.Unit);
 		IF G.W > F.W-F.right - X THEN G.W := F.W-F.right - X END;
 		G(Styles.Frame).col := F.col;
 		IF F.hide THEN G.H := 1 END;
@@ -409,10 +405,10 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	BEGIN
 		rest := 0; spc := 0; L.w0 := L.w; s := L.style;
 		IF L.brk THEN INC(L.w0, eolW) ELSE INC(L.w0, SpcW) END;
-		L.off := SHORT(s.left DIV ScnUnit);
+		L.off := SHORT(s.left DIV Display.Unit);
 		mode := s.opts * AdjMode;
 		IF mode = LeftMode THEN RETURN
-		ELSE width := SHORT(s.paraW DIV ScnUnit); diff := width - L.w;
+		ELSE width := SHORT(s.paraW DIV Display.Unit); diff := width - L.w;
 			IF mode = AdjMode THEN
 				IF L.brk OR (L.nSpc = 0) THEN RETURN END;	(* = left adjust for last line/one word*)
 				L.w0 := width+SpcW; spc := diff DIV L.nSpc; rest := diff MOD L.nSpc
@@ -434,7 +430,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 			lib.GetObj(lib, ORD(ch), obj); dx := obj(Fonts.Char).dx
 		ELSE lib.GetObj(lib, ORD(ch), obj);
 			IF obj IS Display.Frame THEN dx := obj(Display.Frame).W; dX := dx * Printer.Unit; RETURN
-			ELSIF obj IS Styles.Style THEN dX := obj(Styles.Style).paraW; dx := SHORT(dX DIV ScnUnit); RETURN
+			ELSIF obj IS Styles.Style THEN dX := obj(Styles.Style).paraW; dx := SHORT(dX DIV Display.Unit); RETURN
 			ELSE dx := 2; dX := 2*Printer.Unit
 			END
 		END
@@ -565,10 +561,10 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 				ELSE dx := 0; dX := 0
 				END
 			ELSIF obj IS Display.Frame THEN G := obj(Display.Frame);
-				dx := G.W; dX := LONG(dx)*ScnUnit; d := FrameDsr(G); a := G.H - d
+				dx := G.W; dX := LONG(dx)*Display.Unit; d := FrameDsr(G); a := G.H - d
 			ELSIF obj IS Styles.Style THEN s := obj(Styles.Style); style := s;
-				dX := Styles.pageW; dx := SHORT(s.paraW DIV ScnUnit);
-				a := SHORT(s.gap DIV ScnUnit); d := 0;
+				dX := Styles.pageW; dx := SHORT(s.paraW DIV Display.Unit);
+				a := SHORT(s.gap DIV Display.Unit); d := 0;
 				IF R.hide THEN a := Max(1, a) ELSE G := Styles.NewFrame(s); INC(a, G.H) END
 			ELSE dx := 2; dX := 2*Printer.Unit; Height(Fonts.Default, a, d)
 			END;
@@ -597,7 +593,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		w := 0; len := 0; spc := 0; W := 0; Spc := 0;
 		w0 := R.w; W0 := R.W; len0 := R.len; brk := FALSE; tab := FALSE; nspc := R.nSpc;
 		asr := 0; dsr := 0; asr0 := R.asr; dsr0 := R.dsr;
-		Width := style.paraW; width := SHORT(Width DIV ScnUnit);
+		Width := style.paraW; width := SHORT(Width DIV Display.Unit);
 		WHILE (w + spc + w0 + dx < width) & (W + Spc + W0 + dX < Width) & ~brk DO
 			INC(len0);
 			IF (R.lib # NIL) & (~(R.lib IS Fonts.Font) OR (ch > " ")) THEN
@@ -636,7 +632,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		END;
 		IF (len = 0) & ~R.eot THEN Read END;
 		L.style := s;
-		lsp := SHORT(s.lsp DIV ScnUnit); dsr := SHORT(s.dsr DIV ScnUnit);	(*line spacing*)
+		lsp := SHORT(s.lsp DIV Display.Unit); dsr := SHORT(s.dsr DIV Display.Unit);	(*line spacing*)
 		IF (Styles.grid IN s.opts) & (lsp > 0) THEN
 			WHILE dsr < L.dsr DO INC(dsr, lsp) END;
 			L.dsr := dsr;  L.h := Max(lsp, L.asr+dsr); INC(L.h, (-L.h) MOD lsp)
@@ -672,7 +668,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	PROCEDURE AppendLines(F: Frame; x, y: INTEGER; org: LONGINT; L: Line; VAR Y: INTEGER);
 	VAR
 		L0: Line; Y0: INTEGER; org0: LONGINT;
-		i, botY: INTEGER;
+		botY: INTEGER;
 	BEGIN botY := F.bot; L0 := L; org0 := org; Y0 := Y;
 		Erase(F, x, y, botY, Y0 - botY); (**)NewLines(F, F.text.len+1, L, Y, org);
 		DisplaySec(F, x, y, Y0, org0, L0.next, L.next); BottomLine(F, x, y, Y, L, org);
@@ -682,9 +678,8 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	PROCEDURE ShowText (F: Frame; x, y: INTEGER; pos: LONGINT);
 	VAR
 		org, oldOrg, org0: LONGINT;
-		curY, Y0, Y1, dY, botY: INTEGER;
+		curY, Y0, dY, botY: INTEGER;
 		L, L1, oldL: Line;
-		loc: Location;
 	BEGIN	(* pos valid *)
 		RemTick(F, x, y);
 		botY := F.bot; curY := F.H - F.top;
@@ -743,7 +738,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END LocateOrg;
 
 	PROCEDURE LocateLine (F: Frame; y: INTEGER; VAR loc: Location);
-		VAR L: Line; org: LONGINT; cury: INTEGER;
+		VAR L: Line; cury: INTEGER;
 	BEGIN loc.org := F.org; cury := F.H - F.top; L := F.trailer.next;
 		WHILE (L.next # F.trailer) & (cury - L.h > y) & (cury - L.h - L.next.h >= F.bot) DO
 			INC(loc.org, L.len); DEC(cury, L.h); L := L.next
@@ -782,7 +777,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END LocateObj;
 
 	PROCEDURE LocatePos (F: Frame; pos: LONGINT; VAR loc: Location);
-		VAR L: Line; org, dX: LONGINT; cury, dx: INTEGER;
+		VAR dX: LONGINT; dx: INTEGER;
 	BEGIN LocateOrg(F, F.org, pos, loc);
 		IF pos >= loc.org + loc.lin.len THEN pos := loc.org + loc.lin.len - 1 ELSIF pos < F.org THEN pos := F.org END;
 		Width(F, loc.lin, loc.org, pos, dx, dX); loc.pos := pos; INC(loc.x, dx+loc.lin.off)
@@ -836,7 +831,6 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 *)
 	PROCEDURE TouchFrame(F: Frame; VAR M: Oberon.InputMsg): BOOLEAN;
 	VAR X, Y: INTEGER; b: Box; loc: Location; G: Display.Frame;
-		cx, cy, cw, ch: INTEGER;
 	BEGIN
 		IF F.trailer.next # F.trailer THEN
 			X := M.X-F.X-M.x; Y := M.Y-F.Y-M.y; LocateLine(F, Y, loc);
@@ -943,7 +937,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	VAR
 		oldL, oldL0, L, L0: Line;
 		oldorg, org, org0: LONGINT;
-		X, oldY, dY, Y, Y0, Y1, botY: INTEGER;
+		oldY, dY, Y, Y0, Y1, botY: INTEGER;
 	BEGIN
 		org := F.org; Y := F.H - F.top; L := F.trailer; botY := F.bot;
 		WHILE (L.next # F.trailer) & (org + L.next.len <= beg) DO	(* find line where beg lies in *)
@@ -1090,7 +1084,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	(*---user interface---*)
 
 	PROCEDURE TrackCaret* (F: Frame; x, y, X, Y: INTEGER; VAR keysum: SET);
-		VAR loc: Location; obj: Objects.Object; keys: SET;
+		VAR keys: SET;
 	BEGIN
 		IF F.trailer.next # F.trailer THEN keysum := {};
 			REPEAT
@@ -1112,7 +1106,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END TrackCaret;
 
 	PROCEDURE TrackSelection* (F: Frame; x, y, X, Y: INTEGER; VAR keysum: SET);
-		VAR loc: Location; obj: Objects.Object; keys: SET;
+		VAR loc: Location; obj: Objects.Object; modKeys, keys: SET; M: Oberon.SelectMsg;
 	BEGIN
 		IF F.trailer.next # F.trailer THEN
 			IF F.sel THEN FlipSelection(F, x, y, F.selBeg, F.selEnd) END;
@@ -1121,6 +1115,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 				LocateObj(F, F.left, Y - F.Y - y, F.selBeg, obj)
 			ELSE F.selBeg := loc
 			END;
+			F.sel := FALSE;
 			INC(loc.pos); INC(loc.x, loc.dx); F.selEnd := loc;
 			FlipSelection(F, x, y, F.selBeg, F.selEnd);
 			keysum := {};
@@ -1133,6 +1128,19 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 				END;
 				F.selEnd := loc
 			UNTIL keys = {};
+			(* ps - 3.4.98 *)
+			Input.KeyState(modKeys);
+			IF Input.SHIFT IN modKeys THEN
+				M.id := Oberon.get; M.F := NIL; M.sel := NIL; M.text := NIL; M.time := -1; Display.Broadcast(M);
+				IF (M.time > 0) & (M.text = F.text) & (M.sel IS Frame) THEN
+					IF M.beg > F.selBeg.pos THEN M.beg := F.selBeg.pos END;
+					IF M.end < F.selEnd.pos THEN M.end := F.selEnd.pos END;
+					FlipSelection(F, x, y, F.selBeg, F.selEnd);
+					LocatePos(F, M.beg, F.selBeg); LocatePos(F, M.end, F.selEnd);
+					FlipSelection(F, x, y, F.selBeg, F.selEnd);
+					M.F := M.sel; M.id := Oberon.set; Display.Broadcast(M);
+				END
+			END;
 			F.time := Oberon.Time(); F.sel := TRUE
 		END
 	END TrackSelection;
@@ -1185,18 +1193,23 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		END
 	END Show;
 
+	PROCEDURE CallCmd (cmd: ARRAY OF CHAR; F: Frame; pos: LONGINT; new: BOOLEAN);
+		VAR res: INTEGER; par: Oberon.ParList;
+	BEGIN
+		NEW(par);
+		par.frame := F; par.text := F.text; par.pos := pos;
+		Oberon.Call(cmd, par, new, res);
+		IF res > 0 THEN Texts.WriteString(W, "Call error: "); 
+			Texts.WriteString(W, Modules.resMsg);
+			Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+		END
+	END CallCmd;
+
 	PROCEDURE Call* (F: Frame; pos: LONGINT; new: BOOLEAN);
-		VAR S: Texts.Scanner; res: INTEGER; par: Oberon.ParList;
+		VAR S: Texts.Scanner;
 	BEGIN
 		Texts.OpenScanner(S, F.text, pos); Texts.Scan(S);
-		IF S.class = Texts.Name THEN NEW(par);
-			par.frame := F; par.text := F.text; par.pos := pos + S.len;
-			Oberon.Call(S.s, par, new, res);
-			IF res > 0 THEN Texts.WriteString(W, "Call error: "); 
-				Texts.WriteString(W, Modules.resMsg);
-				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-			END
-		END
+		IF S.class = Texts.Name THEN CallCmd(S.s, F, pos + S.len, new) END
 	END Call;
 
 	(*---message handling---*)
@@ -1208,8 +1221,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END Warning;
 
 	PROCEDURE Integrate(F: Frame; pos: LONGINT; obj: Objects.Object; new: BOOLEAN);
-		VAR ch: CHAR; lib: Objects.Library; N: Display.ControlMsg; ref: INTEGER; G: Display.Frame;
-			len: LONGINT;
+		VAR N: Display.ControlMsg; len: LONGINT;
 	BEGIN	(*clear XW.buf*)
 		WHILE obj # NIL DO
 			IF ~new THEN	(*unbind*)
@@ -1310,10 +1322,17 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		IF F.sel THEN
 			IF F.time > M.time THEN M.sel := F; M.time := F.time;
 				M.text := F.text; M.beg := F.selBeg.pos; M.end := Min(F.selEnd.pos, F.text.len)
+(*
 			ELSIF (F.text = M.text) & (F.selBeg.pos < M.beg) & (M.sel IS Frame) THEN	(* extend selection over frame boundaries *)
     		    IF (M.beg <= M.sel(Frame).org) & (F.selEnd.pos >= Pos(F, F.X+F.W, F.Y)) THEN
 					M.beg := F.selBeg.pos
   		      END
+*)
+			ELSIF F.text = M.text THEN	(* extend selection over frame boundaries *)
+				(* 7.4.98 - ps *)
+				IF (F.selBeg.pos < M.beg) & (F.selEnd.pos >= Pos(F, F.X+F.W, F.Y)) THEN M.beg := F.selBeg.pos END;
+				IF (F.selEnd.pos > M.end) & (F.selBeg.pos = F.org) THEN M.end := F.selEnd.pos END;
+				IF M.end > F.text.len THEN M.end :=  F.text.len END
 			END
 		END
 	END GetSelection;
@@ -1444,7 +1463,11 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 					END
 				END
 			ELSIF MM IN Keys THEN TrackWord(F, x, y, X, Y, pos, keysum);
-				IF (pos >= 0) & ~(MR IN keysum) THEN Call(F, pos, ML IN keysum) END
+				IF MR IN keysum THEN
+					IF (pos >= 0) & ~(ML IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
+				ELSE
+					IF pos >= 0 THEN Call(F, pos, ML IN keysum) END
+				END
 			ELSIF ML IN Keys THEN Oberon.Defocus; TrackCaret(F, x, y, X, Y, keysum);
 				IF F.car THEN
 					IF keysum = {ML, MM} THEN	(*copy from selection*)
@@ -1454,7 +1477,9 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 						Oberon.GetSelection(text, beg, end, time);
 						IF (time >= 0) & (F.carLoc.pos < F.text.len) THEN
 							Texts.OpenReader(R, F.text, F.carLoc.pos); Texts.Read(R, ch);
-							Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+							IF (R.lib # NIL) & (R.lib IS Fonts.Font) THEN
+								Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+							END
 						END
 					END
 				END
@@ -1514,9 +1539,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END ModifyDsc;
 
 	PROCEDURE Modify(F: Frame; VAR M: Display.ModifyMsg);
-	VAR
-		pos: LONGINT;
-		x, y, dw: INTEGER;
+	VAR x, y: INTEGER;
 	BEGIN x := M.x; y := M.y;
 		IF M.F = F THEN
 			RemTick(F, x, y); RemoveMarks(F);
@@ -1547,7 +1570,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 
 	PROCEDURE Handle* (F: Objects.Object; VAR M: Objects.ObjMsg);
 		VAR F1: Frame; bcast: BOOLEAN;
-			ref: INTEGER; x, y: INTEGER; dlink: Objects.Object;
+			x, y: INTEGER; dlink: Objects.Object;
 	BEGIN
 		WITH F: Frame DO
 			IF M IS Display.ModifyMsg THEN
@@ -1636,7 +1659,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 									IF M.id = car THEN FlipCaret(F, x, y)
 									ELSIF M.id = sel THEN FlipSelection(F, x, y, F.selBeg, F.selEnd)
 									ELSIF (M.id = arrow) & (F.H >= 16) THEN
-										Display.CopyPattern(Display.FG, Display.downArrow, x+F.X, y+F.Y, 2)
+										Display.CopyPattern(FullColor, Display.downArrow, x+F.X, y+F.Y, Display.invert)
 									END
 								END
 							END
@@ -1699,7 +1722,7 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 		IF (L.len = 1) & (pL.style # L.style) THEN asr := SHORT(L.style.gap DIV Printer.Unit); dsr := 0;
 			brk := TRUE	(*for printing: styles always break the line*)
 		ELSE brk := L.brk;
-			asr := SHORT(LONG(L.asr)*ScnUnit DIV Printer.Unit); dsr := SHORT(LONG(L.dsr)*ScnUnit DIV Printer.Unit)
+			asr := SHORT(LONG(L.asr)*Display.Unit DIV Printer.Unit); dsr := SHORT(LONG(L.dsr)*Display.Unit DIV Printer.Unit)
 		END
 	END LineExtend;
 
@@ -1740,6 +1763,11 @@ MODULE ScriptFrames; (* RS, Wed, 9-Jun-1993*)
 	END New;
 
 BEGIN
+	IF Display.Depth(0) # 1 THEN
+		BackCol := 14;  BarCol := 13;  FullColor := Display.FG - BackCol
+	ELSE
+		BackCol := Display.BG;  BarCol := Display.FG;  FullColor := Display.FG
+	END;
 	show := Show;
 	barW := Fonts.Default.height + 2;
 	top := Fonts.Default.height DIV 2; bot := top; left := barW + top; right := top;

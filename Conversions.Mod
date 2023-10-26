@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Conversions;	(** PRK / 20.01.97**)
+MODULE Conversions;	(** portable *)	(** PRK / 20.01.97**)
 
 (*
 	This module performs useful conversions between the different formats
@@ -39,7 +38,7 @@ VAR
 
 
 PROCEDURE BitPatternToStr (val: LONGINT; VAR str: ARRAY OF CHAR; base: LONGINT);
-	VAR i, j,shift, size: SHORTINT; r: LONGINT;
+	VAR i, j,shift, size: SHORTINT;
 BEGIN
 	ASSERT ((base=2) OR (base=8) OR (base=16));
 	IF	base = 2	THEN shift := 1; size := 32
@@ -81,7 +80,7 @@ END IntToStr;
 
 (** RealToStr -- convert a longreal to a representation in a given base (2..16) *)
 PROCEDURE RealToStr*(x: LONGREAL; VAR s: ARRAY OF CHAR; base: LONGINT);
-VAR e, h, l, n: LONGINT; i, j, pos: INTEGER; z: LONGREAL; d: ARRAY 16 OF CHAR;
+VAR h, l: LONGINT; d: ARRAY 16 OF CHAR;
 	
 BEGIN
 	IF (base # 2) & (base # 10) & (base # 16) THEN COPY("???", s); RETURN END;

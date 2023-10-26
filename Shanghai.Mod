@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Shanghai;	(* ps /   *)
+MODULE Shanghai;	(** portable *)	(* ps /   *)
 
 (* ToDo:
 	smaller board (64 -> 32)
@@ -24,7 +23,7 @@ MODULE Shanghai;	(* ps /   *)
 
 IMPORT
 	Files, Input, Objects, Fonts, Strings, Display, Display3, Printer, Printer3, Effects, Texts, Oberon, Gadgets,
-	Documents, Desktops, Out;
+	Documents, Desktops;
 
 CONST
 	Version = "V 1.0";
@@ -263,8 +262,8 @@ PROCEDURE FlashTiles (F: Frame; Q: Display3.Mask; x, y: INTEGER; tiles: ARRAY OF
 VAR i, time: LONGINT;
 BEGIN
 	FOR i := 0 TO cnt DO DrawTile(Q, 12, x, y, F.board[tiles[i]]) END;
-	time := Oberon.Time();
-	WHILE Oberon.Time() < time + Input.TimeUnit DO END;
+	time := Oberon.Time() + Input.TimeUnit;
+	WHILE Oberon.Time() - time < 0 DO END;
 	IF F.sel1 > 0 THEN DEC(cnt); DrawTile(Q, Display3.white, x, y, F.board[F.sel1]) END;
 	FOR i := 0 TO cnt DO DrawTile(Q, F.board[tiles[i]].col, x, y, F.board[tiles[i]]) END
 END FlashTiles;
@@ -360,11 +359,11 @@ BEGIN
 				Oberon.RemoveMarks(x, y, F.W, F.H);
 				Gadgets.MakeMask(F, x, y, M.dlink, Q);
 				IF nr = F.sel1 THEN
-					IF (Oberon.Time() < F.time + DoubleClick) & (F.sel2 > 0)  THEN RemoveTiles(F, Q, x, y)
+					IF (0 < F.time + DoubleClick - Oberon.Time()) & (F.sel2 > 0)  THEN RemoveTiles(F, Q, x, y)
 					ELSE F.sel1 := 0; DrawTile(Q, F.board[nr].col, x, y, F.board[nr])
 					END
 				ELSIF nr = F.sel2 THEN
-					IF (Oberon.Time() < F.time + DoubleClick) & (F.sel1 > 0)  THEN RemoveTiles(F, Q, x, y)
+					IF (0 < F.time + DoubleClick - Oberon.Time()) & (F.sel1 > 0)  THEN RemoveTiles(F, Q, x, y)
 					ELSE F.sel2 := 0; DrawTile(Q, F.board[nr].col, x, y, F.board[nr])
 					END
 				ELSE
@@ -623,7 +622,3 @@ BEGIN
 	Texts.WriteString(W, "Shanghai by P. Saladin "); Texts.WriteString(W, Version); Texts.WriteLn(W);
 	Texts.Append(Oberon.Log, W.buf)
 END Shanghai.
-
-System.Free Shanghai ~
-Gadgets.Insert Shanghai.New ~
-(Shanghai.NewDoc)

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Diskette0;
+MODULE Diskette0;	(** non-portable *)
 
 (* Native Oberon diskette driver
 	pjm 13.09.95	first version
@@ -89,7 +88,7 @@ VAR p: LONGINT;
 BEGIN
 	IF size > dmabufsize THEN
 		IF dmabufsize # MIN(LONGINT) THEN	(* deallocate previous buffer *)
-			Kernel.NewDMA(-dmabufsize, dmabuf, p);
+			Kernel.DisposeDMA(dmabufsize, dmabuf);
 			dmabufsize := MIN(LONGINT);  dmabuf := 0
 		END;
 		Kernel.NewDMA(size, dmabuf, p);  ASSERT(p = dmabuf);	(* allocate buffer *)
@@ -242,7 +241,7 @@ END CycleMedia;
 (* CopyDWord - Copy len dwords from src to dst. *)
 
 PROCEDURE CopyDWord(src, dst, len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV ESI, src[EBP]
 	MOV EDI, dst[EBP]
 	MOV ECX, len[EBP]
@@ -253,7 +252,7 @@ END CopyDWord;
 (* Do - Perform a floppy operation *)
 
 PROCEDURE Do(op, drive, sector, head, track, num: LONGINT;  VAR buf: ARRAY OF SYSTEM.BYTE): BOOLEAN;
-CONST MaxLoops = 12;  MaxTries = 2;
+CONST MaxLoops = 18;  MaxTries = 3;
 VAR s: SET;  t, i, loops, try: LONGINT;  dmabuf: LONGINT;  ok: BOOLEAN;  media: SHORTINT;
 BEGIN
 	FOR i := 0 TO 2 DO errors[i] := {} END;
@@ -362,8 +361,8 @@ BEGIN
 				curtrack := -1;  interrupt := FALSE;  (* reset possible late interrupt *)
 				SYSTEM.PORTIN(3F2H, SYSTEM.VAL(CHAR, s));  EXCL(s, 2);
 				SYSTEM.PORTOUT(3F2H, SYSTEM.VAL(CHAR, s));
-				t := Kernel.GetTimer()+2;	(* assume one GetTimer tick > 50us *)
-				REPEAT UNTIL Kernel.GetTimer() >= t;
+				t := Kernel.GetTimer();	(* assume one GetTimer tick > 50us *)
+				REPEAT UNTIL Kernel.GetTimer()-t >= 2;
 				INCL(s, 2);  SYSTEM.PORTOUT(3F2H, SYSTEM.VAL(CHAR, s));
 				state := Recal;  WaitInterrupt;
 				PutByte(8X);	(* sense *)

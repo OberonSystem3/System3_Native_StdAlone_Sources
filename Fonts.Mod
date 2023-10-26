@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Fonts; (*JG 16.3.94*)
+MODULE Fonts;	(** portable *) (*JG 16.3.94*)
 
 (**
 The Module Fonts implement the Oberon font manager. Fonts are collections 
@@ -25,7 +24,8 @@ of characters, each character being a pattern and and metric data.
 
 	CONST MaxRuns = 32; IndexSize = 256*4;
 		substitute* = -1; font* = 0; metric* = 1; (** Font types. *)
-
+		TraceMissing = TRUE;  TraceAlias = FALSE;
+		
 	TYPE 
 		Char* = POINTER TO CharDesc;
 		Font* = POINTER TO FontDesc;
@@ -49,6 +49,8 @@ of characters, each character being a pattern and and metric data.
 	VAR FontId*: CHAR;	(** Initial character of font files (.Fnt). *)
 			Default*: Font;	(** Default system screen font (typically Oberon10.Scn.Fnt). *)
 			theChar: Char;
+			default: Objects.Name;
+			conv: BOOLEAN;
 	 
 	PROCEDURE Put1 (VAR a: LONGINT; x: INTEGER);
 	VAR y: SHORTINT;
@@ -70,7 +72,7 @@ of characters, each character being a pattern and and metric data.
 	END ReadInt;
 
 	PROCEDURE *GetCharObj (L: Objects.Library; ref: INTEGER; VAR obj: Objects.Object);
-	CODE
+	CODE {SYSTEM.i386}
 		MOV EAX, L[EBP]
 		MOV EAX, 4[EAX]	; Objects.LibDesc ind
 		MOVSX EBX, ref[EBP]
@@ -196,14 +198,45 @@ of characters, each character being a pattern and and metric data.
 		F.minX := Default.minX; F.maxX := Default.maxX;
 		F.minY := Default.minY; F.maxY := Default.maxY;
 		F.ind := Default.ind;
-		Kernel.WriteString(F.name);  Kernel.WriteString(" not available");  Kernel.WriteLn
+		IF TraceMissing THEN
+			Kernel.WriteString("Missing: ");  Kernel.WriteString(F.name);  Kernel.WriteLn
+		END
 	END Substitute;
 
 	PROCEDURE *Load (L: Objects.Library);
-	VAR f: Files.File; R: Files.Rider; id: CHAR; i: INTEGER;
-			name: ARRAY 32 OF CHAR;
+	VAR f: Files.File; R: Files.Rider; id: CHAR; i, j: LONGINT;
+			name: Objects.Name;
 	BEGIN
-		WITH L: Font DO f := Files.Old(L.name);
+		WITH L: Font DO
+			f := Files.Old(L.name);
+			IF f = NIL THEN
+				COPY(L.name, name);  name[7] := 0X;
+				IF name = "Default" THEN
+					IF TraceAlias THEN Kernel.WriteString(L.name);  Kernel.WriteString(" -> ") END;
+					COPY(default, name);
+					i := 0;  WHILE name[i] # 0X DO INC(i) END;
+					j := 7;  WHILE L.name[j] # 0X DO name[i] := L.name[j];  INC(i);  INC(j) END;
+					name[i] := 0X;
+					IF TraceAlias THEN Kernel.WriteString(name);  Kernel.WriteLn END;
+					COPY(name, L.name);
+					f := Files.Old(name)
+				ELSE
+					name[6] := 0X;
+					IF conv & (name = "Syntax") THEN
+						IF TraceAlias THEN Kernel.WriteString(L.name);  Kernel.WriteString(" -> ") END;
+						name := "Oberon";
+						i := 6;  WHILE (L.name[i] >= "0") & (L.name[i] <= "9") DO name[i] := L.name[i];  INC(i) END;
+						IF L.name[i] = "j" THEN name[i] := "i";  INC(i)	(* Syntax italic bold -> Oberon italic *)
+						ELSIF L.name[i] = "m" THEN name[i] := "b";  INC(i)	(* Syntax medium -> Oberon bold *)
+						END;
+						WHILE L.name[i] # 0X DO name[i] := L.name[i];  INC(i) END;
+						name[i] := 0X;
+						IF TraceAlias THEN Kernel.WriteString(name);  Kernel.WriteLn END;
+						COPY(name, L.name);
+						f := Files.Old(name)
+					END
+				END
+			END;
 			IF f # NIL THEN
 				Files.Set(R, f, 0); Files.Read(R, id);
 				IF id = FontId THEN Files.Read(R, L.type);
@@ -239,5 +272,19 @@ of characters, each character being a pattern and and metric data.
 	END New;
 
 BEGIN FontId := 0DBX; NEW(theChar);
+	Kernel.GetConfig("FontConv", default);
+	conv := default[0] # "0";
+	default := "Oberon";
 	Objects.Register("Fnt", New)
 END Fonts.
+
+ (* Remarks:
+
+1. Screen fonts and printer fonts are stored in files with extensions .Scn.Fnt and .Prx.Fnt respectively (the x refers to x00dpi printer fonts). A full font name (like Syntax12b.Scn.Fnt) has to be specified to load a font. Should the font not be available, a substitute font is created. This has the same name but the wrong character metrics (often the Syntax10 font is used instead). A file with an .Mdx.Fnt extension is a metric font containing only metric data and no raster patterns. Each printer font has an associated metric font. A metric font is used to make measurements while printing. Sometimes the font module is clever enough to simulate the presence of a metric font by reading the metric data from a printer font (the metric fonts need not necessarily be available). If you need to find out the size of a character on paper, you should always request a metric font (it is faster to load and requires less memory than the printer fonts). Some Font modules support Truetype fonts implemented in the host operating system.
+
+2. Fonts are extensions of Libraries. Each letter of the font is a (virtual) object indexed by ASCII code. Note that to optimize garbage collection, the same object instance is returned for each call to the GetObj library method (no matter what font or character is involved). This is realized by copying the character raster and metrics from a specially compressed representation of the font data. The GetChar procedure fetches a character from the font using this mechanism. The PutObj, GenRef and Store methods of fonts have no function.
+
+3. The pattern (raster) of a character is only as large as required. The x, y, w, h values of a character metric specify the offset of the pattern from a virtual text baseline and the width and height of the pattern. Display.CopyPattern is used to draw the character patterns of the display. Help procedures like Display3.String hides the low-level display process and allows you to display strings at a time.
+
+4. The default font is Oberon10.Scn.Fnt. 
+*)

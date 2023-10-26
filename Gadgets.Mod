@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Gadgets; (* jm 18.1.95*)
+MODULE Gadgets;	(** portable *) (*  , jm 18.1.95*)
 
-(** The Gadgets module forms the basis of the Gadgets system. It defines the most important types, provide default message handlers and often used utility procedures. In addition, a few gadget specific messages are defined.
+(**The Gadgets module forms the basis of the Gadgets system. It defines the most important types, provide default message handlers and often used utility procedures. In addition, a few gadget specific messages are defined.
 *)
 
 (*
@@ -83,7 +82,7 @@ MODULE Gadgets; (* jm 18.1.95*)
 *)
 
 IMPORT
-	Objects, Fonts, Display, Display3, Effects, Oberon, Texts, Input, Files, Modules,
+	Objects, Display, Display3, Effects, Oberon, Texts, Input, Files, Modules,
 	Printer, Printer3, Attributes, Links, Viewers, Strings;
 	
 CONST
@@ -98,7 +97,6 @@ CONST
 	transparent* = 4;		(** Transparent or not. *)
 	lockedcontents* = 10;		(** All direct descendants are locked. *)
 
-	DisplayUnit = LONG(10000);
 	left = 2; middle = 1; right = 0;
 	
 TYPE
@@ -444,7 +442,7 @@ BEGIN
 		IF f # NIL THEN
 			(* do a consume *)
 			C.id := Display.drop; C.obj := F; F.slink := NIL; C.F := f; C.u := u0 + (x - X); C.v := v0 + (y - Y);
-			Display.Broadcast(C);
+			Display.Broadcast(C)
 		END;
 		M.res := 0 (* moved *)
 	ELSIF (keys = {middle}) OR (keys = {left}) THEN (* move frame, left key is a special hack, see docframes *)
@@ -557,7 +555,7 @@ BEGIN
 	END;
 END ReadRef;
 
-PROCEDURE MakeMaskFor(G: Frame; dlink: Objects.Object);
+PROCEDURE MakeMaskFor(G: Frame);
 VAR MM: Display3.UpdateMaskMsg; O: Display3.OverlapMsg; M: Display3.Mask;
 BEGIN
 	MM.F := G; Display.Broadcast(MM);
@@ -577,7 +575,7 @@ PROCEDURE *MakeMask0(G: Frame; X, Y: INTEGER; dlink: Objects.Object; VAR M: Disp
 VAR ox, oy, x, y, w, h, b, b2: INTEGER; R: Display3.Mask; v: Objects.Object;
 BEGIN
 	IF G.mask = NIL THEN (* mask has been invalidated *)
-		MakeMaskFor(G, dlink)
+		MakeMaskFor(G)
 	END;
 	M := G.mask; M.x := X; M.y := Y + G.H - 1;
 	(* clear the clipping port *)
@@ -590,7 +588,7 @@ BEGIN
 			IF v IS View THEN
 				WITH v: View DO
 					IF v.mask = NIL THEN (* very bad *)
-						MakeMaskFor(v, v.dlink)
+						MakeMaskFor(v)
 					END;
 					ox := v.mask.x; oy := v.mask.y;
 					v.mask.x := v.absX; v.mask.y := v.absY + v.H - 1; (* place mask at absolute position *)
@@ -628,7 +626,7 @@ BEGIN
 END MakeMask0;
 
 PROCEDURE P(x : INTEGER) : INTEGER;
-BEGIN RETURN SHORT(x * DisplayUnit DIV Printer.Unit) END P;
+BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit) END P;
 
 PROCEDURE *EnumMakePrinterMask(X,Y,W,H: INTEGER);
 VAR R, T, L, B: INTEGER; 
@@ -638,7 +636,7 @@ BEGIN
 	Display3.Add(pMask, L, B, R-L, T-B);
 END EnumMakePrinterMask;
 
-PROCEDURE MakePMask0(G: Frame; X, Y: INTEGER; dlink: Objects.Object; VAR M: Display3.Mask);
+PROCEDURE MakePMask0(G: Frame; X, Y: INTEGER; VAR M: Display3.Mask);
 VAR MM: Display3.UpdateMaskMsg;
 BEGIN
 	IF G.mask = NIL THEN (* mask has been invalidated *)
@@ -672,7 +670,7 @@ PROCEDURE *MakePrinterMask0(G: Frame; X, Y: INTEGER; dlink: Objects.Object; VAR 
 VAR ox, oy, x, y, w, h, b, b2: INTEGER; R, R0: Display3.Mask; v: Objects.Object;
 BEGIN 
 	(* make the basic mask *)
-	MakePMask0(G, X, Y, dlink, M);
+	MakePMask0(G, X, Y, M);
 	
 	(* scale it *)
 	ScaleMask(X, Y, M, M);
@@ -710,18 +708,43 @@ END MakePrinterMask0;
 
 (** Execute a string as an Oberon command. The parameters executor, dlink, sender, receiver are copied to the global variables executorObj, context, senderObj, receiverObj respectively. Dlink must be the parent of executor. If a '%' is leading the command, no Oberon.Par is set up. *)
 PROCEDURE Execute*(cmd: ARRAY OF CHAR; executor, dlink, sender, receiver: Objects.Object);
-VAR T, T0: Texts.Text; S: Attributes.Scanner; ch: CHAR; res, cx, cy, cw, chl, i, j: INTEGER;
+VAR T: Texts.Text; S: Attributes.Scanner; ch: CHAR; res, cx, cy, cw, chl, i, j: INTEGER;
 	oldcontext, obj: Objects.Object; str: BOOLEAN;
 BEGIN
 	IF cmd[0] = 0X THEN RETURN END;
+	ch := 0X; T := NIL;
 	Display.GetClip(cx, cy, cw, chl); Display.ResetClip;
 	executorObj := executor; context := dlink; senderObj := sender; receiverObj := receiver;
+	
+	NEW(par); par.obj := executor;
+	(* calculate outermost frame in the menuviewer*)
+	IF context = NIL THEN context := executor END; (* may be the outside most frame *) 
+	obj := context;
+	LOOP
+		IF (obj = NIL) OR (obj.dlink = NIL) OR (obj.dlink IS Viewers.Viewer) THEN EXIT END;
+		obj := obj.dlink
+	END;
+	IF (obj # NIL) & (obj IS Display.Frame) THEN par.frame := obj(Display.Frame)
+	ELSE par.frame := Oberon.Par.frame (* hack, otherwise Oberon.Call traps *)
+	END;
+
 	(* modified ps - 6.6.96 *)
 	IF cmd[0] = "%" THEN
+		par.text := emptyText; par.pos := 0;
 		i := 1;
-		WHILE (cmd[i] # 0X) & (cmd[i] >  " ") DO cmd[i-1] := cmd[i]; INC(i) END;
-		cmd[i-1] := 0X;
-		par := Oberon.Par
+		WHILE cmd[i] >  " " DO cmd[i-1] := cmd[i]; INC(i) END;
+		cmd[i-1] := 0X
+	ELSIF cmd[0] = "$" THEN
+		NEW(par.text); Texts.Open(par.text, "");
+		i := 1;
+		WHILE cmd[i] > " " DO
+			Texts.Write(W, cmd[i]); cmd[i-1] := cmd[i]; INC(i)
+		END;
+		cmd[i-1] := 0X; par.pos := i-1;
+		WHILE cmd[i] # 0X DO
+			Texts.Write(W, cmd[i]); INC(i)
+		END;
+		Texts.Append(par.text, W.buf)
 	ELSE
 		IF ("A" <= CAP(cmd[0])) & (CAP(cmd[0]) <= "Z") THEN (* direct command *)
 			i := 0;
@@ -743,8 +766,6 @@ BEGIN
 		END;
 
 		(* set up parameter block *)
-		NEW(par);
-		par.obj := executor;
 		IF cmd[j] # 0X THEN
 			str := FALSE;
 			WHILE ~S.R.eot & (str OR (ch # "~")) DO
@@ -757,18 +778,7 @@ BEGIN
 			par.text := emptyText;
 			par.pos := 0
 		END;
-		cmd[i] := 0X;
-
-		(* calculate outermost frame in the menuviewer*)
-		IF context = NIL THEN context := executor END; (* may be the outside most frame *) 
-		obj := context;
-		LOOP
-			IF (obj = NIL) OR (obj.dlink = NIL) OR (obj.dlink IS Viewers.Viewer) THEN EXIT END;
-			obj := obj.dlink
-		END;
-		IF (obj # NIL) & (obj IS Display.Frame) THEN par.frame := obj(Display.Frame)
-		ELSE par.frame := Oberon.Par.frame (* hack, otherwise Oberon.Call traps *)
-		END
+		cmd[i] := 0X
 	END;
 	
 	IF executor # NIL THEN oldcontext := executor.dlink; executor.dlink := context END;
@@ -1123,6 +1133,20 @@ BEGIN
 	END
 END BindObj;
 
+PROCEDURE findobj(obj: Objects.Object; link: Links.Link; VAR M: Objects.FindMsg);
+	VAR name: Objects.Name;
+BEGIN
+	GetObjName(obj, name);
+	IF name = M.name THEN M.obj := obj END;
+	WHILE (link # NIL) & (M.obj = NIL) DO
+		IF link.obj # NIL THEN
+			GetObjName(link.obj, name);
+			IF name = M.name THEN M.obj := link.obj END
+		END;
+		link := link.next
+	END
+END findobj;
+
 PROCEDURE *ObjectHandler(obj: Objects.Object; VAR M: Objects.ObjMsg);
 VAR name: ARRAY 64 OF CHAR; obj0: Object; ch: CHAR;
 BEGIN
@@ -1166,7 +1190,7 @@ BEGIN
 			END
 		ELSIF M IS Objects.FindMsg THEN
 			WITH M: Objects.FindMsg DO
-				GetObjName(obj, name); IF name = M.name THEN M.obj := obj END
+				findobj(obj, obj.link, M)
 			END
 		END
 	END
@@ -1203,14 +1227,11 @@ BEGIN
 					IF InActiveArea(F, M) & (keys = {1}) THEN ExecuteAttr(F(Frame), "Cmd", M.dlink, NIL, NIL) END;
 					M.res := 0
 				ELSIF ~IsLocked(F, M.dlink) THEN MoveFrame(F, M)
-				ELSE Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y) 
 				END
 			ELSIF Effects.InCorner(M.X, M.Y, x, y, w, h) & ~(lockedsize IN F.state) THEN SizeFrame(F, M)
 			ELSIF (Effects.InBorder(M.X, M.Y, x, y, w, h) OR Effects.InCorner(M.X, M.Y, x, y, w, h)) THEN
 				MoveFrame(F, M)
-			ELSE Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y)
 			END
-		ELSE Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y)
 		END
 	END
 END TrackFrame;
@@ -1278,11 +1299,10 @@ BEGIN
 			END
 		ELSIF M IS Objects.FindMsg THEN
 			WITH M: Objects.FindMsg DO
-				GetObjName(F, name);
-				IF name = M.name THEN M.obj := F
-				ELSIF F.obj # NIL THEN
-					GetObjName(F.obj, name); IF name = M.name THEN M.obj := F.obj END;
-				END
+				IF F.obj # NIL THEN
+					GetObjName(F.obj, name); IF name = M.name THEN M.obj := F.obj END
+				END;
+				findobj(F, F.link, M)
 			END
 		ELSIF M IS Display.FrameMsg THEN
 			WITH M: Display.FrameMsg DO
@@ -1704,7 +1724,7 @@ PROCEDURE Parse(VAR S:Texts.Scanner; VAR A: Attributes.Attr; VAR errpos: LONGINT
 VAR sname: ARRAY 32 OF CHAR; i: Attributes.IntAttr; r: Attributes.RealAttr; s: Attributes.StringAttr; a, a0: Attributes.Attr;
 BEGIN
 	A := NIL; errpos := -1;
-	WHILE S.class =  Texts.Name DO
+	WHILE S.class IN {Texts.Name, Texts.String} DO
 		COPY(S.s, sname);
 		Texts.Scan(S);
 		IF (S.class =  Texts.Char) & (S.c = "=") THEN
@@ -1759,13 +1779,6 @@ BEGIN
 	Texts.OpenWriter(W); Texts.OpenWriter(WW); Texts.OpenWriter(mW);
 	NEW(emptyText); Texts.Open(emptyText, "");
 	LoadAliases;
-(*
-	Texts.WriteString(W, "Gadgets");
-	(* Texts.SetFont(W, Fonts.This("Oberon8.Scn.Fnt")); *) Texts.SetOffset(W, 6);
-	Texts.WriteString(W, "tm");
-	Texts.SetFont(W, Fonts.Default); Texts.SetOffset(W, 0);
-	Texts.WriteString(W, " jm 21.7.95"); Texts.WriteLn(W); Log;
-*)
 
 	IF Display.Width < 800 THEN
 		Texts.WriteString(W, "Higher resolution recommended for Gadgets");
@@ -1780,7 +1793,7 @@ BEGIN
 	
 	framehandle := FrameHandler; objecthandle := ObjectHandler;
 	MakeMask := MakeMask0; MakePrinterMask := MakePrinterMask0;
-	Oberon.Collect
+	Oberon.Collect()
 END Gadgets.
 
 (** Remarks:
@@ -1826,7 +1839,7 @@ Each gadget has a mask that shows which areas of it are visible. The mask field 
 Gadgets may execute Oberon commands (procedures Execute and ExecuteAttr) specified by their command attributes. Commands can take their parameters from the user interface. For this purpose, several global variables are exported from the gadgets module. The variable context identifies the context, normally the parent, of the gadget executing the command. The context of a gadget is found in the dlink field of a Display.FrameMsg the gadget receives. The variable executorObj identifies the gadget executing the command, which is always the same as Oberon.Par.obj. The senderObj and receiverObj identifies the objects involved in consume operations, and may be NIL.
 
 11. Aliasing
-The Gadgets module implements a simple aliasing feature. This allows the user to give more meaningful abbreviations or names to the not so easy to remember object generator procedures. The principle client of aliasing are the Gadgets.Insert and Gadgets.Link commands. The aliases are found in the Oberon.Text section called Aliases. The aliases are read into an internal lookup table when the Gadgets module is loaded for the first time. The format of each line of the Aliases section is:
+The Gadgets module implements a simple aliasing feature. This allows the user to give more meaningful abbreviations or names to the not so easy to remember object generator procedures. The principle client of aliasing are the Gadgets.Insert and Gadgets.Link commands. The aliases are found in the Oberon.Text/Registry section called Aliases. The aliases are read into an internal lookup table when the Gadgets module is loaded for the first time. The format of each line of the Aliases section is:
 
 			Alias=GeneratorProc
 

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,26 +13,18 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-(*
-	Copyright (c) 1993 by Institut fuer Computersysteme, ETH Zuerich.
-	For internal use only. Cannot be sold and must not be distributed further in any form, even if modified.
-*)
+MODULE PS;	(** portable *)
 
-MODULE PS;	(* rs *)
-
-IMPORT Texts, Oberon, Pictures, Files, Reals, Objects, Out;
+IMPORT Display, Texts, Oberon, Pictures, Files;
 
 CONST
 	(*PW = 576; PH = 792;	*)
 	PW = 580; PH = 820;	(*dia*)
-	pw0 = 550; ph0 = 800;	(*laserwriter*)
-	MaxN = 128;
 	EOL = 0DX;
 
 	PROCEDURE FadeUp(P: Pictures.Picture; max: INTEGER);	(*fade picture colors to maximum*)
 	VAR i, r, g, b, mr, mg, mb, n: INTEGER;
 		f: REAL;
-		error: ARRAY 32 OF CHAR;
 	BEGIN
 		n := SHORT(ASH(1, P.depth));
 		i := 0; mr := 0; mg := 0; mb := 0;
@@ -46,7 +37,6 @@ CONST
 		END;
 		IF mg > mr THEN mr := mg END;
 		IF mb > mr THEN mr := mb END;
-		error := "no color palette";
 		f := max / mr;
 		i := 0;
 		WHILE i < n DO
@@ -77,7 +67,7 @@ CONST
 		x, y, k, i, h0, h1, n: INTEGER;
 		tx, ty, dw: REAL;
 		h: ARRAY 128 OF INTEGER;
-		rle, a3, rot, eps, portrait: BOOLEAN;
+		rle, a3, rot, eps: BOOLEAN;
 		name: ARRAY 32 OF CHAR;
 		adjust: REAL;
 		linew: LONGINT;
@@ -127,14 +117,10 @@ CONST
 			WHILE i > 0 DO DEC(i); Files.Write(R, d[i]) END
 		END Real;
 	
-		PROCEDURE ScaleTo(w, h, W, H: INTEGER; adjust: REAL; VAR tx, ty, dw: REAL; VAR rot: BOOLEAN);
+		PROCEDURE ScaleTo(w, h, W, H: INTEGER; adjust: REAL; VAR tx, ty, dw: REAL; rot: BOOLEAN);
 		(*compute translation vector (tx, ty) scaling factor dx in order to fit [w, h] optimally into [W, H]*)
-		VAR
-			d0, d1: REAL;
+		VAR d0, d1: REAL;
 		BEGIN
-			rot := (w > h) # (W > H);
-			IF portrait THEN rot := FALSE END;
-			IF rot THEN Out.String("rot") ELSE Out.String("~rot") END; Out.Ln;
 			IF rot THEN d0 := H/w; d1 := W/h ELSE d0 := W/w; d1 := H/h END;
 			IF d0 < d1 THEN dw := d0*adjust ELSE dw := d1*adjust END;
 			IF rot THEN tx := (W + dw*h)/2; ty := (H - dw*w)/2
@@ -152,7 +138,7 @@ CONST
 		PROCEDURE WColTab(n: INTEGER);
 		VAR
 			r, g, b: ARRAY 256 OF INTEGER;
-			i, d, k: INTEGER;
+			i, d: INTEGER;
 		BEGIN d := SHORT(ASH(1, P.depth));
 			i := 0; WHILE i < d DO Pictures.GetColor(P, i, r[i], g[i], b[i]); INC(i) END;
 			WHILE i < n DO r[i] := 0; g[i] := 0; b[i] := 0; INC(i) END;
@@ -177,7 +163,7 @@ CONST
 		PROCEDURE DateTime;
 		VAR t, d: LONGINT;
 			PROCEDURE Pair(ch: CHAR; n: LONGINT);
-			BEGIN Files.Write(R, ch); Files.Write(R, CHR(n DIV 10+30H)); Files.Write(R, CHR(n MOD 10 +30H))
+			BEGIN Files.Write(R, ch); Files.Write(R, CHR(n DIV 10 MOD 10+30H)); Files.Write(R, CHR(n MOD 10 +30H))
 			END Pair;
 		BEGIN Oberon.GetClock(t, d);
 			Pair(" ", d MOD 32); Pair(".", (d DIV 32) MOD 16); Pair(".", (d DIV (32*16)));	(*date*)
@@ -212,15 +198,16 @@ CONST
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		NEW(P); Pictures.Open(P, S.s, TRUE);
 		 COPY(S.s, name);
-		FadeUp(P, 255);
-		Texts.Scan(S); rle := TRUE; a3 := FALSE; eps := FALSE; portrait := FALSE;
+		FadeUp(P, 255); rot := FALSE;
+		Texts.Scan(S); rle := FALSE; a3 := FALSE; eps := FALSE;
 		IF (S.class = Texts.Char) & (S.c = Oberon.OptionChar) THEN Texts.Scan(S);
 			IF S.class = Texts.Name THEN k := 0;
 				WHILE S.s[k] # 0X DO
 					IF S.s[k] = "r" THEN rle := TRUE END;
 					IF S.s[k] = "a" THEN a3 := TRUE END;
 					IF S.s[k] = "e" THEN eps := TRUE END;
-					IF S.s[k] = "p" THEN portrait := TRUE END;
+					IF S.s[k] = "l" THEN rot := TRUE END;
+					IF S.s[k] = "p" THEN rot := FALSE END;
 					INC(k)
 				END;
 				Texts.Scan(S)
@@ -231,7 +218,7 @@ CONST
 		IF rle THEN Texts.Open(T, "PS.HeaderR.Text" ) ELSE Texts.Open(T, "PS.Header.Text") END;
 		IF T.len > 0 THEN
 			ChName(name); F := Files.New(name); Files.Set(R, F, 0);
-			IF a3 THEN ScaleTo(P.width, P.height, PH, PH*14142 DIV 10000, adjust, tx, ty, dw, rot)	(*A3 page*)
+			IF a3 THEN ScaleTo(P.width, P.height, PH, SHORT(PH*14142 DIV Display.Unit), adjust, tx, ty, dw, rot)	(*A3 page*)
 			ELSE ScaleTo(P.width, P.height, PW, PH, adjust, tx, ty, dw, rot)
 			END;
 			IF eps THEN EPSHeader(P, tx, ty, dw, rot) ELSE Str("%!"); Files.Write(R, EOL) END;
@@ -283,7 +270,7 @@ BEGIN
 END PS.
 
 PS.PictToPost name ["\rae"][adjust] ~ r = run length encoding; e = EPS; a = A3
-PS.PictToPost  Screen.Pict \rpe 0.9 ~	
+PS.PictToPost  Figure3.Pict \re 0.9 ~	
 Helv.ps
 
-Hex.Open Screen.ps
+Hex.Open Clown.ps

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HPCalc;	(** prk   **)
+MODULE HPCalc;	(** portable *)	(** prk   **)
 
 (*
 	Welcome to HPCalc.
@@ -28,6 +27,11 @@ MODULE HPCalc;	(** prk   **)
 	
 	
 	HPCalc history:
+	
+	2.04 / 
+		o accept hex numbers in every mode (xyzH)
+		o accept dec numbers in every mode (xyz.)
+		o SignOn costant not exported anymore (otherwise the sym file is changed!)
 	
 	2.03 / 05.02.97
 		o new functions: ARCSIN, ARCCOS, ARCTAN
@@ -97,19 +101,17 @@ MODULE HPCalc;	(** prk   **)
 			
 *)
 
-IMPORT
-	Out,
-	Conversions, Panels, Documents, PanelDocs, Desktops,
-	BIT, Reals, MathL, Texts, Strings, Oberon, Objects, Display, Attributes, Links, Gadgets, TextFields;
+IMPORT Conversions, Panels, Documents, PanelDocs, Desktops, BIT, Reals, MathL, Texts, Strings, Oberon, Objects, Display,
+	Attributes, Links, Gadgets, TextFields;
  
 CONST
-	PanelLogo = "Calculator 2.03";
-	SignOn* = "HPCalc 2.03 -- PRK / 05.02.97";
+	PanelLogo = "Calculator 2.04";
+	SignOn = "HPCalc 2.04 -- PRK";
 
 	StackSize = 64;
 
 	(* Modes *)
-	NofModes = 2; Real = 0; Integer = 1;
+	Real = 0; Integer = 1;
 	
 	IntOnly = {Integer}; RealOnly = {Real}; IntReal = {Integer, Real};
 	
@@ -146,14 +148,11 @@ TYPE
 	
 	FunctionClass = POINTER TO FunctionClassDesc;
 	FunctionClassDesc = RECORD (FunctionsDesc)
-		next: FunctionClass;
-		p: Panels.Panel
+		next: FunctionClass
 	END;
 	
 VAR
-	ModeName: ARRAY 2, 16 OF CHAR;
 	StatusMsg: ARRAY 3 OF Name;
-	Lib: Objects.Library;
 	Func: FunctionClass;
 	W: Texts.Writer;
 	
@@ -225,7 +224,6 @@ BEGIN
 END ResetStack;
 
 PROCEDURE ResetModel (m: CalcModel);
-	VAR o: Objects.Object;
 BEGIN
 	ResetStack (m);
 	m.Mode := Real; m.Base := 10;
@@ -233,7 +231,7 @@ BEGIN
 END ResetModel;
 
 PROCEDURE ChangeMode (m: CalcModel; from, to: SHORTINT);
-	VAR i, l, h: LONGINT;
+	VAR i: LONGINT;
 	
 	PROCEDURE Convert (VAR h, l: LONGINT);
 		VAR r: LONGREAL;
@@ -255,9 +253,8 @@ BEGIN
 END ChangeMode;
 
 PROCEDURE GetModelValue (F: CalcModel; pos: INTEGER; VAR s: ARRAY OF CHAR): INTEGER;	(* get textual value from stack *)
-	VAR	lr: LONGREAL; l, h, tos: LONGINT;
+	VAR	lr: LONGREAL; l, h: LONGINT;
 BEGIN
-	tos := F.TOS;
 	(* Check Range *)
 	IF (F.TOS <= pos*2) THEN
 		COPY ("", s); IF pos < 4 THEN RETURN 0	ELSE RETURN -1	END
@@ -351,6 +348,10 @@ PROCEDURE DoRealFunction (m: CalcModel; VAR FN: ARRAY OF CHAR);
 BEGIN
 	IF FN = "ABS" THEN 
 		PopR (m, b); r := ABS (b)
+	ELSIF FN = "MAXL" THEN
+		r := MAX(LONGINT)
+	ELSIF FN = "MINL" THEN
+		r := MIN(LONGINT)
 	ELSIF FN = "SIN" THEN
 		PopR (m, b); r := MathL.sin (b)
 	ELSIF FN= "COS" THEN 
@@ -405,10 +406,14 @@ BEGIN
 END DoRealFunction;
 
 PROCEDURE DoIntegerFunction (m: CalcModel; VAR FN: ARRAY OF CHAR);
-	VAR a, b, r: LONGINT; t, u, v: SET;
+	VAR a, b, r: LONGINT;
 BEGIN
 	IF FN = "+" THEN
 		PopI (m, b); PopI (m, a); r := a+b
+	ELSIF FN = "MAXL" THEN
+		r := MAX(LONGINT)
+	ELSIF FN = "MINL" THEN
+		r := MIN(LONGINT)
 	ELSIF FN = "-" THEN
 		PopI (m, b); PopI (m, a); r := a-b
 	ELSIF FN = "*" THEN
@@ -445,7 +450,7 @@ BEGIN
 END DoIntegerFunction;
 
 PROCEDURE Calc;
-	VAR r, r1: LONGREAL; tmp, name: ARRAY 64 OF CHAR; j, l, l1: LONGINT; number: BOOLEAN; ch: CHAR; R: Texts.Reader;
+	VAR r, r1: LONGREAL; tmp: ARRAY 64 OF CHAR; j, l: LONGINT; hex, number: BOOLEAN; ch: CHAR; R: Texts.Reader;
 		m: CalcModel; o, dlink: Objects.Object;
 	
 	PROCEDURE Read;
@@ -465,15 +470,26 @@ BEGIN
 	LOOP
 		WHILE ch=20X DO Read END;
 		IF ch = 0X THEN EXIT END;
-		j := 0; number := TRUE;
+		j := 0; number := TRUE; hex := FALSE;
+		IF (ch = "-") & (j=0) THEN tmp[0] := "-"; j := 1; Read END;
 		WHILE (ch # 20X) & (ch # 0X) DO
-			number := number & (((ch="-") & (j=0)) OR Strings.IsHexDigit (ch) OR ((m.Mode = Real) & (ch = ".")));
-			tmp[j] := Strings.UpperCh (ch); INC (j); Read
+			number := number & ~hex & (Strings.IsHexDigit(ch) OR (ch = ".") OR (ch = "H"));
+			hex := ch = "H";
+			tmp[j] := ch; INC (j);
+			Read
 		END;
 		tmp[j] := 0X;
 		number := number & ~(tmp="-");
 		IF number THEN
-			IF m.Mode = Real THEN Strings.StrToReal (tmp, r); PushR (m, r)
+			IF hex THEN
+				tmp[j-1] := 0X;	(*delete H*)
+				Conversions.StrToInt (tmp, l, 16);
+				IF m.Mode = Real THEN PushR(m , l) ELSE PushI(m, l) END
+			ELSIF tmp[j-1] = "." THEN
+				Conversions.StrToInt (tmp, l, 10);
+				IF m.Mode = Real THEN PushR(m , l) ELSE PushI(m, l) END
+			ELSIF m.Mode = Real THEN
+				Strings.StrToReal (tmp, r); PushR (m, r)
 			ELSE
 				Conversions.StrToInt (tmp, l, m.Base); PushI (m, l)
 			END
@@ -641,7 +657,7 @@ BEGIN
 END NewLockedTF;
 
 PROCEDURE NewView (gen: ARRAY OF CHAR; model: Objects.Object; field: ARRAY OF CHAR): Gadgets.Frame;
-	VAR v: Objects.Object; l: Objects.LinkMsg; res: INTEGER;
+	VAR v: Objects.Object;
 BEGIN
 	IF gen = "BasicGadgets.NewButton" THEN v := NewButton("", "") ELSE v := Gadgets.CreateObject(gen) END;
 	IF (gen = "HPCalc.NewLockedTF") OR (gen = "TextFields.NewTextField") THEN v(Gadgets.Frame).W := TextFieldW END;
@@ -750,7 +766,6 @@ END Do;
 
 PROCEDURE Init;	(* module initialisation *)
 BEGIN
-	ModeName[0] := "Real"; ModeName[1] := "Integer";
 	StatusMsg [0] := "done"; StatusMsg[1] := "error"; StatusMsg[2] := "undef instruction";
 	
 	NEW (Func);
@@ -763,6 +778,8 @@ BEGIN
 	NewFunction ("Math", "NEG", "NEG", IntReal);
 	NewFunction ("Math", "ABS", "ABS", IntOnly);
 	NewFunction ("Math", "INV", "1/x", RealOnly);
+	NewFunction ("Math", "MAXL", "MAXL", IntReal);
+	NewFunction ("Math", "MINL", "MINL", IntReal);
 
 	NewFunction ("Logic", "AND", "AND", IntOnly);
 	NewFunction ("Logic", "OR", "OR", IntOnly);

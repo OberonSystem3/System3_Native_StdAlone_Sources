@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -16,7 +15,7 @@ of the source code to another platform with the name OBERON. *)
 
 MODULE Display;
 
-(* Native Oberon trace display driver, pmuller 28.09.95 *)
+(* Native Oberon trace display driver, pjm *)
 
 	IMPORT Kernel, SYSTEM, Objects;
 	
@@ -32,7 +31,10 @@ MODULE Display;
 		get* = 0; set* = 1; reset* = 2; (*SelectMsg id*)
 		drop* = 0; integrate* = 1; (*ConsumeMsg id*)
 		
-	TYPE Pattern* = LONGINT;
+		unknown* = 0; index8* = 8; color555* = 16; color565* = 17; color664* = 18; color888* = 24; color8888* = 32;
+	
+	TYPE Color* = LONGINT;
+			Pattern* = LONGINT;
 			PatternPtr = POINTER TO RECORD w, h, pixmap: SHORTINT END;
 			List = POINTER TO ListDesc;
 			ListDesc = RECORD
@@ -104,17 +106,17 @@ MODULE Display;
 
 		Pat: List;
 
-	PROCEDURE Map*(X: INTEGER): LONGINT;
+	PROCEDURE Map*(x: LONGINT): LONGINT;
 	BEGIN
-		Kernel.WriteString("Map(");  Kernel.WriteInt(X, 1);  Kernel.WriteString(") ");
+		Kernel.WriteString("Map(");  Kernel.WriteInt(x, 1);  Kernel.WriteString(") ");
 		RETURN 0
 	END Map;
 	
-	PROCEDURE AdjustClip*(X, Y, W, H: INTEGER);
+	PROCEDURE AdjustClip*(x, y, w, h: LONGINT);
 	BEGIN
-		Kernel.WriteString("AdjustClip(");  Kernel.WriteInt(X, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(Y, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(W, 1);
-		Kernel.WriteChar(",");  Kernel.WriteInt(H, 1);  Kernel.WriteString(") ")
+		Kernel.WriteString("AdjustClip(");  Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(y, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(w, 1);
+		Kernel.WriteChar(",");  Kernel.WriteInt(h, 1);  Kernel.WriteString(") ")
 	END AdjustClip;
 
 	PROCEDURE GetDim*(pat: Pattern; VAR w, h: INTEGER);
@@ -128,7 +130,7 @@ MODULE Display;
 		Kernel.WriteString("ResetClip ")
 	END ResetClip;
 	
-	PROCEDURE SetClip*(x, y, w, h: INTEGER);
+	PROCEDURE SetClip*(x, y, w, h: LONGINT);
 	BEGIN
 		Kernel.WriteString("SetClip(");  Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");
 		Kernel.WriteInt(y, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(w, 1);  
@@ -141,82 +143,96 @@ MODULE Display;
 		x := 0;  y := 0;  w := Width;  h := Height
 	END GetClip;
 	
-	PROCEDURE SetColor*(col, red, green, blue: INTEGER);	(* 0 <= col, red, green, blue < 256 *)
+	PROCEDURE SetColor*(col: Color; red, green, blue: LONGINT);	(* 0 <= col, red, green, blue < 256 *)
 	BEGIN
 		Kernel.WriteString("SetColor(");  Kernel.WriteInt(col, 1);  Kernel.WriteChar(",");
 		Kernel.WriteInt(red, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(green, 1);  Kernel.WriteChar(",");
 		Kernel.WriteInt(blue, 1);  Kernel.WriteString(") ")
 	END SetColor;
 
-	PROCEDURE GetColor*(col: INTEGER; VAR red, green, blue: INTEGER);
+	PROCEDURE GetColor*(col: Color; VAR red, green, blue: INTEGER);
 	BEGIN
 		Kernel.WriteString("GetColor(");  Kernel.WriteInt(col, 1);  Kernel.WriteString(") ");
-		red := 0;  green := 0;  blue := 0
+		IF col < 0 THEN
+			red := SHORT(ASH(col, -16) MOD 256);
+			green := SHORT(ASH(col, -8) MOD 256);
+			blue := SHORT(col MOD 256)
+		ELSE
+			red := 0;  green := 0;  blue := 0
+		END
 	END GetColor;
 
-	PROCEDURE Dot*(col, x, y, mode: INTEGER);
+	PROCEDURE RGB*(red, green, blue: LONGINT): Color;
+	BEGIN
+		Kernel.WriteString("RGB(");  Kernel.WriteInt(red, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(green, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(blue, 1);
+		Kernel.WriteString(") ");
+		RETURN MIN(LONGINT) + ASH(red, 16) + ASH(green, 8) + blue
+	END RGB;
+
+	PROCEDURE Dot*(col: Color; x, y, mode: LONGINT);
 	BEGIN
 		Kernel.WriteString("Dot(");  Kernel.WriteInt(col, 1);  Kernel.WriteChar(",");
 		Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(y, 1);  Kernel.WriteChar(",");
 		Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
 	END Dot;
 	
-	PROCEDURE CopyBlock*(SX, SY, W, H, DX, DY, mode: INTEGER);
+	PROCEDURE CopyBlock*(sx, sy, w, h, dx, dy, mode: LONGINT);
 	BEGIN 
-		Kernel.WriteString("CopyBlock(");  Kernel.WriteInt(SX, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(SY, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(W, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(H, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(DX, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(DY, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
+		Kernel.WriteString("CopyBlock(");  Kernel.WriteInt(sx, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(sy, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(h, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(dx, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(dy, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
 	END CopyBlock;
 	
-	PROCEDURE SetMode*(X: INTEGER; s: SET);
+	PROCEDURE SetMode*(x: LONGINT; s: SET);
 	BEGIN
-		Kernel.WriteString("SetMode(");  Kernel.WriteInt(X, 1);  Kernel.WriteChar(",");
+		Kernel.WriteString("SetMode(");  Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");
 		Kernel.WriteHex(SYSTEM.VAL(LONGINT, s), 8);  Kernel.WriteString(") ")
 	END SetMode;
 	
-	PROCEDURE CopyPattern*(col: INTEGER; pat: Pattern; X, Y, mode: INTEGER);
+	PROCEDURE CopyPattern*(col: Color; pat: Pattern; x, y, mode: LONGINT);
 	BEGIN
 		Kernel.WriteString("CopyPattern(");  Kernel.WriteInt(col, 1);  Kernel.WriteChar(",");
-		Kernel.WriteHex(pat, 8);  Kernel.WriteChar(",");  Kernel.WriteInt(X, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(Y, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
+		Kernel.WriteHex(pat, 8);  Kernel.WriteChar(",");  Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(y, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
 	END CopyPattern;
 	
-	PROCEDURE ReplConst*(col, X, Y, W, H, mode: INTEGER);	(* col not used if mode is invert *)
+	PROCEDURE ReplConst*(col: Color; x, y, w, h, mode: LONGINT);	(* col not used if mode is invert *)
 	BEGIN
 		Kernel.WriteString("ReplConst(");  Kernel.WriteInt(col, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(X, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(Y, 1);  
-		Kernel.WriteChar(",");  Kernel.WriteInt(W, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(H, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  
+		Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(y, 1);  
+		Kernel.WriteChar(",");  Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(h, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  
 		Kernel.WriteString(") ")
 	END ReplConst;
 	
-	PROCEDURE FillPattern*(col: INTEGER; pat: Pattern; pX, pY, X, Y, W, H, mode: INTEGER);
+	PROCEDURE FillPattern*(col: Color; pat: Pattern; px, py, x, y, w, h, mode: LONGINT);
 	BEGIN
 		Kernel.WriteString("FillPattern(");  Kernel.WriteInt(col, 1);  Kernel.WriteChar(",");
-		Kernel.WriteHex(pat, 8);  Kernel.WriteChar(",");  Kernel.WriteInt(pX, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(pY, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(X, 1);  
-		Kernel.WriteChar(",");  Kernel.WriteInt(Y, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(W, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(H, 1);  
+		Kernel.WriteHex(pat, 8);  Kernel.WriteChar(",");  Kernel.WriteInt(px, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(py, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(x, 1);  
+		Kernel.WriteChar(",");  Kernel.WriteInt(y, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(h, 1);  
 		Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  Kernel.WriteString(") ")
 	END FillPattern;
 
-	PROCEDURE ReplPattern*(col: INTEGER; pat: Pattern; X, Y, W, H, mode: INTEGER);
+	PROCEDURE ReplPattern*(col: Color; pat: Pattern; x, y, w, h, mode: LONGINT);
 	BEGIN
 		Kernel.WriteString("Repl/");
-		FillPattern(col, pat, 0, 0, X, Y, W, H, mode)
+		FillPattern(col, pat, 0, 0, x, y, w, h, mode)
 	END ReplPattern;
 	
-	PROCEDURE NewPattern*(width, height: INTEGER; VAR image: ARRAY OF SET): Pattern;
+	PROCEDURE NewPattern*(w, h: LONGINT; VAR image: ARRAY OF SET): Pattern;
 	VAR len, src, dest: LONGINT; i: INTEGER; p: PatternPtr; inter: SET;  pl: List;
 	BEGIN
-		Kernel.WriteString("NewPattern(");  Kernel.WriteInt(width, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(height, 1);  Kernel.WriteString(") ");
-		len := (width+7) DIV 8;
-		SYSTEM.NEW(p, 4+len*height); p.w := SHORT(width); p.h := SHORT(height);
+		Kernel.WriteString("NewPattern(");  Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(h, 1);  Kernel.WriteString(") ");
+		len := (w+7) DIV 8;
+		SYSTEM.NEW(p, 4+len*h); p.w := SHORT(SHORT(w)); p.h := SHORT(SHORT(h));
 		src := SYSTEM.ADR(image); dest := SYSTEM.ADR(p.pixmap);
 		i := 0;
-		WHILE i < height DO SYSTEM.MOVE(src, dest, len); INC(src, 4); INC(dest, len); INC(i) END;
+		WHILE i < h DO SYSTEM.MOVE(src, dest, len); INC(src, 4); INC(dest, len); INC(i) END;
 		NEW(pl);  pl.pat := p;  pl.next := Pat;  Pat := pl;	(* put in list to avoid GC *)
 		RETURN SYSTEM.ADR(p.w)
 	END NewPattern;
@@ -380,22 +396,43 @@ MODULE Display;
 		
 	END CreatePatterns;
 	
-	PROCEDURE Depth*(X: INTEGER): INTEGER;
+	PROCEDURE Depth*(x: LONGINT): INTEGER;
 	BEGIN
-		Kernel.WriteString("Depth(");  Kernel.WriteInt(X, 1);  Kernel.WriteString(") ");
-		RETURN 4
+		Kernel.WriteString("Depth(");  Kernel.WriteInt(x, 1);  Kernel.WriteString(") ");
+		RETURN 8
 	END Depth; 
 	
-	PROCEDURE DisplayBlock*(B:LONGINT; DX, DY, W, H, SX, SY, mode:INTEGER);
+	PROCEDURE TrueColor*(x: LONGINT): BOOLEAN;
 	BEGIN
-		Kernel.WriteString("DisplayBlock(");  Kernel.WriteHex(B, 8);  Kernel.WriteChar(",");
-		Kernel.WriteInt(DX, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(DY, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(W, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(H, 1);  
-		Kernel.WriteChar(",");  Kernel.WriteInt(SX, 1);  Kernel.WriteChar(",");
-		Kernel.WriteInt(SY, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  
+		RETURN FALSE
+	END TrueColor;
+
+	PROCEDURE DisplayBlock*(adr, dx, dy, w, h, sx, sy, mode: LONGINT);
+	BEGIN
+		Kernel.WriteString("DisplayBlock(");  Kernel.WriteHex(adr, 8);  Kernel.WriteChar(",");
+		Kernel.WriteInt(dx, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(dy, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(h, 1);  
+		Kernel.WriteChar(",");  Kernel.WriteInt(sx, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(sy, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  
 		Kernel.WriteString(") ")
 	END DisplayBlock;
 
+	PROCEDURE TransferFormat*(x: LONGINT): LONGINT;
+	BEGIN
+		Kernel.WriteString("TransferFormat(");  Kernel.WriteInt(x, 1);  Kernel.WriteString(") ");
+		RETURN unknown
+	END TransferFormat;
+
+	PROCEDURE TransferBlock*(VAR buf: ARRAY OF CHAR;  ofs, stride, x, y, w, h, mode: LONGINT);
+	BEGIN
+		Kernel.WriteString("TransferBlock(");  Kernel.WriteHex(SYSTEM.ADR(buf[0]), 8);  Kernel.WriteChar(",");
+		Kernel.WriteInt(ofs, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(stride, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(x, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(y, 1);  
+		Kernel.WriteChar(",");  Kernel.WriteInt(w, 1);  Kernel.WriteChar(",");
+		Kernel.WriteInt(h, 1);  Kernel.WriteChar(",");  Kernel.WriteInt(mode, 1);  
+		Kernel.WriteString(") ")
+	END TransferBlock;
+	
 BEGIN
 	Width := 640;
 	Height := 480;
@@ -403,7 +440,6 @@ BEGIN
 	ColLeft:= 0;
 	Bottom:= 0;
 	UBottom:= -330; 
-	Pat := NIL;
 	CreatePatterns;
 	Unit := 10000
 END Display.

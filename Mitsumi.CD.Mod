@@ -14,7 +14,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE CD;	(* UNFINISHED *)
+MODULE CD;	(** non-portable *)	(* UNFINISHED *)
 
 (* 
 	CD driver for Mitsumi drive

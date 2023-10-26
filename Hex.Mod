@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Hex;	(* ps /   *)
+MODULE Hex;	(** portable *) (* ps /   *)
 
 (* still to do:
 	- problems with empty files
@@ -24,7 +23,7 @@ MODULE Hex;	(* ps /   *)
 
 IMPORT
 	BIT, Reals, Input, Files, Fonts, Display, Display3, Printer, Printer3, Objects, Texts, ListRiders, Gadgets, Views, Effects,
-	Oberon, Documents, Desktops;
+	Oberon, Documents, Desktops, Strings;
 
 CONST
 	Version = 1;
@@ -33,12 +32,12 @@ CONST
 	bufSize = 512;	MaxPatLen = 32;
 
 	BarW = 15; SliderH = 3; Gab = 5;
-	Left = 4; Right = 4; Top = 4; Bot = 4;
+	Left = 4; Top = 4; Bot = 4;
 
 	LArrow = 0C4X; RArrow = 0C3X; UArrow = 0C1X; DArrow = 0C2X;
 	UPage = 0A2X; DPage = 0A3X; Home = 0A8X; End = 0A9X;
 	TAB = 09X; CR = 0DX; BS = 07FX; DEL = 0A1X; INS = 0A0X;
-	
+
 	Menu = "Desktops.Copy[Copy] Hex.Search[Search] Desktops.StoreDoc[Store]";
 
 TYPE
@@ -86,6 +85,7 @@ VAR
 	sPat: ARRAY MaxPatLen OF CHAR;
 	sDv: ARRAY MaxPatLen + 1 OF INTEGER;
 	sLen: LONGINT;
+	PrintertopY, PrinterbotY, PrinterleftX, PagenoX, HeaderY: INTEGER;
 
 (** ------------ frame stuff ------------ *)
 PROCEDURE P (x: LONGINT): INTEGER;
@@ -142,7 +142,7 @@ BEGIN
 END LocateLine;
 
 PROCEDURE LocateChar* (F: Frame; x, y, X, Y: INTEGER; VAR loc: Loc);
-VAR pos, len: LONGINT; curX, x1: INTEGER;
+VAR pos, len: LONGINT; curX: INTEGER;
 BEGIN
 	LocateLine(F, y, Y, loc);
 	len := F.file.len - loc.org - 1;
@@ -222,10 +222,9 @@ BEGIN
 END SetCaret;
 
 PROCEDURE FlipCaret (F: Frame; Q: Display3.Mask; x, y: INTEGER; loc: Loc);
-VAR pos: LONGINT; Y: INTEGER;
+VAR Y: INTEGER;
 BEGIN
 	F.carloc := loc; Y :=  y + F.H - 1 + loc.y;
-	pos := loc.pos - loc.org;
 	IF loc.x < tBlock THEN
 		IF F.insert & ~F.nibble THEN
 			Oberon.RemoveMarks(x + loc.x, Y - 8, 16, 16);
@@ -272,7 +271,7 @@ BEGIN
 END UpdateArea;
 
 PROCEDURE ScrollUpdate (F: Frame; Q: Display3.Mask; x, y, w, h: INTEGER; VAR M: ScrollMsg);
-VAR newLines, oldLines: LONGINT; cx, cy, cw, ch, mx, my, mw, mh, Y, H: INTEGER;
+VAR cx, cy, cw, ch, mx, my, mw, mh, Y, H: INTEGER;
 BEGIN
 	IF F.stamp # M.stamp THEN F.stamp := M.stamp; RemoveCaret(F); F.org := M.org END;
 
@@ -367,7 +366,7 @@ BEGIN
 END RestoreFrame;
 
 PROCEDURE RestoreFrameArea (F: Frame; Q: Display3.Mask; x, y, w, h, U, V, W, H: INTEGER);
-VAR i, pos, lines: LONGINT; X, tX, Y, bot: INTEGER;
+VAR pos, lines: LONGINT; Y, bot: INTEGER;
 BEGIN
 	Display3.Rect3D(Q, Display3.topC, Display3.bottomC, x, y, w, h, 1, Display.replace);
 
@@ -521,7 +520,7 @@ BEGIN
 END TrackFrame;
 
 PROCEDURE Write (F: Frame; VAR M: Oberon.InputMsg);
-VAR R: Texts.Reader; pos: LONGINT; C: CaretMsg; i, j, val: INTEGER; ch: CHAR;  keys: SET;
+VAR R: Texts.Reader; pos: LONGINT; C: CaretMsg; i, j, val: INTEGER; ch: CHAR; keys: SET;
 BEGIN
 	IF M.ch = UArrow THEN SetCaret(F, F.carloc.pos - 16)
 	ELSIF M.ch = DArrow THEN SetCaret(F, F.carloc.pos + 16)
@@ -880,8 +879,87 @@ BEGIN
 	END
 END ClearCheck;
 
+PROCEDURE PrintHeader(title: ARRAY OF CHAR; page: LONGINT);
+	VAR str: ARRAY 8 OF CHAR;
+BEGIN
+	IF title # "" THEN
+		Printer.String(PrinterleftX, HeaderY, title, fnt)
+	END;
+	Strings.IntToStr(page, str);
+	Printer.String(PagenoX, HeaderY, str, fnt)
+END PrintHeader;
+
+PROCEDURE InitPagePosition();
+BEGIN
+	PrintertopY := Printer.FrameY + Printer.FrameH; PrinterbotY := Printer.FrameY; PrinterleftX := Printer.FrameX;
+	HeaderY := PrintertopY-P(Fonts.Default.height); PrintertopY := HeaderY - P(2*Fonts.Default.height);
+	PagenoX := SHORT(LONG(PrinterleftX) + LONG(Printer.FrameW) * 19 DIV 20)
+END InitPagePosition;
+
+PROCEDURE PrintLine(X, Y: INTEGER; pos: LONGINT);
+	VAR
+		str: ARRAY 8 OF CHAR;
+		i: LONGINT;
+		x,xt: INTEGER;
+BEGIN
+	str[0] := Hex[pos DIV 1048576 MOD 16];
+	str[1] := Hex[pos DIV 65536 MOD 16];
+	str[2] := Hex[pos DIV 4096 MOD 16];
+	str[3] := Hex[pos DIV 256 MOD 16];
+	str[4] := Hex[pos DIV 16 MOD 16];
+	str[5] := Hex[pos MOD 16];
+	str[6] := 0X;
+	Printer.String(X, Y, str, fnt);
+	x := X+P(hBlock-Left-BarW); xt := X+P(tBlock-Left-BarW);
+	i := 0; 
+	WHILE ~R.eot & (i < 16) DO
+		IF i MOD 4 = 0 THEN
+			IF i > 0 THEN
+				Printer.UseColor(200, 200, 200);
+				Printer.ReplConst(x, Y + P(fnt.minY), P(1), P(lineH));
+				Printer.UseColor(0, 0, 0)
+			END;
+			x := x+P(5)
+		END;
+		str[0] := Hex[ORD(ch) DIV 16];
+		str[1] := Hex[ORD(ch) MOD 16];
+		str[2] := 0X;
+		Printer.String(x, Y, str, fnt);
+		x := x+P(2*charW+Gab);
+		CASE ORD(ch) OF
+			32..126, 128..149, 155: str[0] := ch;
+			str[1] := 0X;
+			Printer.String(xt, Y, str, fnt)
+		ELSE
+			Printer.UseColor(200, 200, 200);
+			Printer.ReplConst(xt, Y, P(charW), P(1));
+			Printer.UseColor(0, 0, 0)
+		END;
+		xt := xt+P(charW); 
+		INC(i); Texts.Read(R, ch)
+	END
+END PrintLine;
+
+PROCEDURE PrintDoc(D: Documents.Document);
+	VAR
+		pos, page: LONGINT;
+		X, Y: INTEGER;
+BEGIN
+	InitPagePosition(); Printer.UseColor(0, 0, 0);
+	X := PrinterleftX; page := 0;
+	pos := 0; Texts.OpenReader(R, D.dsc(Frame).file, 0); Texts.Read(R, ch);
+	WHILE ~R.eot DO
+		PrintHeader(D.name, page);
+		Y := PrintertopY;
+		WHILE ~R.eot & ((Y-P(lineH)) > PrinterbotY) DO
+			PrintLine(X, Y, pos);
+			INC(pos, 16); DEC(Y, P(lineH))
+		END;
+		Printer.Page(1); INC(page)
+	END
+END PrintDoc;
+
 PROCEDURE DocHandler (D: Objects.Object; VAR M: Objects.ObjMsg);
-VAR C: Objects.CopyMsg;
 BEGIN
 	WITH D: Documents.Document DO
 		IF M IS Objects.AttrMsg THEN
@@ -918,6 +996,7 @@ BEGIN
 		ELSIF M IS Display.DisplayMsg THEN
 			WITH M: Display.DisplayMsg DO
 				IF (M.device = Display.printer) & (M.id = Display.contents) & (D.dsc # NIL) THEN (* print *)
+					PrintDoc(D)
 				ELSE
 				Documents.Handler(D, M)
 				END
@@ -1137,6 +1216,7 @@ BEGIN
 		IF F # NIL THEN Oberon.Defocus; SetCaret(F, S.i) END
 	END
 END Locate;
+
 (* ------------ module init. porcs ------------ *)
 PROCEDURE MakeList;
 VAR obj: Objects.Object; cnt: INTEGER; M: ListRiders.ConnectMsg; A: Objects.AttrMsg;
@@ -1186,5 +1266,3 @@ BEGIN
 	Hex[8] := "8"; Hex[9] := "9"; Hex[10] := "A"; Hex[11] := "B";
 	Hex[12] := "C"; Hex[13] := "D"; Hex[14] := "E"; Hex[15] := "F"
 END Hex.
-
-Hex.Open Test2.Bin

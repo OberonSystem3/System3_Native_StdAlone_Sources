@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Columbus;	(* PS   *)
+MODULE Columbus;	(** portable *)	(* PS   *)
 
 (**  - an inspector tool for objects and libraries. *)
 
@@ -64,7 +63,6 @@ MODULE Columbus;	(* PS   *)
 		NoView = 7;
 
 		ObjViews = {ObjAttrView, ObjLinkView, ObjCoordView, ObjDscView, ObjDefView};
-		LibViews = {LibOverView, LibEditView};
 
 		(* layout align ids *)
 		top = 0; middle = 1; bottom = 2;
@@ -185,9 +183,9 @@ END ToLog;
 
 PROCEDURE PrintMsg;	(*  writes program's name and version to the Oberon log *)
 BEGIN
-	(*Texts.SetFont(W, Fonts.This("Oberon10b.Scn.Fnt"));*)
+	Texts.SetFont(W, Fonts.This("Default10b.Scn.Fnt"));
 	String("Columbus "); String(Version);
-	(*Texts.SetFont(W, Fonts.Default);*)
+	Texts.SetFont(W, Fonts.Default);
 	String(" / PS November 95"); Ln; ToLog;
 	msgPrinted:= TRUE
 END PrintMsg;
@@ -200,7 +198,7 @@ PROCEDURE ^InspectThis(VAR P: Panel; obj: Objects.Object; lib: Objects.Library; 
 	(* ---------------------- document related procedures ----------------------- *)
 
 PROCEDURE LoadDoc(D: Documents.Document);
-	VAR lib: Objects.Library; i: LONGINT; view: INTEGER; p: Panel; name: ARRAY 32 OF CHAR;
+	VAR lib: Objects.Library; i: LONGINT; view: INTEGER; p: Panel; name: ARRAY 64 OF CHAR;
 BEGIN
 	COPY(D.name, name);
 	p:= NIL; lib := NIL; view := NoView;
@@ -243,6 +241,7 @@ BEGIN
 					IF M.name = "Gen" THEN M.class := Objects.String; M.s := "Columbus.NewDoc"; M.res := 0
 					ELSIF M.name = "Adaptive" THEN M.class := Objects.Bool; M.b := FALSE; M.res := 0
 					ELSIF M.name = "Icon" THEN M.class := Objects.String; M.s := "Columbus.Icon"; M.res := 0
+					ELSE Documents.Handler(D, M)
 					END
 				ELSE Documents.Handler(D, M)
 				END
@@ -251,6 +250,7 @@ BEGIN
 			WITH M: Objects.LinkMsg DO
 				IF (M.name = "SystemMenu") OR (M.name = "UserMenu") OR (M.name = "DeskMenu") THEN
 					M.obj := Desktops.NewMenu(""); M.res := 0
+				ELSE Documents.Handler(D, M)
 				END
 			END
 		ELSE Documents.Handler(D, M)
@@ -263,7 +263,7 @@ PROCEDURE NewDoc*;
 BEGIN
 	NEW(D);
 	D.Load := LoadDoc; D.Store := StoreDoc; D.handle := DocHandler;
-	D.W := 200; D.H := 200;
+	D.W := 200; D.H := 200; 
 	Objects.NewObj := D
 END NewDoc;
 
@@ -352,7 +352,7 @@ BEGIN
 	Attributes.StrToTxt(s, F.text);
 	Texts.ChangeLooks(F.text, 0, F.text.len, {1}, NIL, col, 0);
 	IF bold THEN
-		Texts.ChangeLooks(F.text, 0, F.text.len, {0}, Fonts.This("Oberon10b.Scn.Fnt"), 0, 0)
+		Texts.ChangeLooks(F.text, 0, F.text.len, {0}, Fonts.This("Default10b.Scn.Fnt"), 0, 0)
 	END;
 	TextFields.CalcSize(F, F.W, F.H, nolines, TRUE);
 	RETURN F
@@ -360,7 +360,7 @@ END MakeCaption;
 
 (* Makes a button. If <isPict> is true,  <caption> is interpreted as name of a public picture. *) 
 PROCEDURE MakeCmd(caption, cmd: ARRAY OF CHAR; isPict: BOOLEAN): Display.Frame;
-	VAR F: BasicGadgets.Button; w, h: INTEGER; A: Objects.AttrMsg;
+	VAR F: BasicGadgets.Button; A: Objects.AttrMsg;
 BEGIN
 	BasicGadgets.NewButton; F:= Objects.NewObj(BasicGadgets.Button);
 	IF isPict THEN F.caption:= ""; F.look:= Gadgets.FindPublicObj(caption)
@@ -752,7 +752,7 @@ END MakePanel;
 
 (* Writes a reference, the library name and the lib. reference to the top right corner of the panel *)
 PROCEDURE WriteGeneralObjInfo(obj: Objects.Object; VAR L: Layout);
-	VAR f: Display.Frame; str: ARRAY 64 OF CHAR; num: ARRAY 8 OF CHAR; i, j: INTEGER; A: Objects.AttrMsg;
+	VAR f: Display.Frame; A: Objects.AttrMsg;
 BEGIN
 	WriteCaption(L, "Current Object", Display.FG, TRUE); WriteHSpace(L, 4); SetTab(L);
 	f:= MakeLink(obj, FALSE);
@@ -998,6 +998,7 @@ END DscViewButton;
 PROCEDURE MakeDscView(obj: Objects.Object; lib: Objects.Library; VAR L: Layout);
 	VAR p: Panels.Panel; v: ScrollViews.View; o: Display.Frame; cnt: INTEGER;
 			subLay: Layout; A: Objects.AttrMsg; M: Display.ModifyMsg;
+			(* JSS Start *) Generator, Name: ARRAY 32 OF CHAR; offset: INTEGER; (* JSS End *)
 BEGIN
 	(* write objects in library *)
 	OpenLayout(subLay); subLay.align:= middle;
@@ -1006,13 +1007,42 @@ BEGIN
 	o:= obj(Display.Frame).dsc; cnt:= 0;
 	WHILE o # NIL DO
 		A.id:= Objects.get; A.name:= "Gen"; A.res:= -1; o.handle(o, A);
+		(* JSS Start *)
+		COPY(A.s,Generator);
 		WriteCaption(subLay, A.s, Display.FG, FALSE); WriteTab(subLay);
-		WriteFrame(subLay, MakeLink(o, TRUE)); WriteLn(subLay);
+		WriteFrame(subLay, MakeLink(o, TRUE)); 
+		(* JSS Start of additions to display an indication of what the object does, e.g. its Name, Caption, Cmd or Value *)
+        (* To do: An object such as a button with a Look (i.e. Icon) could do with the icon being displayed, and RefGadgets
+                          could do with being handled in some way
+        *)
+        WriteTab(subLay);
+        offset:= subLay.X;
+        A.id := Objects.get;A.name := "Caption";A.res := -1;o.handle(o,A);
+        COPY(A.s,Name);
+        IF (Name = Generator)OR(Name = "") THEN
+           A.id := Objects.get;A.name := "Name";A.res := -1;o.handle(o,A);COPY(A.s,Name);
+           IF (Name = Generator)OR(Name = "") THEN
+             A.id:= Objects.get;A.name:= "Cmd";A.res:= -1;o.handle(o,A);COPY(A.s,Name);
+              IF (Name = Generator)OR(Name = "") THEN
+                A.id := Objects.get;A.name := "Value";A.res := -1;o.handle(o,A);COPY(A.s,Name)
+              END
+           END
+        END;
+        IF (Name = Generator)OR(Name = "")   THEN
+           Name := " "
+        END;
+        WriteCaption(subLay,Name,Display.FG,FALSE);
+        (*JSS End of additions to display an indication of what the object does, e.g. its Name, Caption, Cmd or Value *)
+        WriteLn(subLay);
 		o:= o.next; INC(cnt)
 	END;
 
 	IF cnt > 10 THEN
 		WriteHSpace(L, 17); WriteCaption(L, "Generator", Display.FG, TRUE);
+		(* JSS Start *)
+		WriteHSpace(L,offset - 50); (* The 50 was just a guess and seems to work *)
+		WriteCaption(L,"Name/Caption/Cmd/Value",Display.FG,TRUE);
+		(* JSS End *)
 		WriteLn(L);
 	
 		Panels.NewPanel; p:= Objects.NewObj(Panels.Panel);
@@ -1029,7 +1059,12 @@ BEGIN
 		
 		WriteFrame(L, v)
 	ELSE
-		WriteCaption(L, "Generator", Display.FG, TRUE); WriteLn(L);
+		WriteCaption(L, "Generator", Display.FG, TRUE); 
+				(* JSS Start *)
+		WriteHSpace(L,offset - 50); (* The 50 was just a guess and seems to work *)
+		WriteCaption(L,"Name/Caption/Cmd/Value",Display.FG,TRUE);
+		(* JSS End *)
+		WriteLn(L);
 		WriteLayout(L, subLay)
 	END
 END MakeDscView;
@@ -1298,7 +1333,7 @@ END EnumOldLinkValues;
 	is just set if it already exists and its value has changed. The function returns true if something
 	has changed. *)
 PROCEDURE SetObject(obj: Objects.Object; P: Panel): BOOLEAN;
-	VAR item: Item; X, Y, W, H: INTEGER; b, changeV, changeC: BOOLEAN;
+	VAR item: Item; changeV, changeC: BOOLEAN;
 			A: Objects.AttrMsg; L: Objects.LinkMsg; M: Display.ModifyMsg;
 
 		(* returns TRUE if value exists and is different from the old one. *)
@@ -1354,6 +1389,10 @@ BEGIN
 			END;
 			IF A.class # Objects.Inval THEN
 				obj.handle(obj, A);
+				IF (A.res < 0) & (A.class = Objects.LongReal) THEN
+					A.class := Objects.Real; A.x := SHORT(A.y);
+					obj.handle(obj, A)
+				END;
 				IF A.res < 0 THEN
 					String("Attribute "); String(item.name); String(" could not be set");
 					Ln; ToLog
@@ -1475,7 +1514,7 @@ END RemoveAttrLink;
 
 (* Gets the object/library to inspect. The order is 1. parameter, 2. selection, 3. marker. *)
 PROCEDURE GetObjLib(VAR obj: Objects.Object; VAR lib: Objects.Library);
-	VAR f: Display.Frame; T: Texts.Text; t1, t2, beg, end: LONGINT; u, v: INTEGER; S: Attributes.Scanner;
+	VAR f: Display.Frame; T: Texts.Text; t1, t2, beg, end: LONGINT; S: Attributes.Scanner;
 
 	PROCEDURE GetNamed;	(* affects local var lib, obj *)
 		VAR i: INTEGER;
@@ -1506,7 +1545,7 @@ BEGIN
 		ELSIF S.class IN {Attributes.String, Attributes.Name} THEN (* get public object/Library *)
 			GetNamed
 		ELSIF Oberon.Pointer.on THEN (* get marked object, if any *)
-			Gadgets.ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, f, u, v);
+			f := Oberon.MarkedFrame();
 			obj:= f; IF obj # NIL THEN lib:= obj.lib END
 		END
 	END
@@ -1535,6 +1574,17 @@ BEGIN
 END GetViewMode;
 
 	(** ---------------------- columbus inspector commands ----------------------- *)
+
+PROCEDURE InspectObj*(obj: Objects.Object);
+	VAR P: Panel; D: Documents.Document;
+BEGIN
+	InspectThis(P, obj, NIL, ObjAttrView);
+	IF Oberon.Pointer.on THEN Oberon.FadeCursor(Oberon.Pointer) END;
+	NewDoc; D:= Objects.NewObj(Documents.Document);
+	D.W:= P.W; D.H:= P.H; Documents.Init(D, P); D.name:= DocName;
+	Desktops.ShowDoc(D);
+	IF ~msgPrinted THEN PrintMsg END
+END InspectObj;
 
 (** Used in the form:	Columbus.Inspect [<Name>]
 
@@ -1682,7 +1732,7 @@ END AddTo;
 
 (** Removes an attribute or link from the panel's current object *)
 PROCEDURE Remove*;
-	VAR P: Panel; obj: Objects.Object; M: Display.SelectMsg; U: Gadgets.UpdateMsg;
+	VAR P: Panel; U: Gadgets.UpdateMsg;
 BEGIN
 	P:= FindPanel(); Oberon.Defocus;
 	IF (P # NIL) & (P.history # NIL) THEN	
@@ -1837,6 +1887,12 @@ BEGIN
 			Gadgets.Update(obj)
 		END;
 		obj:= Gadgets.FindObj(Gadgets.context, RNameObj);
+		IF obj # NIL THEN
+			A.id:= Objects.set; A.name:= "Value"; A.class:= Objects.String; A.s:= ""; A.res:= -1;
+			obj.handle(obj, A);
+			Gadgets.Update(obj)
+		END;
+		obj:= Gadgets.FindObj(Gadgets.context, NNameObj);
 		IF obj # NIL THEN
 			A.id:= Objects.set; A.name:= "Value"; A.class:= Objects.String; A.s:= ""; A.res:= -1;
 			obj.handle(obj, A);

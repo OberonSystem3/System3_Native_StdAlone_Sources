@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -47,7 +46,7 @@ of the source code to another platform with the name OBERON. *)
 	...
 *)
 
-MODULE TextPopups;	(* tk 6.12.95 *)
+MODULE TextPopups;	(** portable *)	(* tk 6.12.95 *)
 
 	(* some marked compiler calls are not portable - but can easily be adopted for different implementations *)
 
@@ -57,9 +56,9 @@ of the source code to another platform with the name OBERON. *)
 		Input, Views, Strings;
 
 	CONST
-		times = 1; minus = 7; eql = 9; colon = 20; rparen=22; lparen=30; 
-		ident = 40; begin = 59; const = 60; type = 61; var = 62;
-		procedure = 63; import = 64; eof = 67;
+		times = 1; and = 5; plus=6; minus=7; eql = 9; arrow = 17; colon=20; rparen=22; lparen=30; 
+		ident = 40; semicolon = 41; end = 43; record = 57; begin = 59; const = 60; type = 61; var = 62;
+		procedure = 63; eof = 67;
 		CR = 0DX;	TAB = 09X;	SPACE = " ";	LF = 0AX;	
 		MaxHistory = 20; MaxHeight = 250;
 		PopupFileName = "TextPopups.Text";
@@ -116,6 +115,7 @@ of the source code to another platform with the name OBERON. *)
 				Texts.OpenReader(R, text, 0); 
 				res:=0; REPEAT Texts.Read(R, cmd[res]); INC(res) UNTIL cmd[res-1]<=" ";
 				cmd[res-1]:=0X;
+				Oberon.FadeCursor(Oberon.Pointer);
 				Oberon.Pointer.X:=x; Oberon.Pointer.Y:=y;
 				Oberon.Par.text:=text; Oberon.Par.pos:=Texts.Pos(R)-1;
 				Oberon.Call(cmd, Oberon.Par, FALSE, res)
@@ -140,54 +140,75 @@ of the source code to another platform with the name OBERON. *)
 			END;
 			doItem:=p;
 		ELSE doItem:=NIL END
-	END Do;	
+	END Do;
 	
 (* build item list *)
-	
-	PROCEDURE ExtractProcTypeNames(T: Texts.Text; proc: BOOLEAN);
-		VAR R: Texts.Reader; sym, prevsym: SHORTINT; start, q: MenuItem; p: PMarkerMenuItem; t: TMarkerMenuItem;
-			(*Null: Texts.Text;*) isType: BOOLEAN;  name: OPS.Name;
+	PROCEDURE ExtractProcTypeNames(T: Texts.Text; VAR lastProc, lastType: MenuItem);
+		CONST	rec = 0; proc = 1; mod = 2;
+		VAR R: Texts.Reader; isType, init: BOOLEAN; sym, prevsym: SHORTINT;
+			Stack: ARRAY 16 OF SHORTINT; ST, i: LONGINT;
+			Context, name: ARRAY 128 OF CHAR;startP, startT, q: MenuItem; p: PMarkerMenuItem; t: TMarkerMenuItem;
 	BEGIN
-		(*NEW(Null); Texts.Open(Null, "");*) start:=lastItem; Texts.OpenReader(R, T, 0); 
-		OPM.Init({}, R, Oberon.Log(*Null*)); OPS.Init; isType := FALSE;
+		Texts.OpenReader(R, T, 0);
+		OPM.Init({}, R, Oberon.Log(*Null*)); OPS.Init; startP := lastProc; startT := lastType; isType := FALSE;
+		ST := 0; Stack[ST] := mod; Context := ""; OPS.Get(sym);
 		REPEAT
-			prevsym := sym; OPS.Get(sym);
-			IF sym = type THEN isType := TRUE
-			ELSIF (sym = const) OR (sym = import) OR (sym = begin) THEN isType := FALSE
-			ELSIF (prevsym # colon) & (sym=procedure) THEN
-				isType := FALSE;
-				IF proc THEN
-					OPS.Get(sym); NEW(p);
-					IF (sym=times) OR (sym=minus) THEN	OPS.Get(sym)	END;
-					IF sym=lparen THEN (* method *)
+			IF sym = type THEN	isType := TRUE
+			ELSIF (sym = ident) & isType THEN
+				COPY(OPS.name, name); i := OPM.curpos-1;
+				OPS.Get(sym);
+				IF sym = times THEN OPS.Get(sym) END;
+				IF (sym =  eql) THEN
+					NEW(t); COPY(Context, t.val); Strings.Append(t.val, name); t.pos := i;
+					q := startT; WHILE (q.link # NIL) & (q.link.val < t.val) DO q := q.link END;
+					IF q.link = NIL THEN lastType := t END; t.link := q.link; q.link := t;
+					OPS.Get(sym);
+					IF sym=procedure THEN
+						OPS.Get(sym);
+						IF sym = lparen THEN
+							WHILE (sym#rparen)&(sym#eof) DO OPS.Get(sym) END
+						END
+					END
+				END
+			ELSIF (sym = const) OR (sym = var) OR (sym = begin) THEN
+				isType := FALSE
+			ELSIF sym = record THEN
+				INC(ST); Stack[ST] := rec; Strings.Append(Context, name); Strings.AppendCh(Context, ".");
+				isType := FALSE
+			ELSIF (sym = procedure) & ((prevsym # colon) & (prevsym # eql)) THEN	(*procdecl*)
+				OPS.Get(sym);
+				IF sym # arrow THEN	(*skip forw*)
+					IF sym = lparen THEN	(*O2-method*)
 						OPS.Get(sym);
 						IF sym = var THEN OPS.Get(sym) END;
 						IF sym = ident THEN OPS.Get(sym);
-							OPS.Get(sym); (* colon *)
+							OPS.Get(sym);	(*colon*)
 							IF sym = ident THEN
-								COPY(OPS.name, p.val); Strings.AppendCh(p.val, ".");
-								REPEAT OPS.Get(sym) UNTIL sym = rparen; OPS.Get(sym)
-							END;
-						END;
-					ELSE p.val := "" END;
+								COPY(OPS.name, Context); Strings.AppendCh(Context, ".");
+								OPS.Get(sym)
+							END
+						END
+					END;
+					init := sym = and;
+					IF (sym=and) OR (sym=minus) OR (sym=plus) OR (sym=times) THEN OPS.Get(sym) END;	(*skip &, -, ... *)
 					IF sym = ident THEN
-						Strings.Append(p.val, OPS.name); p.pos := OPM.curpos;
-						q := start; WHILE (q.link # NIL) & (q.link.val < p.val) DO q := q.link END;
-						IF q.link = NIL THEN lastItem := p END; p.link := q.link; q.link := p; OPS.Get(sym) 
+						COPY(OPS.name, name);
+						NEW(p); COPY(Context, p.val); Strings.Append(p.val, name); p.pos := OPM.curpos-1;
+						q := startP; WHILE (q.link # NIL) & (q.link.val < p.val) DO q := q.link END;
+						IF q.link = NIL THEN lastProc := p END; p.link := q.link; q.link := p;
+						INC(ST); Stack[ST] := proc; Strings.Append(Context, name); Strings.AppendCh(Context, ".");
+						isType := FALSE
 					END
 				END
-			ELSIF (sym = ident) & isType & ~proc THEN
-				COPY(OPS.name, name);
-				OPS.Get(sym);
-				IF sym = times THEN OPS.Get(sym) END;
-				IF sym = eql THEN 
-					NEW(t); COPY(name, t.val); t.pos := OPM.curpos;
-					q := start; WHILE (q.link # NIL) & (q.link.val < t.val) DO q := q.link END;
-					IF q.link = NIL THEN lastItem := t END; t.link := q.link; q.link := t; 		
-					OPS.Get(sym);				
-				END
+			ELSIF (Stack[ST] = rec)&(sym = end) OR (Stack[ST] = proc)&(prevsym=end)&(sym=ident) THEN
+				isType := (Stack[ST] = rec)OR(Stack[ST-1] = rec);
+				DEC(ST);
+				i := Strings.Length(Context)-2;
+				WHILE (i>0) & (Context[i]#".") DO DEC(i) END;
+				IF i <= 0 THEN Context[0] := 0X ELSE Context[i+1] := 0X END;
 			END;
-		UNTIL sym=eof;
+			prevsym := sym; OPS.Get(sym);
+		UNTIL sym = eof;
 		OPM.Close;  OPS.Init
 	END ExtractProcTypeNames;
 	
@@ -203,6 +224,7 @@ of the source code to another platform with the name OBERON. *)
 	PROCEDURE CreateMenuItems(listR: ListRiders.Rider; T: Texts.Text; ext: ARRAY OF CHAR): BOOLEAN;
 		VAR p: MenuItem; w, h, dsr: INTEGER; R: Texts.Reader; cmd: CmdMenuItem; text: Texts.Text;
 			s: ARRAY 128 OF CHAR; ch: CHAR; d: ListRiders.String;
+			plist, tlist, plast, tlast: MenuItem; parsed: BOOLEAN;
 		
 		PROCEDURE Scan;
 			VAR i: INTEGER;
@@ -213,6 +235,7 @@ of the source code to another platform with the name OBERON. *)
 	BEGIN	
 		IF listR = NIL THEN RETURN FALSE END;
 		nofLines:=0; width:=0; NEW(itemList); lastItem:=itemList; 
+		NEW(plist); plast := plist; NEW(tlist); tlast := tlist; parsed := FALSE;
 		NEW(text); Texts.Open(text, PopupFileName); Texts.OpenReader(R, text, 0);
 		LOOP
 			REPEAT	Texts.Read(R, ch)	UNTIL R.eot OR (ch="[");
@@ -222,8 +245,12 @@ of the source code to another platform with the name OBERON. *)
 		REPEAT
 			Scan; 
 			IF s="" THEN (* ignore *)
-			ELSIF s = "<Procedures>" THEN ExtractProcTypeNames(T, TRUE)
-			ELSIF s = "<Types>" THEN ExtractProcTypeNames(T, FALSE)
+			ELSIF s = "<Procedures>" THEN
+				IF ~parsed THEN ExtractProcTypeNames(T, plast, tlast); parsed := TRUE END;
+				IF plist.link # NIL THEN lastItem.link := plist.link; lastItem := plast END
+			ELSIF s = "<Types>" THEN
+				IF ~parsed THEN ExtractProcTypeNames(T, plast, tlast); parsed := TRUE END;
+				IF tlist.link # NIL THEN lastItem.link := tlist.link; lastItem := tlast END
 			ELSIF s[0]="<" THEN (* recent files *)
 				h:=1; w:=0; WHILE (s[h]#0X) & (s[h]>="0") & (s[h]<="9") DO
 					w:=w*10+ORD(s[h])-ORD("0"); INC(h)
@@ -360,14 +387,19 @@ of the source code to another platform with the name OBERON. *)
 	END PopupHandler;
 
 	PROCEDURE Install*;
-	BEGIN	TextGadgets.popupHook:=PopupHandler; Documents.historyHook:=InsertIntoHistory
+	BEGIN
+		TextGadgets.popupHook:=PopupHandler; Documents.historyHook:=InsertIntoHistory
 	END Install;
 	
 	PROCEDURE Remove*;
-	BEGIN	TextGadgets.popupHook:=NIL; Documents.historyHook:=NIL
+	BEGIN
+		TextGadgets.popupHook:=NIL; Documents.historyHook:=NIL
 	END Remove;
 
-BEGIN	Texts.OpenWriter(W);  Modules.InstallTermHandler(Remove)
+BEGIN
+	Texts.OpenWriter(W);  Modules.InstallTermHandler(Remove);
+	Texts.WriteString(W, "TextPopups using ");  Texts.WriteString(W, PopupFileName);
+	Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
 END TextPopups.
 
 System.Free TextPopups ~

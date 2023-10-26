@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
+MODULE MenuViewers;	(** portable *) (*JG 16.10.94, color version *)
 
-  IMPORT Input, Objects, Display, Viewers, Oberon, Kernel;
+  IMPORT Input, Objects, Display, Viewers, Oberon;
 
   CONST
     FullColor = 15;
@@ -24,6 +23,9 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
     replace = Display.replace; invert = Display.invert;
     extend = Display.extend; reduce = Display.reduce;
 
+	Modern = FALSE;
+	AvoidLostViewer = FALSE;
+	
   TYPE
     Viewer* = POINTER TO ViewerDesc;
 
@@ -53,13 +55,14 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
     Display.ReplConst(DarkFrame, V.X + V.W - 1, V.Y, 1, V.H - 1, replace)
   END Draw;
 
-  PROCEDURE Extend (V: Viewer; newY: INTEGER);
+  PROCEDURE Extend (V: Viewer; newY, newH: INTEGER);
     VAR dH: INTEGER;
   BEGIN dH := V.Y - newY;
     IF dH > 0 THEN
       Display.ReplConst(LightFrame, V.X, newY, 1, dH, replace);
       Display.ReplConst(DarkFrame, V.X + V.W - 1, newY, 1, dH, replace);
-      Display.ReplConst(DarkFrame, V.X + 1, newY, V.W - 2, 1, replace)
+      Display.ReplConst(DarkFrame, V.X + 1, newY, V.W - 2, 1, replace);
+      IF Modern THEN Display.ReplConst(LightFrame, V.X + 1, newY + newH - 1, V.W - 1, 1, replace) END
     END
   END Extend;
 
@@ -105,7 +108,12 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
     M.x := 0; M.y := 0;
     Menu.handle(Menu, M); Main.handle(Main, M);
     IF V.H > V.menuH + 1 THEN
-      ModifyFrame(Menu, extend, 0, V.Y + V.H - V.menuH, V.menuH - 1);
+      IF Modern THEN
+        ModifyFrame(Menu, extend, 0, V.Y + V.H - V.menuH + 1, V.menuH - 2);
+        Display.ReplConst(DarkFrame, V.X + 1, V.Y + V.H - V.menuH, V.W - 2, 1, replace)
+      ELSE
+        ModifyFrame(Menu, extend, 0, V.Y + V.H - V.menuH, V.menuH - 1)
+      END;
       ModifyFrame(Main, extend, 0, V.Y + 1, V.H - V.menuH - 1)
     ELSE ModifyFrame(Menu, extend, 0, V.Y + 1, V.H - 2)
     END
@@ -117,9 +125,14 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
     Menu := V.dsc; Main := V.dsc.next;
     IF id = extend THEN
       Oberon.RemoveMarks(V.X, Y, V.W, V.Y - Y);
-      Extend(V, Y);
+      Extend(V, Y, H);
       IF H > V.menuH + 1 THEN
-        ModifyFrame(Menu, extend, 0, Y + H - V.menuH, V.menuH - 1);
+        IF Modern THEN
+          ModifyFrame(Menu, extend, 0, Y + H - V.menuH + 1, V.menuH - 2);
+          Display.ReplConst(DarkFrame, V.X + 1, Y + H - V.menuH, V.W - 2, 1, replace)
+        ELSE
+          ModifyFrame(Menu, extend, 0, Y + H - V.menuH, V.menuH - 1);
+        END;
         ModifyFrame(Main, extend, 0, Y + 1, H - V.menuH - 1)
       ELSE ModifyFrame(Menu, extend, 0, Y + 1, H - 2)
       END
@@ -127,7 +140,12 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
       Oberon.RemoveMarks(V.X, Y, V.W, Y - V.Y);
       IF H > V.menuH + 1 THEN
         ModifyFrame(Main, reduce, 0, Y + 1, H - V.menuH - 1);
-        ModifyFrame(Menu, reduce, 0, Y + H - V.menuH, V.menuH - 1)
+        IF Modern THEN
+          ModifyFrame(Menu, reduce, 0, Y + H - V.menuH + 1, V.menuH - 2);
+          Display.ReplConst(DarkFrame, V.X + 1, Y + H - V.menuH, V.W - 2, 1, replace)
+        ELSE
+          ModifyFrame(Menu, reduce, 0, Y + H - V.menuH, V.menuH - 1)
+        END
       ELSE
         ModifyFrame(Main, reduce, 0, Y + H - V.menuH, 0);
         ModifyFrame(Menu, reduce, 0, Y + 1, H - 2)
@@ -176,7 +194,12 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
           Oberon.RemoveMarks(V.X, V.Y, V.W, V.H);
           Grow(V, V.H - dY);
           IF V.H > V.menuH + 1 THEN
-            ModifyFrame(Menu, extend, dY, V.Y + V.H - V.menuH, V.menuH - 1);
+            IF Modern THEN
+              ModifyFrame(Menu, extend, dY, V.Y + V.H - V.menuH + 1, V.menuH - 1 - 1);
+              Display.ReplConst(DarkFrame, V.X + 1, V.Y + V.H - V.menuH, V.W - 2, 1, replace)
+            ELSE
+              ModifyFrame(Menu, extend, dY, V.Y + V.H - V.menuH, V.menuH - 1)
+            END;
             ModifyFrame(Main, extend, dY, V.Y + 1, V.H - V.menuH - 1)
           ELSE (*V.H > 1*)
             ModifyFrame(Menu, extend, dY, V.Y + 1, V.H - 2);
@@ -188,13 +211,21 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
             Oberon.RemoveMarks(V.X, V.Y, V.W, V.H);
             H := V.H - dY;
             ModifyFrame(Main, reduce, dY, V.Y + 1, H - V.menuH - 1);
-            ModifyFrame(Menu, reduce, dY, V.Y + H - V.menuH, V.menuH - 1);
+            IF Modern THEN
+              ModifyFrame(Menu, reduce, dY, V.Y + H - V.menuH + 1, V.menuH - 2);
+              Display.ReplConst(DarkFrame, V.X + 1, V.Y + H - V.menuH, V.W - 2, 1, replace)
+            ELSE
+              ModifyFrame(Menu, reduce, dY, V.Y + H - V.menuH, V.menuH - 1)
+            END;
             Shrink(V, H);
             Viewers.Change(V, V.Y + H)
           END
         END
       END
-    END
+    END;
+    IF AvoidLostViewer & (V.Y+V.H < 20) THEN
+		Viewers.Change(V, 20); Restore(V)
+	END
   END Change;
 
   PROCEDURE Suspend (V: Viewer);
@@ -256,6 +287,8 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
            ELSE Menu.handle(Menu, M); Main.handle(Main, M)
            END
          END
+        ELSIF M IS Objects.AttrMsg THEN
+        	Menu.handle(Menu, M)
       ELSE Menu.handle(Menu, M); Main.handle(Main, M)
       END
     END
@@ -277,11 +310,11 @@ MODULE MenuViewers; (*JG 16.10.94, color version, pm 17.11.95 config *)
   END New;
 
   PROCEDURE Init;
-  VAR s: ARRAY 8 OF CHAR;
   BEGIN
-    Kernel.GetConfig("Color", s);
-    IF s[0] # "0" THEN LightFrame := 0; DarkFrame := 14	(* 15=hardlook, 12=soft look, 14=standard look *)
-    ELSE LightFrame := 15; DarkFrame := 15
+    IF Display.Depth(0) # 1 THEN
+    	LightFrame := 0; IF Modern THEN DarkFrame := 12 ELSE DarkFrame := 14 END
+    ELSE
+    	LightFrame := 15; DarkFrame := 15
     END
   END Init;
 

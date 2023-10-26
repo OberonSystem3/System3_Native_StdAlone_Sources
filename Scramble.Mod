@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
-	IMPORT RandomNumbers, Files, Objects, Display, Fonts, Texts, Pictures, Display3, Effects, Strings, Gadgets, 
-		Oberon, Documents, Desktops;
+MODULE Scramble;	(** portable *) (* Copyright (C) 1995 by Emil J. Zeller *)
+	IMPORT RandomNumbers, Files, Objects, Display, Fonts, Texts, Pictures, Display3, Effects, Strings, Gadgets, Oberon, Documents, Desktops;
 	(* Scramble for Oberon Version 1.0
 		Disclaimer
 			Permission to use, copy, modify and distribute this software and its documentation for any purpose is hereby granted
@@ -135,7 +133,7 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 			FOR j := 0 TO F.m-1 DO
 				IF ((i # F.empty.x) OR (j # F.empty.y)) & ((i # F.arrange[i, j].x) OR (j # F.arrange[i, j].y)) THEN
 					F.done := FALSE;
-				 	RETURN
+					RETURN
 				 END 
 			END
 		END
@@ -290,11 +288,11 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 					END;
 					Drop()
 				END
-			END
+			END;
+			M.res := 0
 		ELSE
 			Gadgets.framehandle(F, M)
-		END;
-		M.res := 0
+		END
 	END Track;
 
 	PROCEDURE Arrange(F: Frame; scramble: BOOLEAN);
@@ -367,10 +365,8 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 			IF M IS Display.FrameMsg THEN
 				WITH M: Display.FrameMsg DO
      		 	  IF (M.F = NIL) OR (M.F = F) THEN
-						x := M.x + F.X;
-						y := M.y + F.Y;
-						w := F.W;
-						h := F.H;
+						x := M.x + F.X; y := M.y + F.Y;
+						w := F.W; h := F.H;
 						IF M IS Display.DisplayMsg THEN
 							WITH M: Display.DisplayMsg  DO
 								IF M.device = Display.screen THEN
@@ -555,20 +551,13 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 		VAR F: Frame;
 	BEGIN
 		NEW(F);
-		F.focus := FALSE;
-		F.done := TRUE;
-		F.num := FALSE;
-		F.n := 4;
-		F.m := 4;
+		F.focus := FALSE; F.done := TRUE; F.num := FALSE;
+		F.n := 4; F.m := 4;
 		Arrange(F, FALSE);
-		NEW(F.pict);
-		Pictures.Create(F.pict, 0, 0, 8);
-		Pictures.Open(F.pict, "Default.Pict", TRUE);
-		F.obj := F.pict;
-		F.W := F.pict.width;
-		F.H := F.pict.height;
-		F.handle := Handle;
-		Objects.NewObj := F
+		NEW(F.pict); Pictures.Create(F.pict, 0, 0, 8);
+		Pictures.Open(F.pict, "Default.Pict", TRUE); F.obj := F.pict;
+		F.W := F.pict.width; F.H := F.pict.height;
+		F.handle := Handle; Objects.NewObj := F
 	END NewFrame;
 
 	PROCEDURE *LoadDoc(D: Documents.Document);
@@ -656,9 +645,7 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 				WITH M: Objects.AttrMsg DO
 					IF M.id = Objects.get THEN
 						IF M.name = "Gen" THEN
-							M.class := Objects.String;
-							M.s := "Scramble.NewDoc";
-							M.res := 0
+							M.class := Objects.String; M.s := "Scramble.NewDoc"; M.res := 0
 						ELSE
 							Documents.Handler(D, M)
 						END
@@ -766,8 +753,7 @@ MODULE Scramble; (* Copyright (C) 1995 by Emil J. Zeller *)
 		Env(S, F);
 		IF (F # NIL) & (S.class IN {Texts.Name, Texts.String}) THEN
 			F.num := FALSE;
-			NEW(pict);
-Pictures.Create(pict, 0, 0, 8);
+			NEW(pict); Pictures.Create(pict, 0, 0, 8);
 			Pictures.Open(pict, S.s, TRUE);
 			L.id := Objects.set;
 			L.obj := pict;

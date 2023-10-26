@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HSV;
+MODULE HSV;	(** portable *)
 
-IMPORT  Oberon, Viewers, Texts, MenuViewers, Input, TextFrames, Objects, Fonts, Display;
+IMPORT  Oberon, Viewers, MenuViewers, Input, TextFrames, Objects, Fonts, Display;
 CONST ML = 2; Border = 5;
 TYPE 
 	Frame* = POINTER TO FrameDesc;
@@ -27,9 +26,6 @@ TYPE
 		restore* : RestoreProc;
 		x, y, w, h, cx, cw : INTEGER;
 		color : INTEGER; 
-	END;
-	Pat = RECORD
-		w, h: SHORTINT; r: ARRAY 16 OF CHAR
 	END;
 
 VAR hsv : ARRAY 16 OF RECORD h, s, v : INTEGER END;
@@ -126,7 +122,7 @@ BEGIN
 END RestoreFrame;
 
 PROCEDURE Modify* (F: Frame; id, dY, Y, H: INTEGER);
-	VAR V : Viewers.Viewer;  dH,X : INTEGER; W,R : INTEGER;
+	VAR dH,X : INTEGER;
 BEGIN
 	dH := H - F.H;
 	IF F.H = 0 THEN
@@ -250,7 +246,7 @@ BEGIN
 END ShowColor;
 
 PROCEDURE ShowHSV(F : Frame);
-	VAR h : INTEGER; help: INTEGER;
+	VAR help: INTEGER;
 BEGIN	
 	IF hsv[F.color].h <= 64 THEN 
 		help := hsv[F.color].h; Bar(F,15,3, SHORT(LONG(F.h) * help DIV 64),TRUE); 
@@ -273,7 +269,7 @@ BEGIN
 END IntToString;
 
 PROCEDURE String(VAR x : INTEGER; y : INTEGER; s : ARRAY OF CHAR);
-	VAR pat: LONGINT; dx,u,v,w,h,i: INTEGER; ch : CHAR; font : Objects.Library;
+	VAR dx,u,v,i: INTEGER; font : Objects.Library;
 	ob1: Objects.Object;
 BEGIN	
 	font := Objects.ThisLibrary("Oberon10.Scn.Fnt");
@@ -315,10 +311,10 @@ BEGIN
 END SetHSV;
 
 PROCEDURE EditPalette(F : Frame; col : INTEGER);
-	VAR keys : SET; X, Y, x, y, V, V0, cv, grain : INTEGER;c : ARRAY 3 OF INTEGER;  R, G, B,H,S,v : REAL;
+	VAR keys : SET; X, Y, x, y, V, V0, grain : INTEGER;c : ARRAY 3 OF INTEGER;  R, G, B: REAL;
 BEGIN
 	IF col < 3 THEN grain := 16 ELSE grain := 64 END;
-	cv := F.h DIV grain; V := -1; 
+	V := -1; 
 	Display.GetColor(F.color,c[0],c[1],c[2]);
 	c[0] := c[0] DIV 16; c[1] := c[1] DIV 16; c[2] := c[2] DIV 16;
 	REPEAT
@@ -412,8 +408,8 @@ BEGIN
 	END
 END Handle;
 
-PROCEDURE *Restore(F : Frame; x,y,w,h : INTEGER);
-	VAR i : INTEGER; H,S,V : REAL; r,g,b : INTEGER; s : ARRAY 32 OF CHAR; X : INTEGER;
+PROCEDURE *Restore(F : Frame; x, y, w, h: INTEGER);
+	VAR i : INTEGER; s : ARRAY 32 OF CHAR; X : INTEGER;
 BEGIN
 	IF h # 0 THEN
 		Pos(F,F.X,F.Y,F.x,F.y);  

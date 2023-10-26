@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HTMLDocs;
+MODULE HTMLDocs;	(** portable *) (* ejz, Greek & Math support by afi *)
 	IMPORT Objects, Input, Strings, Display, Display3, Fonts, HyperDocs, Texts, Gadgets, Documents, HTTPDocs0, TextDocs,
-		Oberon, TextGadgets, Lists, Attributes, Desktops, Links, Streams, TextStreams, BasicFigures;
+		Oberon, TextGadgets, Lists, Attributes, Desktops, Links, Streams, TextStreams;
 
 	CONST
 		(* class *)
@@ -27,6 +26,8 @@ MODULE HTMLDocs;
 		DefList = 0; DescList = 1; OrderedList = 2;
 		DefStyle = {TextGadgets.left};
 		Menu = "Desktops.Copy[Copy] HyperDocs.Back[Back] HyperDocs.Reload[Reload] TextDocs.Search[Search] Desktops.StoreDoc[Store]";
+		GreekCap = "0013143516173415192134222324252728202931323337372636180000000000";
+		GreekMin = "004546674849664751536654555657596052616364656969586850";
 
 	TYPE
 		DocURL* = POINTER TO DocURLDesc;
@@ -117,6 +118,7 @@ MODULE HTMLDocs;
 		mono: Fonts.Font;
 		found: BOOLEAN;
 		dispW: INTEGER;
+		GreekTab: ARRAY 128 OF CHAR;
 
 	PROCEDURE WriteLn*(P: Page);
 	BEGIN
@@ -160,8 +162,8 @@ MODULE HTMLDocs;
 			name: ARRAY 32 OF CHAR;
 			sizeS: ARRAY 4 OF CHAR;
 	BEGIN
-		name := "Oberon";
-		IF Display.Width < 800 THEN DEC(size, 2) END;
+		name := "Default";
+		IF dispW < 800 THEN DEC(size, 2) END;
 		IF size <= 8 THEN size := 8
 		ELSIF size <= 10 THEN size := 10
 		ELSIF size <= 12 THEN size := 12
@@ -337,19 +339,21 @@ MODULE HTMLDocs;
 		END
 	END SetFontSize;
 
-	PROCEDURE HorzRule*(P: Page; w, h, col: INTEGER);
-		VAR f: BasicFigures.Figure;
+	PROCEDURE HorzRule*(P: Page; w, h: INTEGER);
+		VAR obj: Objects.Object;
 	BEGIN
 		IF P.lines <= 0 THEN
 			WriteLn(P)
 		END;
-		IF h < 1 THEN
-			h := 1
+		h := 2*h;
+		IF h < 4 THEN
+			h := 4
 		END;
-		NEW(f); BasicFigures.InitRect3D(f, w, h);
-		Attributes.SetBool(f, "Filled", TRUE);
-		Attributes.SetInt(f, "Color", P.textbackC);
-		WriteObj(P, f); P.lines := 1; WriteLn(P)
+		obj := Gadgets.CreateObject("BasicFigures.NewRect3D");
+		Attributes.SetBool(obj, "Filled", TRUE);
+		Attributes.SetInt(obj, "Color", P.textbackC);
+		Gadgets.ModifySize(obj(Display.Frame), w, h);
+		WriteObj(P, obj); P.lines := 1; WriteLn(P)
 	END HorzRule;
 
 	PROCEDURE TextAlign*(VAR align: ARRAY OF CHAR): TextGadgets.Style;
@@ -1089,19 +1093,41 @@ to.elems := from.elems
 		END
 	END Read;
 
+	PROCEDURE ChangeFontFamily(f: Fonts.Font; newfamily: ARRAY OF CHAR): Fonts.Font;
+		VAR
+			family: ARRAY 64 OF CHAR;
+			str: ARRAY 4 OF CHAR;
+			size: INTEGER;
+			attr: CHAR;
+	BEGIN
+		SplitFontName(f, family, size, attr);
+		IF family # newfamily THEN
+			COPY(newfamily, family);
+			Strings.IntToStr(size, str); Strings.Append(family, str);
+			IF attr # 0X THEN
+				Strings.AppendCh(family, attr)
+			END;
+			Strings.Append(family, ".Scn.Fnt");
+			RETURN Fonts.This(family)
+		ELSE
+			RETURN f
+		END
+	END ChangeFontFamily;
+
 	PROCEDURE WriteCharRef*(P: Page; VAR S: Scanner);
 		VAR
-			i, j: LONGINT;
-			entity: ARRAY 64 OF CHAR;
+			i, j, k: LONGINT;
+			entity: ARRAY 64 OF CHAR; istr: ARRAY 4 OF CHAR;
 			lib: Objects.Library;
 			obj: Objects.Object;
+			fnt: Fonts.Font;
 			ref: INTEGER;
 	BEGIN
 		IF S.ch = "#" THEN
 			Read(S);
 			IF Strings.IsDigit(S.ch) THEN
 				i := 0;
-				WHILE ~S.end & (i < 256) & Strings.IsDigit(S.ch) DO
+				WHILE ~S.end & (i < 9100) & Strings.IsDigit(S.ch) DO
 					i := 10*i+ORD(S.ch)-ORD("0"); Read(S)
 				END;
 				IF S.ch = ";" THEN
@@ -1114,7 +1140,138 @@ to.elems := from.elems
 					|189: Texts.WriteString(P.W, " 1/2")
 					|190: Texts.WriteString(P.W, " 3/4")
 				ELSE
-					Texts.Write(P.W, Strings.ISOToOberon[i])
+					fnt := P.W.lib(Fonts.Font);
+					IF (i >= 913) & (i <= 982) THEN	(* Greek character *)
+						Strings.IntToStr(i - 900, istr);
+						k := 0;
+						WHILE ((istr[0] # GreekTab[k]) OR (istr[1] # GreekTab[k+1])) & (k < 120) DO
+							k := k + 2
+						END;
+						k := k DIV 2;
+						Texts.SetFont (P.W, ChangeFontFamily(fnt, "Greek"));
+						Texts.Write(P.W, CHR(k + ORD("@")));
+						Texts.SetFont (P.W, fnt);
+					ELSIF (i >= 8501) & (i <= 9002) THEN	(* Math character *)
+						Texts.SetFont (P.W, ChangeFontFamily(fnt, "Math"));
+ 		CASE i OF	(*   glyph	TeX name *)
+			  9001: Texts.Write(P.W, "a")	(*	a	langle *)
+			(* b *)	(*	b	vdash *)
+			(* c *)	(*	c	models *)
+			(* d *)	(*	d	dashv *)
+			| 8721: Texts.Write(P.W, "e")	(*	e	sum *)
+			(* f *)	(*	f	ll *)
+			(* g *)	(*	g	gg *)
+			| 8968: Texts.Write(P.W, "h")	(*	h	lceil *)
+			| 8969: Texts.Write(P.W, "i")	(*	i	rceil *)
+			| 8970: Texts.Write(P.W, "j")	(*	j	lfloor *)
+			| 8971: Texts.Write(P.W, "k")	(*	k	rfloor *)
+			(* l *)	(*	l	Vert *)
+			(* m *)	(*	m	mp *)
+			(* n *)	(*	n	prec *)
+			(* o *)	(*	o	succ *)
+			| 8776: Texts.Write(P.W, "p")	(*	p	simeq *)
+			| 9002: Texts.Write(P.W, "q")	(*	q	rangle *)
+			(* r *)	(*	r	not supset *)
+			| 8629: Texts.Write(P.W, "s")	(*	s	(carriage return) *)
+			(* t *)	(*	t	?? *)
+			(* u *)	(*	u	?? *)
+			(* v - moved down *)	(*	v	S *)
+			(* w *)	(*	w	?? *)
+			| 8747: Texts.Write(P.W, "x")	(*	x	int *)
+			(* y *)	(*	y	oint *)
+			(* z *)	(*	z	because *)
+			(* C *)	(*	C	wp *)
+			(* D *)	(*	D	oslash *)
+			| 8853: Texts.Write(P.W, "E")	(*	E	oplus *)
+			| 8709: Texts.Write(P.W, "F")	(*	F	emptyset *)
+			| 8745: Texts.Write(P.W, "G")	(*	G	cap *)
+			| 8746: Texts.Write(P.W, "H")	(*	H	cup *)
+			| 8835: Texts.Write(P.W, "I")	(*	I	supset *)
+			| 8839: Texts.Write(P.W, "J")	(*	J	supseteq *)
+			| 8836: Texts.Write(P.W, "K")	(*	K	not subset *)
+			| 8834: Texts.Write(P.W, "L")	(*	L	subset *)
+			| 8838: Texts.Write(P.W, "M")	(*	M	subseteq *)
+			| 8712: Texts.Write(P.W, "N")	(*	N	in *)
+			| 8713: Texts.Write(P.W, "O")	(*	O	not in *)
+			| 8736: Texts.Write(P.W, "P")	(*	P	angle *)
+			| 8711: Texts.Write(P.W, "Q")	(*	Q	nabla *)
+			| 8704: Texts.Write(P.W, "R")	(*	R	forall *)
+			| 8707: Texts.Write(P.W, "S")	(*	S	exists *)
+			| 8715: Texts.Write(P.W, "T")	(*	T	owns *)
+			(* U *)	(*	U	sqcap *)
+			| 8730: Texts.Write(P.W, "V")	(*	V	surb *)
+			| 8901: Texts.Write(P.W, "W")	(*	W	cdot *)
+			(* X *)	(*	X	lnot *)
+			| 8869: Texts.Write(P.W, "Y")	(*	Y	land *)
+			| 8870: Texts.Write(P.W, "Z")	(*	Z	lor *)
+			(* 0 - moved down *)	(*	0	deg *)
+			(* 1 - moved down *)	(*	1	pm *)
+			| 8805: Texts.Write(P.W, "3")	(*	3	geq *)
+			(* 4 *)	(*	4	times *)
+			| 8733: Texts.Write(P.W, "5")	(*	5	propto *)
+			| 8706: Texts.Write(P.W, "6")	(*	6	partial *)
+			(* 7 - moved down *)	(*	7	bullet *)
+			(* 8 - moved down *)	(*	8	div *)
+			| 8800: Texts.Write(P.W, "9")	(*	9	not= *)
+			(* ) *)	(*	)	swarrow *)
+			(* ! *)	(*	!	mathbb R ?? *)
+			| 8501: Texts.Write(P.W, "@")	(*	@	aleph *)
+			| 8804: Texts.Write(P.W, "#")	(*	#	leq *)
+			(* $ - moved down *)	(*	$	/ *)
+			| 8734: Texts.Write(P.W, "%")	(*	%	infty *)
+			| 8658: Texts.Write(P.W, "^")	(*	^	Rightarrow *)
+			(* & *)	(*	&	>> *)
+			(* * *)	(*	*	searrow *)
+			(* ( *)	(*	(	nwarrow *)
+			| 8592: Texts.Write(P.W, ",")	(*	,	gets *)
+			| 8594: Texts.Write(P.W, ".")	(*	.	to *)
+			| 8773: Texts.Write(P.W, ";")	(*	;	approx *)
+			(* ' *)	(*	'	nearrow *)
+			(* ` *)	(*	`	?? *)
+			| 8593: Texts.Write(P.W, "-")	(*	-	uparrow *)
+			(* = *)	(*	=	vert *)
+			| 8595: Texts.Write(P.W, "/")	(*	/	downarrow *)
+			| 8656: Texts.Write(P.W, "\")	(*	\	Leftarrow *)
+			| 8660: Texts.Write(P.W, "[")	(*	[	Leftrightarrow *)
+			| 8657: Texts.Write(P.W, "]")	(*	]	Uparrow *)
+			(* < - moved down *)	(*	<	dots *)
+			| 8722: Texts.Write(P.W, ">")	(*	>	(minus sign) *)
+			| 8801: Texts.Write(P.W, ":")	(*	:	equiv *)
+			(* " - moved down *)	(*	"	prime *)
+			(* ~ - moved down *)	(*	~	cents *)
+			| 8659: Texts.Write(P.W, "_")	(*	_	Downarrow *)
+			| 8596: Texts.Write(P.W, "+")	(*	+	leftrightarrow *)
+			ELSE
+			END;
+						Texts.SetFont (P.W, fnt);
+					ELSIF (i >= 8201) & (i <= 8500) THEN	(* Math character *)
+						Texts.SetFont (P.W, ChangeFontFamily(fnt, "Math"));
+		CASE i OF	(*   glyph	TeX name *)
+			  8465: Texts.Write(P.W, "A")	(*	A	Im *)
+			| 8476: Texts.Write(P.W, "B")	(*	B	Re *)
+			| 8243: Texts.Write(P.W, "2")	(*	2	(double prime) *)
+			| 8226: Texts.Write(P.W, "7")	(*	7	bullet *)
+			| 8260: Texts.Write(P.W, "$")	(*	$	/ *)
+			| 8230: Texts.Write(P.W, "<")	(*	<	dots *)
+			| 8242: Texts.Write(P.W, '"')	(*	"	prime *)
+			| 8224: Texts.Write(P.W, "}")	(*	}	dagger *)
+		ELSE
+		END;
+						Texts.SetFont (P.W, fnt);
+					ELSIF (i >= 160) & (i <= 250) THEN	(* Math character *)
+						Texts.SetFont (P.W, ChangeFontFamily(fnt, "Math"));
+		CASE i OF	(*   glyph	TeX name *)
+			  167: Texts.Write(P.W, "v")	(*	v	S *)
+			| 176: Texts.Write(P.W, "0")	(*	0	deg *)
+			| 177: Texts.Write(P.W, "1")	(*	1	pm *)
+			| 247: Texts.Write(P.W, "8")	(*	8	div *)
+			| 162: Texts.Write(P.W, "~")	(*	~	cents *)
+		ELSE
+		END;
+						Texts.SetFont (P.W, fnt);
+					ELSE
+						Texts.Write(P.W, Strings.ISOToOberon[i])
+					END
 				END
 			ELSE
 				Texts.WriteString(P.W, "&#")
@@ -1231,9 +1388,13 @@ to.elems := from.elems
 		VAR i, l: LONGINT;
 	BEGIN
 		CASE S.state OF
-			TextHtml:
-							 IF S.ch = "<" THEN
-								Read(S); S.class := OpenTag
+			TextHtml: IF S.ch = "<" THEN
+								Read(S);
+								IF Strings.IsAlpha(S.ch) OR (S.ch = "/") OR (S.ch = "!") THEN
+									S.class := OpenTag
+								ELSE
+									S.char := S.ch; S.class := Character
+								END
 							ELSIF S.ch = "&" THEN
 								Read(S); S.class := CharRef
 							ELSIF (S.ch <= " ") & (S.ch # 0X) & ~S.pre THEN
@@ -1241,7 +1402,12 @@ to.elems := from.elems
 									Read(S)
 								END;
 								IF (S.ch = "<") & (S.class = CloseTag) THEN
-									Read(S); S.class := OpenTag
+									Read(S);
+									IF Strings.IsAlpha(S.ch) OR (S.ch = "/") OR (S.ch = "!") THEN
+										S.class := OpenTag
+									ELSE
+										S.char := S.ch; S.class := Character
+									END
 								ELSIF S.end THEN
 									S.class := Undef; S.state := End
 								ELSE
@@ -1341,7 +1507,7 @@ END
 					quoted := FALSE
 				END;
 				i := 0; l := LEN(S.value)-1;
-				WHILE ~S.end & ((~quoted & (S.ch > " ") & (S.ch # ">")) OR (quoted & (S.ch # 022X))) DO
+				WHILE ~S.end & ( (~quoted & (S.ch > " ") & (S.ch # ">")) OR (quoted & (S.ch # 022X)) ) DO
 					IF i < l THEN
 						IF S.ch = "&" THEN
 							Read(S); CharRefStr(S.page, S, charRef);
@@ -1405,11 +1571,11 @@ END
 			P: Page;
 			attr: ARRAY 64 OF CHAR;
 			obj: Objects.Object;
-			isRef: BOOLEAN;
+			isRef, newDoc: BOOLEAN;
 	BEGIN
 		P := S.page; CloseA(P); P.linkkey := HyperDocs.UndefKey;
 		IF on THEN
-			isRef := FALSE;
+			isRef := FALSE; newDoc := FALSE;
 			WHILE NextAttr(S, attr) DO
 				IF attr = "HREF" THEN
 					isRef := TRUE; HREF(P, S.value, attr, P.linkkey);
@@ -1425,9 +1591,14 @@ END
 					END;
 					obj := Gadgets.CreateObject("TextGadgets.NewControl");
 					WriteObj(P, obj); Attributes.SetString(obj, "Name", S.value)
+				ELSIF attr = "TARGET" THEN
+					newDoc := TRUE
 				END
 			END;
 			IF isRef THEN
+				IF newDoc THEN
+					Attributes.SetString(P.alink, "Opt", "New")
+				END;
 				IF ~HyperDocs.Visited(P.linkkey) THEN
 					PushTextAttrs(P); Texts.SetColor(P.W, SHORT(P.linkC))
 				ELSE
@@ -1498,6 +1669,8 @@ END
 			P: Page;
 			attr, label: ARRAY 64 OF CHAR;
 			s: HyperDocs.LinkScheme;
+			key: LONGINT;
+			port: INTEGER;
 	BEGIN
 		IF on THEN
 			P := S.page;
@@ -1516,7 +1689,8 @@ END
 						P.base.key := HyperDocs.SplitFileAdr(S.value, P.base.path, label);
 						P.base.host := ""; P.base.port := 0
 					ELSE (* proxy *)
-						SplitHostPort(S.value, P.base.host, P.base.port); P.base.path := ""
+						SplitHostPort(S.value, P.base.host, P.base.port);
+						key := HTTPDocs0.SplitHTTPAdr(S.value, P.base.host, P.base.path, label, port)
 					END
 				END
 			END
@@ -1532,7 +1706,7 @@ END
 		ELSIF (ch >= "a") & (ch <= "f") THEN
 			RETURN ORD(ch)-ORD("a")+10
 		ELSE
-			RETURN 0
+			RETURN 256
 		END
 	END HexVal;
 
@@ -1549,6 +1723,9 @@ END
 			r := 16*HexVal(val[0])+HexVal(val[1]);
 			g := 16*HexVal(val[2])+HexVal(val[3]);
 			b := 16*HexVal(val[4])+HexVal(val[5])
+		END;
+		IF (r > 255) OR (g > 255) OR (b > 255) THEN
+			RETURN
 		END;
 		mdiff := MAX(REAL); bestC := 0;
 		i := 0;
@@ -1672,14 +1849,15 @@ END
 				IF attr = "BGCOLOR" THEN
 					Color(S.value, P.textbackC); Attributes.SetInt(P.D.dsc, "Color", P.textbackC)
 				ELSIF attr = "TEXT" THEN
-					Color(S.value, col); ChangeColors(P, SHORT(P.textC), SHORT(col));
+					col := P.textC; Color(S.value, col);
+					ChangeColors(P, SHORT(P.textC), SHORT(col));
 					P.textC := col
 				ELSIF attr = "LINK" THEN (* hyper text link *)
-					Color(S.value, col);
+					col := P.linkC; Color(S.value, col);
 					ChangeColors(P, SHORT(P.linkC), SHORT(col));
 					P.linkC := col; Attributes.SetInt(P.D.dsc, "LinkColor", P.linkC)
 				ELSIF attr = "VLINK" THEN (* visited hyper text link *)
-					Color(S.value, col);
+					col := P.oldLinkC; Color(S.value, col);
 					ChangeColors(P, SHORT(P.oldLinkC), SHORT(col));
 					P.oldLinkC := col; Attributes.SetInt(P.D.dsc, "OldLinkColor", P.oldLinkC)
 				ELSIF attr = "BACKGROUND" THEN
@@ -2060,7 +2238,7 @@ END
 					END
 				END
 			END;
-			HorzRule(P, w, h, Display.FG)
+			HorzRule(P, w, h)
 		END;
 		(*S.skipWS := TRUE*)
 	END HR;
@@ -2140,8 +2318,8 @@ END
 	END LI;
 
 	PROCEDURE LINK(VAR S: Scanner; on: BOOLEAN);
-		VAR
-		P: Page;
+(*		VAR
+			P: Page;
 			attr, cmd, caption: ARRAY 64 OF CHAR;
 			key: LONGINT;
 			obj: Objects.Object;
@@ -2174,7 +2352,7 @@ END
 				Attributes.SetInt(obj, "Key", key);
 				WriteObj(P, obj)
 			END
-		END
+		END	*)
 	END LINK;
 
 	PROCEDURE LISTING(VAR S: Scanner; on: BOOLEAN);
@@ -2211,7 +2389,7 @@ END
 					key := HyperDocs.BuildKey(P.base, S.value)
 				END
 			END;
-			WriteObj(P, form); HorzRule(P, dispW, 1, Display.FG);
+			WriteObj(P, form); HorzRule(P, dispW, 1);
 			Texts.WriteString(P.W, prompt);
 			objt := Gadgets.CreateObject("BasicGadgets.NewInteger");
 			Attributes.SetInt(objt, "Value", key);
@@ -2225,7 +2403,7 @@ END
 			Attributes.SetString(objb, "Caption", "Search");
 			Attributes.SetString(objb, "Cmd", "HTMLDocs.SubmitQuery");
 			AddFormObj(P, form, objb, "", FALSE, TRUE);
-			HorzRule(P, dispW, 1, Display.FG)
+			HorzRule(P, dispW, 1)
 		END
 	END ISINDEX;
 
@@ -2253,7 +2431,7 @@ END
 		VAR P: Page;
 	BEGIN
 		P := S.page;
-		HorzRule(P, dispW, 1, P.textC)
+		HorzRule(P, dispW, 1)
 	END NOFRAMES;
 
 	PROCEDURE OL(VAR S: Scanner; on: BOOLEAN);
@@ -2428,9 +2606,8 @@ END
 				Texts.SetFont(P.W, Syntax(12, 0X));
 				Texts.WriteString(P.W, "Title: ")
 			ELSE
-				WriteLn(P);
-				PopTextAttrs(P);
-				HorzRule(P, dispW, 2, Display.FG);
+				WriteLn(P); PopTextAttrs(P);
+				HorzRule(P, dispW, 2);
 				Texts.Append(P.T, P.W.buf);
 				P.headerLen := P.T.len
 			END
@@ -2523,12 +2700,12 @@ ELSIF ~on THEN
 
 	PROCEDURE HandleTag(VAR S: Scanner);
 		VAR
+			Ss: Texts.Scanner;
 			gen: ARRAY 64 OF CHAR;
 			e: ExtTag;
 			i: INTEGER;
 			found, on: BOOLEAN;
 			prev: CHAR;
-			Ss: Texts.Scanner;
 	BEGIN
 		WHILE ~S.end & (S.ch <= " ") DO
 			Read(S)
@@ -2766,12 +2943,6 @@ ELSIF ~on THEN
 						e := e.next
 					END;
 					IF e = NIL THEN
-(*
-					(* Mac, Win *)
-						Registry.Get("HTMLTags", S.value, gen);
-						IF Registry.res = Registry.Done THEN
-*)
-					(* Native *)
 						gen := "HTMLTags.";  Strings.Append(gen, S.value);
 						Oberon.OpenScanner(Ss, gen);
 						IF Ss.class IN {Texts.Name, Texts.String} THEN
@@ -2967,23 +3138,15 @@ ELSIF ~on THEN
 	PROCEDURE QueryString(key: ARRAY OF CHAR; VAR s: ARRAY OF CHAR): BOOLEAN;
 	VAR lKey: ARRAY 32 OF CHAR;  S: Texts.Scanner;
 	BEGIN
-(* (* Mac, Win *)
-		Registry.Get("NetSystem", key, s);
-		IF (Registry.res = Registry.Done) & (s # "") THEN
-			RETURN TRUE
+		lKey := "NetSystem."; Strings.Append(lKey, key);
+		Oberon.OpenScanner(S, lKey);
+		IF S.class IN {Texts.Name, Texts.String} THEN
+			COPY(S.s, s)
 		ELSE
-			COPY("", s); RETURN FALSE
-		END
-*) (* Native *) 
-	lKey := "NetSystem."; Strings.Append(lKey, key);
-	Oberon.OpenScanner(S, lKey);
-	IF S.class IN {Texts.Name, Texts.String} THEN
-		COPY(S.s, s)
-	ELSE
-		COPY("", s)
-	END;
-	RETURN s # ""
-END QueryString;
+			COPY("", s)
+		END;
+		RETURN s # ""
+	END QueryString;
 
 	PROCEDURE QueryBool(key: ARRAY OF CHAR): BOOLEAN;
 		VAR
@@ -3017,14 +3180,15 @@ END QueryString;
 		me.P.handle := Gadgets.objecthandle; me.P.blank := FALSE;
 		Links.SetLink(D.dsc, "Model", me.P.T); me.P.lines := 0; me.P.linkkey := HyperDocs.UndefKey;
 		me.P.textAttrs := NIL; Texts.OpenWriter(me.P.W); me.P.left := FALSE;
-		me.P.linkC := HyperDocs.linkC; me.P.oldLinkC := HyperDocs.oldLinkC; me.P.textC := Display3.textC; me.P.textbackC := Display3.textbackC;
+		me.P.linkC := HyperDocs.linkC; me.P.oldLinkC := HyperDocs.oldLinkC; 
+		me.P.textC := Display3.textC; me.P.textbackC := Display3.textbackC;
 		Attributes.SetInt(me.P.D.dsc, "LinkColor", me.P.linkC);
 		Attributes.SetInt(me.P.D.dsc, "OldLinkColor", me.P.oldLinkC);
 		me.S.page := me.P; me.P.lists := NIL;
 		NEW(me.P.base); me.P.base.key := basekey; me.P.base.dockey := me.P.base.key;
 		me.P.style := TextGadgets.newStyle(); InitTabs(me.P.style); me.P.style.mode := DefStyle;
 		WriteObj(me.P, me.P.style); PopTextAttrs(me.P); me.P.orgPos := 0; me.P.head := head;
-		OpenScanner(me.S, S); 
+		OpenScanner(me.S, S);
 		IF head THEN
 			Texts.WriteString(me.P.W, "URL: "); Texts.Write(me.P.W, 22X)
 		END;
@@ -3090,7 +3254,7 @@ END QueryString;
 		END;
 		me.P.D.handle := DocHandler;
 		Attributes.SetString(me.P.D, "Type", "HTML");
-		Attributes.SetInt(me.P.D.dsc, "Color", me.P.textbackC);	
+		Attributes.SetInt(me.P.D.dsc, "Color", me.P.textbackC);
 		Texts.Append(me.P.T, me.P.W.buf); Read(me.S); Next(me.S);
 		me.P.headerLen := me.P.T.len;
 		me.time := 0; me.safe := FALSE; me.handle := ParseNext; Oberon.Install(me);
@@ -3343,7 +3507,7 @@ BEGIN
 	END;
 END SetImages;
 
-PROCEDURE Check;
+PROCEDURE Check();
 VAR S: Texts.Scanner;
 BEGIN
 	Oberon.OpenScanner(S, "HTMLTags");
@@ -3354,11 +3518,13 @@ BEGIN
 END Check;
 
 BEGIN
+	COPY(GreekCap, GreekTab);
+	Strings.Append(GreekTab, GreekMin);
 	InitEntities(); mono := Fonts.This("Courier10.Scn.Fnt");
-	bullets[0].f := Fonts.This("Oberon10.Scn.Fnt"); bullets[0].c := CHR(29);
+	bullets[0].f := Fonts.This("Default10.Scn.Fnt"); bullets[0].c := CHR(29);
 	bullets[1].f := bullets[0].f; bullets[1].c := CHR(28);
 	Texts.OpenWriter(Wr); Texts.OpenWriter(Wq);
 	imgs := TRUE; extTags := NIL; newTag := NIL;
-	pages := NIL; dispW := Oberon.DisplayWidth(0);
-	Check
+	pages := NIL; dispW := Display.Width;
+	Check()
 END HTMLDocs.

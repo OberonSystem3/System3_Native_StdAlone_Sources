@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Diskette; (*JG 11.8.94/pjm 4.7.95 *)
+MODULE Diskette;	(** non-portable *) (*JG 11.8.94/pjm 4.7.95 *)
 
   IMPORT SYSTEM, Diskette0, Files, Input, Oberon, Modules;
 
@@ -474,21 +473,21 @@ END PutSectors;
     h.next := g.next; g.next := h; h.next.prev := h; h.prev := g
   END addFile;
 
-  PROCEDURE ReadFile* (name: ARRAY OF CHAR);
+  PROCEDURE ReadFile* (name, oname: ARRAY OF CHAR);
     VAR f: File; g: Files.File; nname: ARRAY 32 OF CHAR;
   BEGIN
     NormName(name, nname); Locate(nname, f);
     IF f.name = nname THEN
-      g := Files.New(nname); readFile(f, g); Files.Register(g); res := 0
+      g := Files.New(oname); readFile(f, g); Files.Register(g); res := 0
     ELSE res := 1
     END
   END ReadFile;
 
-  PROCEDURE WriteFile* (name: ARRAY OF CHAR);
+  PROCEDURE WriteFile* (oname, name: ARRAY OF CHAR);
     VAR f: Files.File; g, h: File; size: LONGINT; need: INTEGER;
       nname: ARRAY 32 OF CHAR;
   BEGIN
-    res := 0; f := Files.Old(name);
+    res := 0; f := Files.Old(oname);
     IF f # NIL THEN size := Files.Length(f);
       NormName(name, nname); Locate(nname, g);
       IF g.name = nname THEN

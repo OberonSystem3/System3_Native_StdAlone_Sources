@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,8 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HTTPDocs; (* ejz,   *)
-	IMPORT Files, Objects, Input, Display, NetSystem, NetTools, Strings, HyperDocs, TextDocs, Texts, Links, Oberon, Documents,
+MODULE HTTPDocs;	(** portable *) (* ejz,   *)
+	IMPORT Kernel, Files, Objects, Input, NetSystem, NetTools, Strings, HyperDocs, TextDocs, Texts, Links, Oberon, Documents,
 		Attributes, HTTPDocs0, Streams, TextStreams, HTMLDocs, MIME;
 
 (** This module implements the basis for the webbrowser.
@@ -27,8 +26,8 @@ MODULE HTTPDocs; (* ejz,   *)
 			HTTPProxy = host [ ":" port ] . *)
 
 	CONST
-		Client = "HTTPDocs for Oberon (ejz)";
 		MaxWorkers = 4;
+		IdentifyUser = FALSE;
 
 	TYPE
 		Worker = POINTER TO WorkerDesc;
@@ -63,6 +62,7 @@ MODULE HTTPDocs; (* ejz,   *)
 		authorizations: Authorization;
 		cookies: Cookie;
 		EMail: ARRAY NetTools.ServerStrLen OF CHAR;
+		client: ARRAY 64 OF CHAR;
 
 	PROCEDURE *TCPAvailable(S: Streams.Stream): LONGINT;
 	BEGIN
@@ -280,11 +280,9 @@ END ListCookies;
 	BEGIN
 		aut := NIL;
 		IF log & (method # "GET") THEN
-			Texts.WriteString(W, method);
-			Texts.Write(W, " ")
+			Texts.WriteString(W, method); Texts.Write(W, " ")
 		END;
-		NetTools.SendString(C, method);
-		NetSystem.Write(C, " ");
+		NetTools.SendString(C, method); NetSystem.Write(C, " ");
 		HyperDocs.RetrieveLink(key, buf);
 		IF ~proxy OR Strings.CAPPrefix("http:", buf) THEN
 			key := HTTPDocs0.SplitHTTPAdr(buf, host, path, label, port);
@@ -375,21 +373,19 @@ END ListCookies;
 		NetSystem.WriteString(C, " HTTP/1.0");
 		NetSystem.WriteString(C, "Accept: *.*");
 		NetTools.SendString(C, "Host: "); NetSystem.WriteString(C, host);
-		IF NetTools.QueryString("EMail", EMail) THEN
+		IF IdentifyUser & NetTools.QueryString("EMail", EMail) THEN
 			NetTools.SendString(C, "From: "); NetSystem.WriteString(C, EMail)
 		END;
-		NetTools.SendString(C, "Referer: ");
 		IF (HyperDocs.context # NIL) & (HyperDocs.context.old # NIL) THEN
+			NetTools.SendString(C, "Referer: ");
 			HyperDocs.RetrieveLink(HyperDocs.context.old.key, buf);
 			NetSystem.WriteString(C, buf)
-		ELSE
-			NetSystem.WriteString(C, "Oberon System 3")
 		END;
 		IF aut # NIL THEN
 			NetTools.SendString(C, "Authorization: Basic ");
 			NetSystem.WriteString(C, aut.coded)
 		END;
-		NetTools.SendString(C, "User-Agent: "); NetSystem.WriteString(C, Client);
+		NetTools.SendString(C, "User-Agent: "); NetSystem.WriteString(C, client);
 		cookie := FindCookie(cookies, host, path);
 		WHILE cookie # NIL DO
 			NetTools.SendString(C, "Cookie: ");
@@ -403,12 +399,10 @@ END ListCookies;
 			NetSystem.WriteString(C, "Content-Type: application/x-www-form-urlencoded");
 			NetTools.SendString(C, "Content-Length: ");
 			Strings.IntToStr(NetLen(query), str);
-			NetSystem.WriteString(C, str);
-			NetTools.SendString(C, Strings.CRLF);
+			NetSystem.WriteString(C, str); NetTools.SendString(C, Strings.CRLF);
 			MIME.WriteText(query, 0, query.len, OpenStream(C), MIME.textCont, FALSE, FALSE)
 		END;
-		NetTools.SendString(C, Strings.CRLF);
-		NetTools.SendString(C, Strings.CRLF)
+		NetTools.SendString(C, Strings.CRLF); NetTools.SendString(C, Strings.CRLF)
 	END Request;
 
 	PROCEDURE Response*(VAR C: NetSystem.Connection; key: LONGINT; main: BOOLEAN; VAR cont: MIME.Content; VAR location: ARRAY OF CHAR; log: BOOLEAN): LONGINT;
@@ -422,11 +416,11 @@ END ListCookies;
 		key := HTTPDocs0.SplitHTTPAdr(buf, base.host, base.path, base.label, base.port);
 		status := 0; COPY("", location);
 		NEW(cont); cont.typ := MIME.GetContentType("text/plain"); cont.encoding := MIME.EncBin; cont.len := 0;
-		time := Input.Time();
+		time := Input.Time() + NetTools.TimeOut;
 		REPEAT
 			IF log THEN HTTPDocs0.Wait() END;
 			len := NetSystem.Available(C)
-		UNTIL (len > 0) OR ~NetTools.Connected(C, NetSystem.in) OR NetTools.UserBreak() OR (Input.Time() > (time+NetTools.TimeOut));
+		UNTIL (len > 0) OR ~NetTools.Connected(C, NetSystem.in) OR NetTools.UserBreak() OR (Input.Time() - time > 0);
 		IF len <= 0 THEN
 			IF log THEN
 				Texts.WriteString(W, " no response");
@@ -481,7 +475,7 @@ END ListCookies;
 						Texts.WriteString(W, cont.typ.subTyp)
 					END;
 					Texts.WriteString(W, " not supported");
-					Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+					(*Texts.WriteLn(W);*) Texts.Append(Oberon.Log, W.buf)
 				END;
 				IF cont.typ.typ = "text" THEN
 					pos := MIME.FindField(h, "Content-Transfer-Encoding");
@@ -504,8 +498,7 @@ END ListCookies;
 			END
 		END;
 		IF log THEN
-			Texts.WriteLn(W);
-			Texts.Append(Oberon.Log, W.buf)
+			Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 		END;
 		RETURN status
 	END Response;
@@ -569,10 +562,7 @@ END ListCookies;
 							Texts.Append(Oberon.Log, W.buf)
 						END;
 						NetTools.Disconnect(C);
-						key := key2;
-						IF method = "GET" THEN
-							query := NIL
-						END;
+						key := key2; query := NIL; COPY("GET", method);
 						status := Connect(C, proxy, main, waitR, FALSE, block, method, key, cont, query, log, useProxy)
 					END
 				END
@@ -725,8 +715,8 @@ END ListCookies;
 						T := NIL;
 						Request(me.C, "GET", me.entry.key, me.useProxy, T, FALSE);
 						me.state := 2
-					(*ELSIF state = NetSystem.waitCon THEN
-						me.time := Input.Time() + (Input.TimeUnit DIV 20)*)
+					ELSIF state = NetSystem.waitCon THEN
+						me.time := Input.Time() + (Input.TimeUnit DIV 20)
 					ELSE (* errorCon *)
 						me.state := 6; me.time := Input.Time() + 2*Input.TimeUnit
 					END
@@ -882,8 +872,7 @@ END ListCookies;
 			useProxy, getQuery: BOOLEAN;
 	BEGIN
 		IF E # NIL THEN
-			E.key := key;
-			Install(E)
+			E.key := key; Install(E)
 		ELSE
 			D2 := HyperDocs.GetCachedDoc(key);
 			IF (D2 # NIL) & (D2.dsc # NIL) THEN
@@ -931,9 +920,7 @@ END ListCookies;
 								getQuery := getQuery OR (buf[i] = "?"); INC(i)
 							END;
 							S.mode := Streams.iso8859;
-							
 							HTMLDocs.Parse(D, key (*origKey*), S, TRUE, (query = NIL) & ~getQuery, FALSE);
-							
 							C := NIL; P := HTMLDocs.pages
 						ELSE
 							NEW(T); Texts.Open(T, "");
@@ -944,6 +931,12 @@ END ListCookies;
 						END
 					ELSE
 						MIME.MakeTempName(cont.typ, temp);
+						IF (cont.typ.typ = "application") & (cont.typ.subTyp = "octet-stream") THEN
+							HyperDocs.RetrieveLink(origKey, D.name);
+							Strings.GetSuffix(D.name, D.name);
+							Strings.Append(temp, D.name)
+						END;
+						Texts.Append(Oberon.Log, W.buf);
 						F := Files.New(temp); Files.Set(R, F, 0);
 						NetTools.ReadData(C, R, MAX(LONGINT));
 						Files.Register(F);
@@ -951,7 +944,7 @@ END ListCookies;
 						D2 := Documents.Open(temp);
 						IF (D2 # NIL) & (D2.dsc # NIL) THEN
 							D^ := D2^; D.lib := NIL; D.ref := -1;
-							HyperDocs.RetrieveLink(origKey, D.name)
+(* HyperDocs.RetrieveLink(origKey, D.name) *)
 						END
 					END
 				ELSE
@@ -1054,6 +1047,8 @@ BEGIN
 END ReplaceDoc;
 
 BEGIN
+	client := "Oberon HTTPDocs (ejz) on ";
+	Strings.Append(client, Kernel.version);
 	InitTables(); Texts.OpenWriter(W);
 	NEW(HTTPDocs0.httpProxy); HTTPDocs0.requestDoc := requestDoc;
 	NetTools.GetHostPort("HTTPProxy", HTTPDocs0.httpProxy.host, HTTPDocs0.httpProxy.port, HTTPDocs0.DefPort);
@@ -1062,6 +1057,3 @@ BEGIN
 	END;
 	noWorkers :=  0; authorizations := NIL; cookies := NIL
 END HTTPDocs.
-
-"http://beelzebub.ethz.ch/chemo_publ.html"
-"http://beelzebub.ethz.ch/sensor_publ.html"

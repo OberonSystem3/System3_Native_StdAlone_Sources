@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Dim3Read;	(* David Ulrich Nov 95 - März 96 *)
+MODULE Dim3Read;	(** portable *)	(* David Ulrich Nov 95 - März 96 *)
 (** This module builds polygon worlds for the 3D Engine from a text description **)
 
 IMPORT
@@ -609,7 +608,7 @@ BEGIN
 	cur.dither := FALSE;
 	cur.specular := FALSE;
 	cur.next := NIL;
-	cur.font := "Oberon12.Scn.Fnt";
+	cur.font := "Default12.Scn.Fnt";
 	cur.fontColor := Dim3Engine.black;
 	
 	(* skip shape definitions *)

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,10 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/ jm modified for System 3 *)
+MODULE AsciiCoder;	(** portable *) (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/ jm modified for System 3 *)
 	
-	IMPORT
-		Objects, Oberon, Texts, Files, Display, Documents, TextGadgets, TextDocs, Desktops;
+	IMPORT Oberon, Texts, Files, Display;
 
 	CONST
 		Base = 48; StopBase = 35;
@@ -40,7 +38,7 @@ MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/
 		i := 0; REPEAT table[i] := 0X; INC(i) UNTIL i = N;
 		Files.Set(from, src, 0); Files.Set(to, dest, 0);
 		i := Files.Length(src); Files.WriteNum(to, i);
-		IF i # 0 THEN
+		IF i > 0 THEN
 			hash := 0; bit := 0; byte := 0;
 			REPEAT
 				Files.Read(from, ch);
@@ -64,7 +62,7 @@ MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/
 		i := 0; REPEAT table[i] := 0X; INC(i) UNTIL i = N;
 		Files.Set(from, src, 0); Files.Set(to, dest, 0);
 		Files.ReadNum(from, i);
-		IF i # 0 THEN
+		IF i > 0 THEN
 			Files.Read(from, ch); val := ORD(ch); bit := 0; hash := 0;
 			REPEAT
 				INC(bit);
@@ -102,7 +100,7 @@ MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/
 
 	PROCEDURE Decode*(from: Texts.Text; VAR pos: LONGINT; to: Files.File; VAR ok: BOOLEAN);
 		VAR rest, div, factor, byte: INTEGER; ch: CHAR; r: Texts.Reader; w: Files.Rider;
-	BEGIN Texts.OpenReader(r, from, pos); Files.Set(w, to, 0); factor := 1; div := 256;
+	BEGIN Texts.OpenReader(r, from, pos); Files.Set(w, to, 0); factor := 1; div := 256; rest := 0;
 		REPEAT Texts.Read(r, ch) UNTIL (ch > " ") OR r.eot;
 		WHILE ~r.eot & (ch >= CHR(Base)) & (ch < CHR(Base + 64)) DO byte := ORD(ch) - Base;
 			IF factor # 1 THEN Files.Write(w, CHR(rest + (byte MOD div) * factor));
@@ -117,15 +115,8 @@ MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/
 	END Decode;
 
 	PROCEDURE OpenViewer(name: ARRAY OF CHAR; text: Texts.Text);
-	VAR D: Documents.Document; f: TextGadgets.Frame;
 	BEGIN
-		NEW(D); TextDocs.InitDoc(D); (* make document wrapper *)
-				
-		NEW(f); TextGadgets.Init(f, text, FALSE);	(* create content *)
-		Documents.Init(D, f); (* and merge together *)
-		COPY(name, D.name);
-		D.W := Display.Width DIV 8 * 3 + 20;
-		Desktops.ShowDoc(D)
+		Oberon.OpenText(name, text, Display.Width DIV 8 * 3 + 20, Display.Height DIV 2)
 	END OpenViewer;
 
 	PROCEDURE ReadFileNames(t: Texts.Text; beg, end: LONGINT; VAR names: NameList; VAR pos: LONGINT);
@@ -197,33 +188,14 @@ MODULE AsciiCoder; (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/
 		END
 	END DecodeFiles;
 	
-	(*Returns the frame that is at X, Y on the display.\ *)
-	PROCEDURE ThisFrame(X, Y: INTEGER; VAR F: Display.Frame);
-	VAR M: Display.LocateMsg;
-	BEGIN M.X := X; M.Y := Y; M.F := NIL; M.loc := NIL; Display.Broadcast(M); F := M.loc
-	END ThisFrame;
-	
-	(* Get the marked text *)
-	PROCEDURE GetText(VAR par: Display.Frame): Texts.Text;
-	VAR M: Objects.LinkMsg; t: Texts.Text;
-	BEGIN
-		t := NIL;
-		ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, par);
-		IF par # NIL THEN
-			M.id := Objects.get; M.name := "Model"; M.obj := NIL; M.res := -1; par.handle(par, M);
-			IF (M.obj # NIL) & (M.obj IS Texts.Text) THEN t := M.obj(Texts.Text) END
-		END;
-		RETURN t
-	END GetText;
-
 	PROCEDURE CodeText*;
 		VAR beg, end, time: LONGINT; compress: BOOLEAN;
-			F: Display.Frame; f, f1: Files.File; t, text: Texts.Text; s: Texts.Scanner; len: LONGINT;
+			f, f1: Files.File; t, text: Texts.Text; s: Texts.Scanner; len: LONGINT;
 	BEGIN compress := FALSE;
 		Texts.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(s);
 		IF (s.line = 0) & (s.class = Texts.Char)  & (s.c = "%") THEN compress := TRUE; Texts.Scan(s) END;
 		IF (s.line = 0) & (s.class = Texts.Char) THEN t := NIL;
-			IF s.c = "*" THEN t := GetText(F)
+			IF s.c = "*" THEN t := Oberon.MarkedText()
 			ELSIF s.c = "@" THEN Oberon.GetSelection(text, beg, end, time);
 				IF time >= 0 THEN NEW(t); Texts.Open(t, ""); Texts.Save(text, beg, end, w.buf); Texts.Append(t, w.buf) END
 			END;

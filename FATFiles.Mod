@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,12 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE FATFiles;  (* pjm 01.05.96/01.09.97 dVdW 08.96 *)
+MODULE FATFiles;	(** non-portable *)  (* pjm 01.05.96/01.09.97 dVdW 08.96 *)
 
 (* FAT file system *)
 
 IMPORT
-	SYSTEM, Kernel, Diskette, Partition;
+	SYSTEM, Kernel, Disk, Diskette, Partition;
 
 CONST	(* svr *)
 	Numflop = 2;
@@ -165,7 +164,7 @@ VAR	(* svr *)
 (* Copy - Copy size bytes from source to dest.  (No overlap allowed) *)
 
 PROCEDURE Copy(source, dest, size: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV ESI, source[EBP]
 	MOV EDI, dest[EBP]
 	MOV ECX, size[EBP]
@@ -271,7 +270,7 @@ PROCEDURE ReadSectors(d: Drive;  sec, num: LONGINT; VAR buf: ARRAY OF SYSTEM.BYT
 BEGIN
 	IF d.part >= 0 THEN	(* hard disk *)
 		IF d.part < info.numpar THEN
-			Partition.GetBlocks(info.par[d.part].drive, info.par[d.part].start + sec, num, buf, 0);
+			Disk.GetBlocks(info.par[d.part].drive, info.par[d.part].start + sec, num, buf, 0);
 			res := 0
 		ELSE
 			res := eNoSuchPartition
@@ -285,11 +284,13 @@ END ReadSectors;
 (* WriteSectors - Write sectors in a partition *)
 
 PROCEDURE WriteSectors(d: Drive;  sec, num: LONGINT;  VAR buf: ARRAY OF SYSTEM.BYTE; VAR res: LONGINT);
+VAR error: ARRAY 32 OF CHAR;
 BEGIN
 	IF d.part >= 0 THEN	(* hard disk *)
 		IF d.part < info.numpar THEN
 			ASSERT(info.par[d.part].letter # 0X);
-			Partition.PutBlocks(info.par[d.part].drive, info.par[d.part].start + sec, num, buf, 0);
+			IF Disk.PutBlocks = NIL THEN error := "Read-only disk" ELSE error := "" END;
+			Disk.PutBlocks(info.par[d.part].drive, info.par[d.part].start + sec, num, buf, 0);
 			res := 0
 		ELSE
 			res := eNoSuchPartition
@@ -531,7 +532,7 @@ BEGIN
 	t := GetUWord(dir, ofs+16H);
 	time := (t MOD 65536)*2;
 	t := GetUWord(dir, ofs+18H);
-	date := (t MOD 32) + (t DIV 32 MOD 16)*32 + (((t DIV 512) + 80) MOD 100)*512;
+	date := (t MOD 32) + (t DIV 32 MOD 16)*32 + ((t DIV 512) + 80)*512;
 	firstcl := GetUWord(dir, ofs+1AH);
 	IF (firstcl = 0) & ({VolLabel, SubDir} * attr = {}) THEN
 		firstcl := -1 (* empty file, see PutDir *)
@@ -557,7 +558,7 @@ BEGIN
 		END;
 		dir[ofs+0BH] := CHR(SHORT(SHORT(SYSTEM.VAL(LONGINT, attr))));
 		t :=(time DIV 2)+SYSTEM.LSH(((date MOD 32)+(date DIV 32 MOD 16)*32
-			  + ((date DIV 512) + 20 (*- 80 + 100*))*512), 16);
+			  + ((date DIV 512) - 80)*512), 16);
 		SYSTEM.PUT(SYSTEM.ADR(dir[ofs+16H]), t);
 		dir[ofs+1AH] := CHR(firstcl MOD 256); dir[ofs+1BH] :=CHR(firstcl DIV 256);
 		SYSTEM.PUT(SYSTEM.ADR(dir[ofs+1CH]), len);
@@ -838,10 +839,14 @@ BEGIN
 		IF res = 0 THEN res := eFileNameAlreadyExists; RETURN END
 	END;
 	SeparateName(f.name, dir, tmp);
-	IF dir[2] = 0X THEN (* root dir *)
-		OpenDrive(dir[0], f.drive, res)
+	IF tmp[0] # " " THEN
+		IF dir[2] = 0X THEN (* root dir *)
+			OpenDrive(dir[0], f.drive, res)
+		ELSE
+			LocateFile(dir, f.drive, t, t, t, t, t, t, t, dirAttr, res)
+		END
 	ELSE
-		LocateFile(dir, f.drive, t, t, t, t, t, t, t, dirAttr, res)
+		res := eInvalidFileName
 	END;
 	IF res = 0 THEN
 		IF (f.drive # NIL) & ((dir[2] = 0X) OR (SubDir IN dirAttr)) THEN
@@ -1674,7 +1679,7 @@ BEGIN
 	END
 END Rename;
 
-(** Reset - Invalidate all removable disk cache entries immediately. *)
+(** Reset - Invalidate all removable disk cache entries immediately (diskette changed). *)
 
 PROCEDURE Reset*;
 VAR p, c: Drive;

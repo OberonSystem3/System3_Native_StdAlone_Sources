@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,8 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE GraphicFrames; (*NW 18.4.88 / 30.6.93 / JG 27.6.94 ported to System 3*)
-	IMPORT Objects, Display, Viewers, Input, Fonts, Texts, Graphics, Oberon;
+MODULE GraphicFrames;	(** portable *) (*NW 18.4.88 / 30.6.93 / JG 27.6.94 ported to System 3*)
+	IMPORT Objects, Display, Input, Fonts, Texts, Graphics, Oberon;
 
 	CONST (*update message ids*)
 		restore = 0;
@@ -78,7 +77,6 @@ MODULE GraphicFrames; (*NW 18.4.88 / 30.6.93 / JG 27.6.94 ported to System 3*)
 
 	VAR Crosshair*: Oberon.Marker;
 		newcap: Graphics.Caption;
-		DW, DH, CL: INTEGER;
 		W: Texts.Writer;
 
 	(*Exported procedures:
@@ -379,7 +377,7 @@ MODULE GraphicFrames; (*NW 18.4.88 / 30.6.93 / JG 27.6.94 ported to System 3*)
 
 		PROCEDURE move(G: Frame; dx, dy: INTEGER);
 			VAR M: UpdateMsg;
-		BEGIN Defocus(G); Oberon.FadeCursor(Oberon.Mouse);
+		BEGIN Defocus(G); G.focused := TRUE; Oberon.FadeCursor(Oberon.Mouse);
 			M.id := drawdel; M.graph := G.graph;  M.F := G; Display.Broadcast(M);
 			Graphics.Move(G.graph, dx, dy); M.id := drawsel; Display.Broadcast(M)
 		END move;
@@ -562,7 +560,7 @@ MODULE GraphicFrames; (*NW 18.4.88 / 30.6.93 / JG 27.6.94 ported to System 3*)
 		G.mark.next := NIL; G.ticked := ticked; G.handle := Handle
 	END Open;
 
-BEGIN DW := Display.Width - 8; DH := Display.Height - 8; CL := Display.ColLeft;
+BEGIN
 	Texts.OpenWriter(W);
 	Graphics.LineMethod.draw := DrawLine; Graphics.CapMethod.draw := DrawCaption;
 	Graphics.MacMethod.draw := DrawMacro

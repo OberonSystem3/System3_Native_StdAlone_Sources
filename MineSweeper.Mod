@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE MineSweeper;	(*	 written by M.Daetwyler & P.Saladin	 	*)
+MODULE MineSweeper;	(** portable *)	(*	 written by M.Daetwyler & P.Saladin	 	*)
 (*
 	05.03.95	implemented automatic task removal	-> V 1.2
 	17.02.95	updated to Oberon System3 2.0	-> V 1.1
@@ -24,16 +23,15 @@ MODULE MineSweeper;	(*	 written by M.Daetwyler & P.Saladin	 	*)
 						integrated procedure New in procedure NewGame
 *)
 
-IMPORT
-	Modules, Files, Input, Display, Display3, Fonts, Printer, Printer3, Effects, Objects, Attributes, Gadgets, Oberon, TextFields,
-	Pictures, Panels, Documents, Desktops, Out, Strings;
+IMPORT Modules, Files, Input, Display, Display3, Fonts, Printer, Printer3, Effects, Objects, Attributes, Gadgets, Oberon,
+	TextFields, Pictures, Panels, Documents, Desktops, Out, Strings;
 
 
 CONST
 	Version = "V 1.2";
 	PictName = "MineSweeperBD.Pict";
 	IconName = "Icons2.Bombe";
-	FontName = "Oberon10b.Scn.Fnt";
+	FontName = "Default10b.Scn.Fnt";
 	ViewName = "Mine";
 	
 	(* menu of MineSweeperDoc: string with following EBNF format: {CommandName["["MenuButtonCaption"]"] } *)
@@ -125,7 +123,7 @@ VAR
 	seek: LONGINT;			(* used in procedure Random *)
 	task: Oberon.Task;		(* timer *)
 	lastTime: LONGINT;
-	
+
 	changedFields: Coords;	(* global array to improve performance *)
 	curArrayPos: INTEGER;	(* index to changedFields (needs to be global. why? see below) *)
 	
@@ -893,7 +891,7 @@ END CopyFrame;
 
 PROCEDURE FrameHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
 (* this is the view's handler *)
-VAR x, y, w, h, i: INTEGER; F0: Frame; R: Display3.Mask; A: Objects.AttrMsg; Mo: Display.ModifyMsg; U: UpdateMsg;
+VAR x, y, w, h, i: INTEGER; F0: Frame; R: Display3.Mask; A: Objects.AttrMsg; Mo: Display.ModifyMsg;
 BEGIN
 	WITH F: Frame DO
 		IF M IS Display.FrameMsg THEN
@@ -971,7 +969,7 @@ BEGIN
 								Print(F, M)
 							END
 						END
-						
+
 					ELSIF M IS Oberon.InputMsg THEN
 						WITH M: Oberon.InputMsg DO
 							Gadgets.MakeMask(F, x, y, M.dlink, R);
@@ -1108,7 +1106,7 @@ BEGIN
 		A.name:= "Min"; A.class:= Objects.Int; A.i:= min; A.res:= -1; s.handle(s, A);
 		A.name:= "Max"; A.class:= Objects.Int; A.i:= max; A.res:= -1; s.handle(s, A);
 		A.name:= "Field"; A.class:= Objects.String; COPY(name, A.s); A.res:= -1; s.handle(s, A);
-		
+
 		(* init the text gadget *)
 		t.W:= s.W; t.H:= 17; t.obj:= model;
 		A.name:= "Field"; A.class:= Objects.String; COPY(name, A.s); A.res:= -1; t.handle(t, A);
@@ -1116,7 +1114,7 @@ BEGIN
 		A.id:= Objects.get; COPY(name, A.name); A.class:= Objects.Int; A.res:= -1; model.handle(model, A);
 		A.id:= Objects.set; A.name:= "Value"; A.class:= Objects.Int; A.res:= -1; s.handle(s, A);
 		A.class:= Objects.String; Strings.IntToStr(A.i, A.s); A.res:= -1; t.handle(t, A);
-		
+
 		(* init the caption gadget and its underlying panel *)
 		name[1]:= 0X;
 		Attributes.StrToTxt(name, c(TextFields.Caption).text);
@@ -1149,7 +1147,7 @@ BEGIN
 	IF model = NIL THEN A.name:= "Cmd" ELSE A.name:= "Field" END;
 	A.class:= Objects.String; COPY(cmd, A.s); A.res:= -1; b.handle(b, A);
 	A.name:= "Popout"; A.class:= Objects.Bool; A.b:= popout; A.res:= -1; b.handle(b, A);
-	
+
 	(* insert button into the panel *)
 	C.id:= Display.drop; C.obj:= b; C.x:= 0; C.y:= 0; C.F:= P; C.u:= X; C.v:= -195; C.res:= -1; P.handle(P, C);
 END InsertButton;
@@ -1315,7 +1313,7 @@ END NewView;
 
 PROCEDURE NewPanel*;
 (* genarates a new instance of a MineSweeper panel. Sets its size to default values *)
-VAR P: MinePanel; A: Objects.AttrMsg;
+VAR P: MinePanel;
 BEGIN
 	(* in order to get an instance of the extended type, do the following:
 			- make a new instance of the object (extended type)
@@ -1432,7 +1430,3 @@ BEGIN
 	(* init the random genarator *)
 	seek:= ((Oberon.Time() MOD 32133)+1)*2
 END MineSweeper.
-
-System.Free MineSweeper ~
-Gadgets.Insert MineSweeper.NewPanel ~
-(MineSweeper.NewDoc)

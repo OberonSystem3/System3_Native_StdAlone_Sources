@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE V24Gadgets;	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994, pm *)
+MODULE V24Gadgets;	(** portable *)	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994, pm *)
 	IMPORT Fonts, Texts, Oberon, Objects, Terminals, TerminalGadgets, Gadgets, Documents, Desktops, V24, TextDocs,
 		Display, Files, Input, SYSTEM, Kernel;
 
@@ -26,7 +25,6 @@ MODULE V24Gadgets;	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-199
 		Terminal = POINTER TO TerminalDesc;
 		TerminalDesc = RECORD (Terminals.TerminalDesc)
 			localecho, stop: BOOLEAN;
-			task: Task;
 			port, bps, data, stopb, parity: LONGINT
 		END;
 	
@@ -39,10 +37,11 @@ CONST
 
 VAR
 	W: Texts.Writer;
+	fixed: Fonts.Font;
 	track: SHORTINT;
 
 PROCEDURE Send0(T: Terminals.Terminal; ch: CHAR);
-	VAR len, l, t: LONGINT;
+	VAR t: LONGINT;
 BEGIN
 	WITH T: Terminal DO
 		IF T.port # -1 THEN
@@ -72,7 +71,7 @@ BEGIN
 END WriteLn;
 
 PROCEDURE Receiver(me: Oberon.Task);
-	VAR k: INTEGER;  ch: CHAR;  port, l, t: LONGINT;
+	VAR ch: CHAR;  port, l, t: LONGINT;
 BEGIN
 	WITH me: Task DO
 		IF me.T.stop THEN
@@ -89,14 +88,18 @@ BEGIN
 					ELSIF (track = 1) & (ch = "6") THEN
 						me.T.bps := 19200;  V24.Stop(me.T.port);
 						t := Input.Time() + Input.TimeUnit DIV 100;
-						REPEAT UNTIL Input.Time() > t;
+						REPEAT UNTIL Input.Time() - t > 0;
 						V24.Start(me.T.port, me.T.bps, me.T.data, me.T.parity, me.T.stopb, t);
 						IF t # 0 THEN HALT(99) END;
 						WriteLn(me.T);  WriteString(me.T, " ** switched to 19200 **");  WriteLn(me.T);
 						l := 0
 					ELSE track := 0
 					END;
-					IF ~((ch = 0X) OR (07X = ch) OR (ch = 011X) OR (ch = 012X)) THEN
+					IF (ch = CHR(14)) OR (ch = CHR(15)) THEN
+						IF ch = CHR(14) THEN Texts.SetFont(me.T.cache, fixed) 
+						ELSE Texts.SetFont(me.T.cache, Fonts.Default)
+						END
+					ELSIF ~((ch = 0X) OR (07X = ch) OR (ch = 011X) OR (ch = 012X)) THEN
 						Terminals.Receive(me.T, ch)
 					END
 				UNTIL l <= 0;
@@ -118,20 +121,25 @@ BEGIN
 END Cleanup;
 
 	PROCEDURE OpenConn(F: TerminalGadgets.Frame; port, bps, data, stop, parity: LONGINT);
-		VAR task: Task; res: INTEGER;  t: LONGINT;
+		VAR task: Task; t: LONGINT;
 	BEGIN
 		NEW(task); task.safe := FALSE; task.handle := Receiver; task.T := F.text(Terminal);
 		V24.Start(port, bps, data, parity, stop, t);
-		IF t # 0 THEN HALT(99) END;
-		task.T.port := port;  task.T.bps := bps;  task.T.data := data;  
-		task.T.stopb := stop;  task.T.parity := parity;
-		task.T.localecho := FALSE;
-		Oberon.Install(task);
-		Kernel.RegisterObject(F, Cleanup, FALSE);
-		WriteString(task.T,"Opened ..."); 
-		IF track = 0 THEN WriteString(task.T," (P4000 mode)") END;
-		WriteLn(task.T);
-		Terminals.Flush(task.T)
+		IF t # 0 THEN
+			Texts.WriteString(W, "Can not open port, error = ");
+			Texts.WriteInt(W, t, 1);  Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf)
+		ELSE
+			task.T.port := port;  task.T.bps := bps;  task.T.data := data;  
+			task.T.stopb := stop;  task.T.parity := parity;
+			task.T.localecho := FALSE;
+			Oberon.Install(task);
+			Kernel.RegisterObject(F, Cleanup, FALSE);
+			WriteString(task.T,"Opened ..."); 
+			IF track = 0 THEN WriteString(task.T," (P4000 mode)") END;
+			WriteLn(task.T);
+			Terminals.Flush(task.T)
+		END
 	END OpenConn;
 
 	PROCEDURE Open*;	(* framename params *)
@@ -146,8 +154,8 @@ END Cleanup;
 		Texts.OpenScanner(S,Oberon.Par.text,Oberon.Par.pos); Texts.Scan(S);
 		IF S.class = Texts.Name THEN obj := Gadgets.FindObj(Gadgets.context, S.s);
 			IF obj # NIL THEN F := obj(TerminalGadgets.Frame); Texts.Scan(S);
-				IF (S.class = Texts.Int) & (S.i >= 1) & (S.i <= 2) THEN
-					IF S.i = 1 THEN port := 0 ELSE port := 1 END;
+				IF (S.class = Texts.Int) & (S.i >= 1) & (S.i <= 4) THEN
+					IF (S.i >=  1) & (S.i <= 4) THEN port := (S.i-1) + V24.COM1 ELSE port := 1 END;
 					Texts.Scan(S);
 					IF (S.class = Texts.Int) & (S.i >= 110) & (S.i <= 115200) THEN
 						ok := TRUE;  bps := S.i;  Texts.Scan(S);
@@ -350,8 +358,6 @@ END Cleanup;
 	END SendSRec;
 	
 	PROCEDURE FrameHandler(F: Objects.Object; VAR M: Objects.ObjMsg);
-		VAR
-			port: INTEGER;
 	BEGIN
 		WITH F: TerminalGadgets.Frame DO
 			IF (F.text(Terminal).port = -1)
@@ -380,11 +386,12 @@ END Cleanup;
 		NEW(text);
 		Texts.Open(text, "");
 		NEW(T); Terminals.Open(T, text,Send0,Break0,TerminalGadgets.NotifyDisplay, OpenHeight);
-		NEW(F); TerminalGadgets.Open(F, FrameHandler,T, Fonts.This("Courier8.Scn.Fnt"));
+		NEW(F); TerminalGadgets.Open(F, FrameHandler,T, fixed);
 		Objects.NewObj := F
 	END NewFrame;
 
 BEGIN
+	fixed := Fonts.This("Courier8.Scn.Fnt");
 	Texts.OpenWriter(W)
 END V24Gadgets.
 

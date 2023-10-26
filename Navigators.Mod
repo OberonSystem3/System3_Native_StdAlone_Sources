@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Navigators;
+MODULE Navigators;	(** portable *)
 
 (*
 	7.4.94 - Allow middle key for focus too
@@ -22,7 +21,7 @@ MODULE Navigators;
 	9.6.94 - Implemented maximum nesting level 
 *)
 
-IMPORT Files, Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Documents, Desktops, Views;
+IMPORT Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Documents, Desktops, Views;
 	
 CONST MaxLevel = 3; (* maximum nesting level where the navigators still function *)
 	leftpos = 0;	(*1*)
@@ -95,7 +94,7 @@ PROCEDURE PrintFrame(F: Frame; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; x, y, w, h, count: INTEGER; obj: Objects.Object; f, g, v: Display.Frame; X, Y: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -139,7 +138,7 @@ BEGIN
 END CopyFrame;
 
 PROCEDURE Focus(F: Frame; x, y, w, h: INTEGER; VAR M: Oberon.InputMsg);
-VAR X, Y, count: INTEGER; obj: Objects.Object; f, g: Display.Frame;
+VAR X, Y, count: INTEGER; obj: Objects.Object;
 	A: Display.ModifyMsg; keysum: SET;
 BEGIN
 	keysum := M.keys;

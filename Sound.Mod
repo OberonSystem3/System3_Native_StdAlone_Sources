@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Sound;	(** tb, SS96 *)
+MODULE Sound;	(** non-portable *)	(** tb, SS96 *)
 IMPORT Kernel, DMA, DSP, CD, SYSTEM, Texts, Oberon, Out;
 
 (**
@@ -737,8 +736,8 @@ BEGIN
 				DSP.DspWrite(0);
 				DSP.DspWrite(0);
 				(* wait to the end of the DMA-transfer; signaled over interrupt *)
-				i:= Kernel.GetTimer() + 2*Kernel.TimeUnit;
-				REPEAT UNTIL irq OR (Kernel.GetTimer() > i);
+				i:= Kernel.GetTimer();
+				REPEAT UNTIL irq OR (Kernel.GetTimer()-i > 2*Kernel.TimeUnit);
 				IF ~irq THEN
 					Out.String("Error in Sound with setting to stereo mode"); Out.Ln; HALT(99)
 				END;

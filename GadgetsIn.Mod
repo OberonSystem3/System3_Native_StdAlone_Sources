@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,36 +13,14 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE GadgetsIn;	(* pjm 15.04.96 *)
+MODULE GadgetsIn;	(** portable *)	(* pjm 15.04.96 *)
 
-IMPORT Texts, Oberon, Display, Objects, Attributes, Gadgets, Strings;
+IMPORT Texts, Oberon, Objects, Gadgets, Strings;
 
 VAR
 	s: Texts.Scanner;
 	w: Texts.Writer;
 	done: BOOLEAN;
-
-(* ThisFrame - Find the frame at the specified position. *)
-
-PROCEDURE ThisFrame(x, y: INTEGER; VAR f: Display.Frame);
-VAR m: Display.LocateMsg;
-BEGIN
-	m.X := x; m.Y := y; m.F := NIL; m.loc := NIL; Display.Broadcast(m); f := m.loc
-END ThisFrame;
-
-(* GetText - Find the text of the marked viewer. *)
-
-PROCEDURE GetText(): Texts.Text;
-VAR m: Objects.LinkMsg; t: Texts.Text;  par: Display.Frame;
-BEGIN
-	t := NIL;
-	ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, par);
-	IF par # NIL THEN
-		m.id := Objects.get; m.name := "Model"; m.obj := NIL; m.res := -1; par.handle(par, m);
-		IF (m.obj # NIL) & (m.obj IS Texts.Text) THEN t := m.obj(Texts.Text) END
-	END;
-	RETURN t
-END GetText;
 
 (* OpenPar - Initialise input from the command parameter.  If a "^" follows 
 the command, start input from the latest selection.  If a "*" follows the 
@@ -61,7 +38,7 @@ BEGIN
 		ELSE done := FALSE
 		END
 	ELSIF (s.class = Texts.Char) & (s.c = "*") THEN
-		t := GetText();
+		t := Oberon.MarkedText();
 		IF t # NIL THEN Texts.OpenScanner(s, t, 0); done := TRUE
 		ELSE done := FALSE
 		END

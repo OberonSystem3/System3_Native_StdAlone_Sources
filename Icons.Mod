@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Icons; (** jm 19.1.95 *)
+MODULE Icons;	(** portable *) (** jm 19.1.95 *)
 
 (** Implementation of Icons and the Iconizer. Also contains an implementation of a very simple camera-view with fixed viewpoint where no editing of the viewed model is allowed.
 *)
@@ -41,7 +40,7 @@ MODULE Icons; (** jm 19.1.95 *)
 
 IMPORT
 	Objects, Gadgets, Effects, Display, Display3, Texts, Oberon, Files, Input, Fonts, 
-	Links, Views, Printer, Printer3, Documents, Desktops;
+	Links, Views, Printer, Printer3, Documents;
 	
 CONST
 	pinsize = 10; offset = 2;
@@ -102,7 +101,7 @@ END ClipAgainst;
 (* ==================== Views ================== *)
 
 PROCEDURE RestoreView(F: View; R: Display3.Mask; x, y, w, h: INTEGER; VAR M: Display.DisplayMsg);
-VAR D: Display.DisplayMsg; f: Gadgets.Frame; state: SET; oldR, newR: Display3.Mask;
+VAR D: Display.DisplayMsg; f: Gadgets.Frame; state: SET;
 BEGIN
 	IF (F.obj # NIL) & (F.obj IS Gadgets.Frame) THEN
 		f := F.obj(Gadgets.Frame); state := f.state; EXCL(f.state, Gadgets.selected);
@@ -415,7 +414,7 @@ PROCEDURE PrintIcon(F: Icon; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; caph0, w, h: INTEGER; obj: Objects.Object; PM: Display.DisplayMsg;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -849,7 +848,6 @@ BEGIN
 END IconizerAttr;
 
 PROCEDURE IconizerLink(F: Iconizer; VAR M: Objects.LinkMsg); (* ps - 8.5.96 *)
-VAR res: BOOLEAN;
 BEGIN
 	IF M.id = Objects.get THEN
 		IF M.name = "Closed" THEN M.obj:= F.closedF; M.res:= 0
@@ -1030,13 +1028,14 @@ BEGIN
 		CalcPlace(px, py);
 		Views.GetBlock(px, py, of.W, of.H, M.dlink, block);
 		(* Effects.OpenMenu(px, py, of.W, of.H);	(* ps - 15.07.96 *) *)
-		
+
 		CM.id := Display.restore; CM.F := NIL; CM.x := 0; CM.y := 0; CM.res := -1; CM.dlink := NIL;
 		of.handle(of, CM);
 		
 		F.poping := TRUE; F.px := px - (x + of.X); F.py := py - (y + h  - 1 + of.Y);
 		of.mask := NIL;
-		D.device := Display.screen; D.id := Display.full; D.F := of; D.res := -1; D.x := px - of.X; D.y := py - of.Y; D.dlink := M.dlink;
+		D.device := Display.screen; D.id := Display.full; D.F := of; D.res := -1;
+		D.x := px - of.X; D.y := py - of.Y; D.dlink := M.dlink;
 		of.handle(of, D);
 		Gadgets.MakeMask(of, px, py, M.dlink, R); Display3.Copy(R, R0);
 		Input.Mouse(M.keys, M.X, M.Y); keysum := M.keys; ls := NIL;
@@ -1067,6 +1066,7 @@ BEGIN
 		Oberon.FadeCursor(Oberon.Mouse);
 		F.poping := FALSE; of.mask := NIL; 
 		Views.RestoreBlock(block);
+
 		(* Effects.CloseMenu; *)
 		IF (ls # NIL) & (keysum = {1}) THEN 
 			A.id := Objects.get; A.name := "Cmd"; A.res := -1; A.class := Objects.Inval; ls.handle(ls, A);
@@ -1074,17 +1074,17 @@ BEGIN
 				Gadgets.Execute(A.s, ls, M.dlink, NIL, NIL)
 			END
 		END;
-		M.res := 0;
+		M.res := 0
 	ELSE
-		Gadgets.framehandle(F, M);
-	END;
+		Gadgets.framehandle(F, M)
+	END
 END TrackPopup;
 
 PROCEDURE PrintIconizer(F: Iconizer; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; d: Display.Frame; PM: Display.DisplayMsg; Fdlink, Mdlink: Objects.Object; x, y, w, h, a, b: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -1125,10 +1125,10 @@ BEGIN
 	IF d = NIL THEN
 		Display3.FilledRect3D(R, Display3.FG, Display3.FG, Display3.textbackC, x, y, w, h, 1, Display.replace);
 		IF F.closed THEN
-			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Closed", Display3.textmode);
+			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Closed", Display3.textmode)
 		ELSE
-			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Open", Display3.textmode);
-		END;
+			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Open", Display3.textmode)
+		END
 	ELSE
 		M.device := Display.screen; M.id := Display.full; M.F := d; M.dlink := dlink; M.res := -1; Objects.Stamp(M);
 		To(F, x, y + h - 1, M)
@@ -1138,12 +1138,12 @@ BEGIN
 		Display3.FilledRect3D(R, Display3.bottomC, Display3.topC, Display3.groupC, a, b, pinsize, pinsize, 1, Display.replace);
 		IF ~F.closed THEN
 			Display3.Line(R, Display.FG, Display.solid, a+1, b+1, a + pinsize-2, b + pinsize-2, 1, Display.replace);
-			Display3.Line(R, Display.FG, Display.solid, a+1, b+pinsize-2, a + pinsize-2, b+1, 1, Display.replace);
-		END;
+			Display3.Line(R, Display.FG, Display.solid, a+1, b+pinsize-2, a + pinsize-2, b+1, 1, Display.replace)
+		END
 	END;
 	IF Gadgets.selected IN F.state THEN
-		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint);
-	END;
+		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
+	END
 END RestoreIconizer;
 
 PROCEDURE RestoreIconizerArea(R: Display3.Mask; F: Iconizer; x, y, w, h: INTEGER; VAR M: Display.DisplayMsg);
@@ -1154,24 +1154,24 @@ BEGIN
 	IF d = NIL THEN
 		Display3.FilledRect3D(R, Display3.FG, Display3.FG, Display3.textbackC, x, y, w, h, 1, Display.replace);
 		IF F.closed THEN
-			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Closed", Display3.textmode);
+			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Closed", Display3.textmode)
 		ELSE
-			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Open", Display3.textmode);
-		END;
+			Display3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Open", Display3.textmode)
+		END
 	ELSE
-		M0 := M; M0.F := d; Objects.Stamp(M0); To(F, x, y + h - 1, M0);
+		M0 := M; M0.F := d; Objects.Stamp(M0); To(F, x, y + h - 1, M0)
 	END;
 	IF F.pin THEN
 		a := x + offset; b := y + h - pinsize - offset;
 		Display3.FilledRect3D(R, Display3.bottomC, Display3.topC, Display3.groupC, a, b, pinsize, pinsize, 1, Display.replace);
 		IF ~F.closed THEN
 			Display3.Line(R, Display.FG, Display.solid, a+1, b+1, a + pinsize-2, b + pinsize-2, 1, Display.replace);
-			Display3.Line(R, Display.FG, Display.solid, a+1, b+pinsize-2, a + pinsize-2, b+1, 1, Display.replace);
-		END;
+			Display3.Line(R, Display.FG, Display.solid, a+1, b+pinsize-2, a + pinsize-2, b+1, 1, Display.replace)
+		END
 	END;
 	IF Gadgets.selected IN F.state THEN
-		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint);
-	END;
+		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
+	END
 END RestoreIconizerArea;
 
 PROCEDURE CopyIconizer*(VAR M: Objects.CopyMsg; from, to: Iconizer);
@@ -1180,10 +1180,14 @@ BEGIN
 	Gadgets.CopyFrame(M, from, to); to.pos := from.pos; to.pin:=from.pin;
 	to.closed := from.closed; to.popup := from.popup; to.sel := from.sel;
 	C.id := Objects.deep; C.stamp := M.stamp; C.obj := NIL;
-	IF from.openF # NIL THEN from.openF.handle(from.openF, C); to.openF := C.obj(Display.Frame) ELSE to.openF := NIL END;
+	IF from.openF # NIL THEN from.openF.handle(from.openF, C); to.openF := C.obj(Display.Frame)
+	ELSE to.openF := NIL
+	END;
 	C.id := Objects.deep; C.stamp := M.stamp; C.obj := NIL;
-	IF from.closedF # NIL THEN from.closedF.handle(from.closedF, C); to.closedF := C.obj(Display.Frame) ELSE to.closedF := NIL END;
-	IF to.closed THEN to.obj := to.closedF ELSE to.obj := to.openF END;
+	IF from.closedF # NIL THEN from.closedF.handle(from.closedF, C); to.closedF := C.obj(Display.Frame)
+	ELSE to.closedF := NIL
+	END;
+	IF to.closed THEN to.obj := to.closedF ELSE to.obj := to.openF END
 END CopyIconizer;
 
 PROCEDURE StoreIconizer (F: Iconizer; VAR M: Objects.FileMsg);
@@ -1228,7 +1232,7 @@ BEGIN
 		Files.ReadNum(M.R, i); F.sel := (i = 1); F.pos := FALSE; F.pin:=TRUE;
 		Gadgets.framehandle(F, M)
 	ELSE
-		HALT(42);
+		HALT(42)
 	END;
 	IF F.closed & (F.closedF # NIL) THEN F.obj := F.closedF
 	ELSIF F.openF # NIL THEN F.obj := F.openF
@@ -1238,7 +1242,7 @@ END LoadIconizer;
 PROCEDURE UpdateMask (F: Iconizer; x, y, w, h: INTEGER; VAR M: Display3.UpdateMaskMsg);
 VAR O: Display3.OverlapMsg; U: Display3.UpdateMaskMsg;
 BEGIN
-	IF M.F = F THEN (* Gadgets.framehandle(F, M); *)
+	IF M.F = F THEN
 	ELSIF (F.mask = NIL) & ((M.F = F.openF) OR (M.F = F.closedF)) THEN
 		U.F := F; Display.Broadcast(U);
 	ELSIF F.poping & ((M.F = F.openF) OR (M.F = F.closedF)) THEN
@@ -1273,13 +1277,13 @@ BEGIN
 				(M.keys = {1}) THEN
 				Push(stack, F); Flip; Pop(stack)
 			END;
-			M.res := 0;
+			M.res := 0
 		ELSIF F.popup & (M.keys = {1}) & F.closed & Gadgets.InActiveArea(F, M) THEN
 			TrackPopup(F, x, y, w, h, M);
 		ELSIF (F.obj # NIL) & Gadgets.InActiveArea(F, M) & ~(Gadgets.selected IN F.state) THEN
-			Push(stack, F);  To(F, x, y + h - 1, M); Pop(stack);
+			Push(stack, F);  To(F, x, y + h - 1, M); Pop(stack)
 		ELSE Gadgets.framehandle(F, M)
-		END;
+		END
 	ELSIF (M.id = Oberon.track) THEN
 		IF Gadgets.selected IN F.state THEN Gadgets.framehandle(F, M)
 		ELSE
@@ -1439,7 +1443,7 @@ END NewIconizer;
 
 (** Takes the selected iconizer/icon apart and insert the constituents at the caret. *)
 PROCEDURE Break*;
-VAR M: Display.SelectMsg; O: Display3.OverlapMsg; t: Display.Frame; I: Icon; F: Iconizer; X: INTEGER;
+VAR M: Display.SelectMsg; t: Display.Frame; I: Icon; F: Iconizer; X: INTEGER;
 BEGIN
 	M.F := NIL; M.id := Display.get; M.time := -1; M.obj := NIL; Display.Broadcast(M);
 	IF (M.time > 0) & (M.obj # NIL) THEN

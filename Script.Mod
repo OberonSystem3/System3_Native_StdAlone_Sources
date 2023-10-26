@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Script;	(* RS, Wed, 9-Jun-1993*)
+MODULE Script;	(** portable *)	(* RS, Wed, 9-Jun-1993*)
 
 (* ChangeFont only fnt.type = Objects.font
 	Fri, 26-Nov-93 Search: trap on no selection
@@ -27,7 +26,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 	CONST
 		(*MenuStr = "System.Close  System.Copy  System.Grow  Script.NewStyle  Script.Style  Script.Search  Script.Store";*)
 		MenuStr = "System.Close  System.Copy  System.Grow  Script.NewStyle  Script.Search  Script.Replace  Script.Store";
-		CR  = 0DX;	TAB = 9X;
+		TAB = 9X;
 		MaxPatLen = 32;
 
 		(* print options *)
@@ -35,7 +34,6 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 
 		(* print units *)
 		PrtUnit = 3048;
-		ScnUnit = 10000;(* 10973;	*)
 	
 	
 		(* print layout *)
@@ -71,14 +69,6 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 		END
 	END MarkBrk;
 
-	PROCEDURE FocusFrame(): ScriptFrames.Frame;
-		VAR M: (*ScriptFrames.Focus*)Oberon.CaretMsg;
-	BEGIN M.F := NIL; M.car := NIL; M.id := Oberon.get; Display.Broadcast(M);
-		IF (M.car = NIL) OR ~(M.car IS ScriptFrames.Frame) THEN RETURN NIL
-		ELSE RETURN M.car(ScriptFrames.Frame)
-		END
-	END FocusFrame;
-
 	PROCEDURE OpenViewer (name: ARRAY OF CHAR; F: Display.Frame);
 		VAR X, Y : INTEGER; V : MenuViewers.Viewer;
 	BEGIN Oberon.AllocateUserViewer(Oberon.UserTrack(Oberon.Mouse.X), X, Y);
@@ -110,7 +100,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 	END Open;
 
 	PROCEDURE Backup (VAR name: ARRAY OF CHAR);
-	VAR res, i, j: INTEGER; bak: ARRAY 32 OF CHAR;
+	VAR res, i: INTEGER; bak: ARRAY 32 OF CHAR;
 	BEGIN
 		i := 0; WHILE name[i] # 0X DO bak[i] := name[i]; INC(i) END;
 		IF i > 31-4 THEN i := 31-4 END;
@@ -197,7 +187,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 			IF par.frame.next IS ScriptFrames.Frame THEN F := par.frame.next(ScriptFrames.Frame) END
 		ELSE F := FocusFrame()
 		END;
-		IF F = NIL THEN RETURN END;	(* ### *)
+		IF F = NIL THEN RETURN END;	(*###*)
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
 		IF (time >= 0) & (*(text # NIL) &*) (text.len > 0) & (time > lTime) THEN	(* set search pattern *)
 			Texts.OpenReader(R, text, beg);
@@ -217,14 +207,14 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 			pos, beg, end, time, p, len: LONGINT; 	i: INTEGER;	ch: CHAR;
 	BEGIN
 		F := FocusFrame();
-		IF F = NIL THEN RETURN FALSE END;	(* ### *)
+		IF F = NIL THEN RETURN FALSE END;	(*###*)
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
 		IF (time >= 0) & (*(text # NIL) &*) (time > lTime) THEN	(* set replace buffer *)
 			lTime := time; NEW(rBuf); Texts.OpenBuf(rBuf); Texts.Save(text, beg, end, rBuf)
 		END;
-		IF ~F.car OR ~ (sPatLen > 0) OR (rBuf = NIL) THEN RETURN FALSE END;	(* ### *)
+		IF ~F.car OR ~ (sPatLen > 0) OR (rBuf = NIL) THEN RETURN FALSE END;	(*###*)
 		pos := F.carLoc.pos; p := pos - sPatLen;
-		IF p < 0 THEN RETURN FALSE END;	(* ### *)
+		IF p < 0 THEN RETURN FALSE END;	(*###*)
 		Texts.OpenReader(R, F.text, p); Texts.Read(R, ch); i := 0;
 		WHILE (ch = sPat[i]) & (i < sPatLen) DO Texts.Read(R, ch); INC(i) END;
 		IF i = sPatLen THEN
@@ -266,7 +256,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 	PROCEDURE FindPat(F: Display.Frame; text: Texts.Text; pos, time: LONGINT): BOOLEAN;
 	(* searches pattern sPat beginning at position pos *)
 		VAR R: Texts.Reader;	buf: ARRAY MaxPatLen OF CHAR;
-			len, lPos: LONGINT; 	n, j: INTEGER;
+			len: LONGINT; 	n, j: INTEGER;
 			N: Oberon.ControlMsg;
 
 		PROCEDURE Forward (n: INTEGER);
@@ -339,9 +329,9 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 			IF (time >= 0) & (time > lTime) THEN	(* set replace buffer *)
 				lTime := time; NEW(rBuf); Texts.OpenBuf(rBuf); Texts.Save(repltext, beg, end, rBuf)
 			END;
-			IF ~ (sPatLen > 0) OR (rBuf = NIL) THEN RETURN FALSE END;	(* ### *)
+			IF ~ (sPatLen > 0) OR (rBuf = NIL) THEN RETURN FALSE END;	(*###*)
 			p := pos - sPatLen;
-			IF p < 0 THEN RETURN FALSE END;	(* ### *)
+			IF p < 0 THEN RETURN FALSE END;	(*###*)
 			Texts.OpenReader(R, text, p); Texts.Read(R, ch); i := 0;
 			WHILE (ch = sPat[i]) & (i < sPatLen) DO Texts.Read(R, ch); INC(i) END;
 			IF i = sPatLen THEN
@@ -475,8 +465,8 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 
 	VAR
 		R: Texts.Reader;
-		Y, Y0, H, pno: INTEGER;
-		eot, pbrk: BOOLEAN;
+		Y, Y0, pno: INTEGER;
+		pbrk: BOOLEAN;
 		buf, L: Line;
 		style: Styles.Style;
 		h0: INTEGER;
@@ -487,7 +477,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 		END log;
 
 		PROCEDURE ToPrt(d: INTEGER): INTEGER;
-		BEGIN RETURN SHORT(LONG(d) * ScnUnit DIV Printer.Unit)
+		BEGIN RETURN SHORT(LONG(d) * Display.Unit DIV Printer.Unit)
 		END ToPrt;
 		
 		PROCEDURE OpenPrinter();
@@ -573,7 +563,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 			obj: Objects.Object; G: Display.Frame;
 			lib: Objects.Library;
 			mlib: Fonts.Font;
-			k, x, dx, dY, dX, X0, voff, asr, offX, col: INTEGER;
+			k, x, dx, dY, dX, X0, voff, offX, col: INTEGER;
 			ch: CHAR;
 	
 			PROCEDURE Out;
@@ -646,9 +636,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 		END PrintNum;
 
 		PROCEDURE PageHeader(VAR title: ARRAY OF CHAR; pn: INTEGER; opts: SET);
-		VAR
-			y, i, w: INTEGER;
-			F: Display.Frame;
+		VAR y, i, w: INTEGER;
 		BEGIN
 			IF ~print(pn, pnb, pne) THEN RETURN END;
 			Printer.UseColor(0, 0, 0);	(*black*)
@@ -864,7 +852,7 @@ MODULE Script;	(* RS, Wed, 9-Jun-1993*)
 	BEGIN
 		x := SHORT(LONG(x) * PrtUnit DIV Printer.Unit)
 	END Scale;
-		
+
 (* Script.Print Pluto (^ | * [opts] | {name [opts]}) *)
 PROCEDURE Print*;
 VAR
@@ -873,7 +861,7 @@ VAR
 	F: ScriptFrames.Frame;
 	title: ARRAY 32 OF CHAR;
 	T: Texts.Text; beg, end, time: LONGINT;
-
+	
 	PROCEDURE PrintText(T: Texts.Text; title: ARRAY OF CHAR; VAR S: Texts.Scanner);
 	VAR opts: SET; pn0, pnb, pne, copies: INTEGER; fnt: Fonts.Font;
 	BEGIN
@@ -938,7 +926,6 @@ END Print;
 			V: Display.Frame; F: ScriptFrames.Frame;
 			dmy: ARRAY 1 OF CHAR; d: INTEGER;
 			opts: SET; fnt: Fonts.Font;
-			
 	BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF S.c = "*" THEN V := Oberon.MarkedViewer();
 			IF (V.dsc # NIL) & (V.dsc.next # NIL) & (V.dsc.next IS ScriptFrames.Frame) THEN

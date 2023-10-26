@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,55 +13,126 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE FPA;	(* RC 25.2.92 *)
-(* MIPS R2010 Floating-Point Accelerator Emulator *)
-(* runs on MIPS only because of code procedures and register conventions *)
-(* all routines deliver and accept only normalized numbers or +0 *)
+MODULE FPA;	(** non-portable *)	(* RC 25.2.92 *)
+(* i87 Floating-Point Accelerator Emulator originally for MIPS R2010 *)
+(* all routines deliver and accept only normalized numbers or +0        *)
 
-(* ported to DOS Oberon ARD, 3. 9. 92 *)
+(* Authors: Edgar Schwarz (es)                              *)
+(* 19.11.1997 (es) update for PC Native 2.2 CD    *)
+(* J. Sedlacek 30.8.97 update for version 2.2         *)
+(* pjm 25.03.96 - ported to version 2.06               *)
 (* Modified for Native Oberon - muller 07.11.95 *)
-(* pjm 25.03.96 - ported to version 2.06 *)
-(* J. Sedlacek 30.8.97 update for version 2.2 *)
+(* ported to DOS Oberon ARD, 3. 9. 92                *)
 
-IMPORT Kernel, S := SYSTEM;
+(* number formats: s = sign, m = mantissa, e = exponent
+REAL 4 bytes
+seeeeeee          emmmmmmm mmmmmmmm mmmmmmmm
+real = s * 2^(e-127) * (1 + m/MAX(m))
+LONGREAL 8 bytes
+seeeeeee          eeeemmmm     mmmmmmmm mmmmmmmm
+mmmmmmmm mmmmmmmm mmmmmmmm mmmmmmmm
+longreal = s * 2^(e-1023) * (1 + m/MAX(m))
+And don't forget that Intel has a wrong byte order !
+*)
+IMPORT
+	Kernel, S := SYSTEM, SYSTEM;
+CONST
+	zeroDivTrap = 80;
+	ovflTrap = 81;
+	niTrap = ovflTrap;
 
-	CONST
-		zeroDivTrap = 80;
-		ovflTrap = 81;
+	sign = {31}; plus = {}; minus = sign;
+	expS = {23..30}; eshiftS = 23; biasS = 127; maxexpS = 254;
+	expD = {52-32..62-32}; eshiftD = 52-32; biasD = 1023; maxexpD = 2046;
+	mantS = {0..22}; normS = 8388608; normSbit = {23};
+	mantD = {0..51-32}; normD = 1048576; 
+	normDbit = {52-32}; (* high part *)
 
-		sign = {31}; plus = {}; minus = sign;
-		expS = {23..30}; eshiftS = 23; biasS = 127; maxexpS = 254;
-		expD = {52-32..62-32}; eshiftD = 52-32; biasD = 1023; maxexpD = 2046;
-		mantS = {0..22}; normS = 8388608; normSbit = {23};
-		mantD = {0..51-32}; normD = 1048576; normDbit = {52-32}; (* high part *)
-		
-		FXCH = 0C9X; FCHS = 0E0X; FABS = 0E1X; FLD1 = 0E8X; FLDZ = 0EEX;
-		FADDP = 0C1X; FMULP = 0C9X; FCOMPP = 0D9X; FSUBP = 0E9X; FDIVP = 0F9X; FDIVRP = 0F1X;
-		FADDJ = 0C1X; FMULJ = 0C9X; FCOMJ = 0D9X; FSUBJ = 0E9X; FDIVJ = 0F9X; FDIVRJ = 0F1X;
-		FSTSWAX = 0E0X;
-		
+(* debug * opTraceNum * = 100; *)
 TYPE
 	Proc = PROCEDURE;
-
+(* debug: buffer element to save calling information *
+	OpTrace * = RECORD
+		op1 *, op2 *: CHAR;
+		sp* : INTEGER;
+		adr *, fgrL *, fgrH *: LONGINT;
+	END;
+* end debug *)
 VAR
-	FGR : ARRAY 16 OF SET;
+	FGR : ARRAY 16 OF SET; (* 8 x 8 Bytes Floating Point Stack *)
 	xch : ARRAY 2 OF SET;
 	equal, less : BOOLEAN;
 	adr: LONGINT;
-	SP, length, opfield: INTEGER;
+	SP, length, modReg, opfield, rm, i: INTEGER;
 	OP1, OP2, OP3: CHAR;
-	EAX, EBX, ECX, EDX, ESI, EDI, EIP, EBP, oldebp: LONGINT;
+	uEAX, uEBX, uECX, uEDX, uESI, uEDI, EIP, uEBP, oldebp, uESP, oldesp: LONGINT;
 	flags: SET;
 	low, hi, carry, R3: LONGINT;
+	code: ARRAY 32 OF CHAR;
+	codeptr: LONGINT;
+	return: LONGINT;
+	
+(* debug: for tracing calls calling information *
+	opTsI*: LONGINT;
+	opTs *: ARRAY opTraceNum OF OpTrace;
+	pushF: BOOLEAN;
+	OP4: CHAR;
 
-	(*PROCEDURE MFLO(): LONGINT;  (* inlined *)
-	BEGIN RETURN low END MFLO;*)
-	
-	(*PROCEDURE MFHI(): LONGINT;  (* inlined *)
-	BEGIN RETURN hi END MFHI;*)
-	
+	(* save OP1, OP2 in buffer, data is set to 0, can be overwritten later
+		by other Push procedures (just to store data more compact     *)
+	PROCEDURE OpsPush;
+	VAR opTsi: LONGINT;
+	BEGIN
+		opTsi := opTsI MOD opTraceNum;
+		opTs[opTsi].op1 := OP1; opTs[opTsi].op2 := OP2; opTs[opTsi].sp := SP;
+		opTs[opTsi].adr := 0; opTs[opTsi].fgrL := 0; opTs[opTsi].fgrH := 0; 
+		pushF := TRUE; 
+		INC(opTsI);
+	END OpsPush;
+
+	(* save two item of floating stack *)
+	PROCEDURE ParsPush(sp: INTEGER);
+	VAR opTsi: LONGINT;
+	BEGIN 
+		opTsi := opTsI MOD opTraceNum;
+		IF pushF THEN
+			IF opTsi = 0 THEN opTsi := 1 END;
+			opTs[opTsi-1].adr := adr; 
+			opTs[opTsi-1].fgrL := S.VAL(LONGINT,FGR[sp]);
+			opTs[opTsi-1].fgrH := S.VAL(LONGINT,FGR[sp+1]);
+			pushF := FALSE;
+		ELSE	
+			opTs[opTsi].op1 := 0X; opTs[opTsi].op2 := 0X; 
+			opTs[opTsi].adr := adr; opTs[opTsi].sp := 0;
+			opTs[opTsi].fgrL := S.VAL(LONGINT,FGR[sp]);
+			opTs[opTsi].fgrH := S.VAL(LONGINT,FGR[sp+1]);
+			INC(opTsI);
+		END;
+	END ParsPush;
+
+	(* save 8 bytes from address *)
+	PROCEDURE MemPush(adr: LONGINT);
+	VAR li, opTsi: LONGINT;
+	BEGIN 
+		opTsi := opTsI MOD opTraceNum;
+		IF pushF THEN
+			IF opTsi = 0 THEN opTsi := 1 END;
+			opTs[opTsi-1].adr := adr; 
+			S.GET(adr, li); opTs[opTsi-1].fgrL := li;
+			S.GET(adr+4, li); opTs[opTsi-1].fgrH := li;
+			pushF := FALSE;
+		ELSE	
+			opTs[opTsi].op1 := 0X; opTs[opTsi].op2 := 0X; 
+			opTs[opTsi].adr := adr; opTs[opTsi].sp := 0;
+			S.GET(adr, li); opTs[opTsi].fgrL := li;
+			S.GET(adr+4, li); opTs[opTsi].fgrH := li;
+			INC(opTsI);
+		END;
+	END MemPush;
+* end debug *)
+
 	PROCEDURE MULTU(r4, r5: LONGINT);
-	CODE
+	CODE {SYSTEM.i386}
 		MOV EAX, r4[EBP]
 		MUL r5[EBP]
 		MOV low, EAX
@@ -70,7 +140,7 @@ VAR
 	END MULTU;
 	
 	PROCEDURE DIVU(r4, r5: LONGINT);
-	CODE
+	CODE {SYSTEM.i386}
 		XOR EDX, EDX
 		MOV EAX, r4[EBP]
 		DIV r5[EBP]
@@ -79,7 +149,7 @@ VAR
 	END DIVU;
 
 	PROCEDURE Carry(r4, r5: LONGINT): LONGINT;
-	CODE
+	CODE {SYSTEM.i386}
 		XOR EAX, EAX
 		MOV EBX, r5[EBP]
 		ADD EBX, r4[EBP]
@@ -87,7 +157,7 @@ VAR
 	END Carry;
 	
 	PROCEDURE SLRVD(r4, r5, r6: LONGINT): LONGINT;
-	CODE
+	CODE {SYSTEM.i386}
 			MOV EDX, r5[EBP]
 			MOV EAX, r4[EBP]
 			MOV ECX, r6[EBP]
@@ -332,7 +402,11 @@ end:	MOV R3, EDX
 
 	PROCEDURE CEQD*(s, t: LONGINT);	(* equal := FPR[s]=FPR[t] *)
 	BEGIN
-		equal := (FGR[s] = FGR[t]) & (FGR[s+1] = FGR[t+1])
+		equal := (FGR[s] = FGR[t]) & (FGR[s+1] = FGR[t+1]);
+		(*
+		IF equal THEN OPsPushCh(1X, 1X, 1X);
+		ELSE OPsPushCh(1X, 1X, 0X); END;
+		*)
 	END CEQD;
 
 	PROCEDURE CLTD*(s, t: LONGINT);	(* less := FPR[s]<FPR[t] *)
@@ -396,7 +470,8 @@ end:	MOV R3, EDX
 		m := FGR[s];
 		IF m = {} THEN FGR[d] := {}; FGR[d+1] := {}; RETURN END;
 		FGR[d] := S.LSH(m, 29);
-		FGR[d+1] := m*sign + S.VAL(SET, S.VAL(LONGINT, S.LSH(m*expS, -3)) + ASH(biasD-biasS, eshiftD)) + S.LSH(m, -3)*mantD;
+		FGR[d+1] := m*sign + S.VAL(SET, S.VAL(LONGINT, S.LSH(m*expS, -3)) 
+						+ ASH(biasD-biasS, eshiftD)) + S.LSH(m, -3)*mantD;
 	END CVTDS;
 
 	PROCEDURE CVTWD*(d, s: LONGINT);	(* FGR[d] := ENTIER(FPR[s]) *)	(* Round = RM *)
@@ -426,31 +501,48 @@ end:	MOV R3, EDX
 		END
 	END CVTWD;
 
-	PROCEDURE *Adr;		(* Empty procedure; lets space for at least 10 bytes *)
-	CODE
-		DB 90H, 90H, 90H, 90H, 90H, 90H, 90H, 90H, 90H, 90H
-	END Adr;
-			
-	PROCEDURE GetAdr(start, len: LONGINT);
-	VAR Padr: LONGINT; code: SHORTINT; P: Proc;
-	BEGIN
-		P := Adr;  Padr := S.VAL(LONGINT, P);		(* Procedure Address *)
-		S.PUT(Padr, 8DX);	(* LEA *)
-		S.GET(start, code);
-		S.PUT(Padr+1, code MOD 8 + code DIV 64*64);	(* Put dest to EAX *)
-		S.MOVE(start+1, Padr+2, len);	(* Put Code *)
-		S.PUT(Padr+2+len, 0C3X);
-		S.PUTREG(0, EAX); S.PUTREG(1, ECX); S.PUTREG(2, EDX); 		(* Set registers *)
-		S.PUTREG(3, EBX); S.PUTREG(6, ESI); S.PUTREG(7, EDI);
-		S.GETREG(5, oldebp); S.PUTREG(5, EBP);									(* Set old EBP *)
-		Adr; S.GETREG(0, adr);																(* Get Address *)
-		S.PUTREG(5, oldebp);																(* Reset EBP *)
+	PROCEDURE GetAdr(start, len: LONGINT);	(* start is ADR(OP2), len is length-2 *)
+	CODE {SYSTEM.i386}	(* implicit: PUSH EBP; MOV EBP, ESP (interrupts are off)*)
+		POP oldebp	; save caller EBP
+		POP return	; save caller return address
+		POP ECX	; len (max 5)
+		POP ESI	; start
+		MOV oldesp, ESP	; save caller ESP
+		
+			; compute number of NOPs
+		MOV EDX, 5
+		SUB EDX, ECX
+		
+			; assemble getadr instruction (max 7 bytes)
+		CLD
+		LEA EDI, code
+		INC EDI	; { code[0] = 8DX (LEA) }
+		LODSB
+		AND AL, 0C7H	; clear reg bits (LEA EAX)
+		STOSB
+		REP MOVSB	; copy possible other bytes (LEA EAX, xxx)
+		
+			; assemble NOPs
+		MOV ECX, EDX
+		MOV AL, 90H
+		REP STOSB
+		
+			; switch to emulation registers
+		MOV EAX, uEAX
+		MOV EBX, uEBX
+		MOV ECX, uECX
+		MOV EDX, uEDX
+		MOV ESI, uESI
+		MOV EDI, uEDI
+		MOV EBP, uEBP
+		MOV ESP, uESP
+		
+			; call assembled instruction
+		JMP codeptr
 	END GetAdr;
-
+	
 	PROCEDURE GetLength;
-	VAR rm: INTEGER;
 	BEGIN
-		rm := ORD(OP2) MOD 8;
 		CASE ORD(OP2) DIV 64 OF
 			0: IF rm = 4 THEN 
 					IF (ORD(OP3) MOD 8) = 5 THEN length := 7 ELSE length := 3 END
@@ -462,108 +554,233 @@ end:	MOV R3, EDX
 		END
 	END GetLength;
 
-PROCEDURE Undefined;
-VAR Uop1, Uop2, Uop3, Uopadr, Upc: LONGINT;  Uname: ARRAY 32 OF CHAR;  m: Kernel.Module;
-BEGIN
-	Uop1 := ORD(OP1);  Uop2 := ORD(OP2);  Uop3 := ORD(OP3);
-	Uopadr := adr;  m := Kernel.GetMod(EIP);
-	IF m # NIL THEN COPY(m.name, Uname);  Upc := EIP - S.ADR(m.code[0])
-	ELSE Uname := "NIL";  Upc := EIP
-	END;
-	HALT(88)
-END Undefined;
-
 PROCEDURE *Interpret;
-VAR ebp: LONGINT;
-BEGIN
+CONST
+	SpRel = 24X; (* stackpointer relative adressing: 00|100|100 *)
+VAR 
+	ebp, cs: LONGINT;
+BEGIN	(* interrupts are off *)
+	(* get relevant registers of caller *) 
 	S.GETREG(5, ebp);
-	S.GET(ebp+36, EAX);  S.GET(ebp+32, ECX);  S.GET(ebp+28, EDX);
-	S.GET(ebp+24, EBX);  S.GET(ebp+16, EBP);  S.GET(ebp+12, ESI);
-	S.GET(ebp+8, EDI);  S.GET(ebp+48, EIP);
-	
-	S.GET(EIP, OP1); S.GET(EIP+1, OP2); S.GET(EIP+2, OP3);	(* Get instruction bytes *)
+	S.GET(ebp+36, uEAX);  S.GET(ebp+32, uECX);  S.GET(ebp+28, uEDX);
+	S.GET(ebp+24, uEBX);  S.GET(ebp+16, uEBP);  S.GET(ebp+12, uESI);
+	S.GET(ebp+8, uEDI);  S.GET(ebp+48, EIP);  S.GET(ebp+52, cs);
+	IF cs MOD 4 = 0 THEN
+		S.GET(ebp+20, uESP);  INC(uESP, 20)
+	ELSE
+		S.GET(ebp+60, uESP)
+	END;
+	(* Get instruction bytes *)
+	S.GET(EIP, OP1); S.GET(EIP+1, OP2); S.GET(EIP+2, OP3); 
+(* debug *
+	S.GET(EIP+3, OP4);
+	OpsPush(); (* if you comment this statement be careful not to use
+	other Push procedures *) pushF := FALSE; 
+	spalt := SP; opTsIalt:=opTsI; opI := opTsI;
+* end debug *)
 	length := 2;	(* Default *)
-	opfield := ORD(OP2) DIV 8 MOD 8;	(* Decoded Mod/RM field *)
+	(* standard x86 Instruction byte: mod*2 reg*3 r/m*3  *)
+	modReg := ORD(OP2) DIV 8; (* mod+register field  *)
+	opfield := modReg MOD 8; (* register field *)
+	(* r/m field or floating point register index *)
+	rm := ORD(OP2) MOD 8;
+(*	IF (SP < 0) OR (SP > 16) THEN HALT(niTrap) END; *)
 	IF OP1 = 0D8X THEN
-		IF OP2 = 0C1X (*FADDJ*) THEN ADDD(SP-2, SP-4, SP-2)
-		ELSIF OP2 = 0C9X (*FMULJ*) THEN MULD(SP-2, SP-4, SP-2)
-	(* check it!	ELSIF OP2 = 0D9X (*FCOMJ*) THEN 
-DEC(SP, 2); CEQD(SP, SP-2); CLTD(SP, SP-2); (*DEC(SP, 2)*) *)
+		IF       modReg = 18H (*C0..7*) THEN (*FADD 0:=i+0*)
+			ADDD(SP-2, SP-2-2*rm, SP-2)
+		ELSIF modReg = 19H (*C8..F*) THEN (*FMUL 0:=i*0 *)
+ 			 MULD(SP-2, SP-2-2*rm, SP-2)
+		ELSIF modReg = 1AH(*D0..7*) THEN (*FCOM 0-i *)
+			HALT(niTrap);
+		ELSIF modReg = 1BH(*D8..F*) THEN  (* FCOMP 0-i, pop *)
+			DEC(SP, 2); CEQD(SP, SP-2*rm); CLTD(SP, SP-2*rm);
 		ELSIF OP2 = 0E9X (*FSUBJ*) THEN SUBD(SP-2, SP-4, SP-2)
-		ELSIF OP2 = 0F9X (*FDIVJ*) THEN DIVD(SP-2, SP-4, SP-2)
 		ELSIF OP2 = 0F1X (*FDIVRJ*) THEN DIVD(SP-2, SP-2, SP-4)
-		ELSE Undefined 
+		ELSIF OP2 = 0F9X (*FDIVJ*) THEN DIVD(SP-2, SP-4, SP-2)
+		ELSIF OP2 >= 0C0X THEN HALT(88)
+		ELSE
+			HALT(88); (* do we come here ? *)
+			GetLength; GetAdr(EIP+1, length-2);
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr, 4); END;*)
+			IF       opfield = 2 THEN (* FCOM memr4-0 *) HALT(niTrap);
+			ELSIF opfield = 3 THEN (* FCOMP memr4-0,pop *) HALT(niTrap);
+			ELSE HALT(88)
+			END
 		END
 	ELSIF OP1 = 0D9X THEN 
-		IF OP2 = FXCH THEN 
+		IF modReg= 18H(*C0..7*)THEN (* FLD i, push 0 := old i *)
+			FGR[SP] := FGR[SP-2-2*rm]; FGR[SP+1] := FGR[SP-1-2*rm];
+			INC(SP,2);
+		ELSIF OP2 = 0C9X THEN (* FXCH *)
 			xch[0] := FGR[SP-2]; xch[1] := FGR[SP-1]; 
 			FGR[SP-2] := FGR[SP-4]; FGR[SP-1] := FGR[SP-3];
 			FGR[SP-4] := xch[0]; FGR[SP-3] := xch[1]
-		ELSIF OP2 = FCHS THEN NEGD(SP-2, SP-2)
-		ELSIF OP2 = FABS THEN ABSD(SP-2, SP-2)
-		ELSIF OP2 = FLD1 THEN FGR[SP] := {}; FGR[SP+1] := {20 .. 29}; INC(SP, 2); 
-		ELSIF OP2 = FLDZ THEN FGR[SP] := {}; FGR[SP+1] := {}; INC(SP, 2)
+		ELSIF OP2 = 0E0X THEN (* FCHS *) NEGD(SP-2, SP-2)
+		ELSIF OP2 = 0E1X THEN (* FABS *) ABSD(SP-2, SP-2)
+		ELSIF OP2 = 0E4X THEN (* FTST 0-0.0 *) HALT(niTrap);
+		ELSIF OP2 = 0E8X THEN (* FLD1 +1.0 *)
+			FGR[SP] := {}; FGR[SP+1] := {20 .. 29}; INC(SP, 2); 
+		ELSIF OP2 = 0EEX THEN (* FLDZ +0.0 *)
+			FGR[SP] := {}; FGR[SP+1] := {}; INC(SP, 2)
+		ELSIF OP2 = 0F6X THEN (* FDECSTP *) HALT(niTrap)
+		ELSIF OP2 = 0F7X THEN (* FINCSTP *)  HALT(niTrap)
+		ELSIF OP2 >= 0C0X THEN HALT(88)
 		ELSE 
 			GetLength; GetAdr(EIP+1, length-2);
-			IF opfield = 0 THEN S.GET(adr, FGR[SP]); CVTDS(SP, SP); INC(SP, 2)	(* FLD real *)
-			ELSIF opfield = 3 THEN DEC(SP, 2); CVTSD(SP, SP); S.PUT(adr, FGR[SP])	(* FSTP real *)
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr, 4); END;*)
+			IF opfield = 0 THEN (* FLD real *)
+				S.GET(adr, FGR[SP]); CVTDS(SP, SP); INC(SP, 2);
+			ELSIF opfield = 2 THEN (* FST real *)
+				HALT(niTrap);
+			ELSIF opfield = 3 THEN (* FSTP real *)
+				DEC(SP, 2); CVTSD(SP, SP); S.PUT(adr, FGR[SP])
 			ELSIF (opfield = 5) OR (opfield = 7) THEN
-				(* do nothing; FLDCW and FSTCW are not used, rounding done in procedure *)
-			ELSE Undefined 
+				(* do nothing; FLDCW and FSTCW, rounding in procedure *)
+			ELSE HALT(88) 
+			END
+		END
+	ELSIF OP1 = 0DAX THEN
+		IF OP2 >= 0C0X THEN HALT(88)
+		ELSE
+			HALT(88); (* let's see whether it's called *)
+			GetLength; GetAdr(EIP+1, length-2);
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr, 4); END;*)
+			IF       opfield = 2 THEN (* FCOM memr8 *) HALT(niTrap)
+			ELSIF opfield = 3 THEN (* FCOMP memr8 *) HALT(niTrap)
+			ELSE HALT(88)
 			END
 		END
 	ELSIF OP1 = 0DBX THEN
+		IF OP2 >= 0C0X THEN HALT(88)
+		ELSE
+			GetLength; GetAdr(EIP+1, length-2);
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr, 4); END;*)
+			IF opfield = 0 THEN (* FILD longint *)
+				S.GET(adr, FGR[SP]); CVTDW(SP, SP); INC(SP, 2)
+			ELSIF opfield = 2 THEN (* FIST mem4i := 0 *)
+				CVTWD(SP-2,SP-2); S.PUT(adr, FGR[SP-2]);
+			ELSIF opfield = 3 THEN (* FISTP mem4i := 0, pop *)
+				DEC(SP,2); CVTWD(SP,SP); S.PUT(adr, FGR[SP]);
+			ELSIF opfield = 5 THEN (* FLD ext. real; treated as longreal *)
+				S.GET(adr, FGR[SP]); S.GET(adr+4, FGR[SP+1]); INC(SP, 2)	
+			ELSIF opfield = 7 THEN  	(* FSTP ext. real; treated as longreal *)
+				DEC(SP, 2); S.PUT(adr, FGR[SP]); S.PUT(adr+4, FGR[SP+1])
+			ELSE HALT(88)
+			END
+		END
+	ELSIF OP1 = 0DCX THEN
+		HALT(88); (* let's see whether it's called *)
 		GetLength; GetAdr(EIP+1, length-2);
-		IF opfield = 0 THEN S.GET(adr, FGR[SP]); CVTDW(SP, SP); INC(SP, 2)	(* FILD longint *)
-		ELSIF opfield = 5 THEN S.GET(adr, FGR[SP]); S.GET(adr+4, FGR[SP+1]); INC(SP, 2)	(* FLD ext. real; treated as longreal *)
-		ELSIF opfield = 7 THEN DEC(SP, 2); S.PUT(adr, FGR[SP]); S.PUT(adr+4, FGR[SP+1])	(* FSTP ext. real; treated as longreal *)
-		ELSE Undefined
+		(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr, 4); END;*)
+		IF       opfield = 2 THEN (* FCOM memr8 *) HALT(niTrap)
+		ELSIF opfield = 3 THEN (* FCOMP memr8 *) HALT(niTrap)
+		ELSE HALT(88)
 		END
 	ELSIF OP1 = 0DDX THEN
-		GetLength; GetAdr(EIP+1, length-2);
-		IF opfield = 0 THEN S.GET(adr, FGR[SP]); S.GET(adr+4, FGR[SP+1]); INC(SP, 2)	(* FLD longreal *)
-		ELSIF opfield = 3 THEN DEC(SP, 2); S.PUT(adr, FGR[SP]); S.PUT(adr+4, FGR[SP+1])	(* FSTP longreal *)
-		ELSE Undefined
+		IF modReg= 18H(*C0..7*)THEN  (* FFREE i *)
+			(* discard stackitem i ,rest settles down *)
+			FOR i := 0 TO 2*rm-1 DO
+				FGR[SP-2*rm-2+i] := FGR[SP-2*rm+i];
+			END;
+			DEC(SP,2);
+		ELSIF modReg = 1AH(*D0..7*)THEN (* FST i := 0 *) 
+			HALT(niTrap)
+		ELSIF modReg = 1BH(*D8..F*)THEN (* FSTP i := 0,pop *) 
+			HALT(niTrap)
+		ELSIF OP2 >= 0C0X THEN HALT(88)
+		ELSE
+			GetLength; GetAdr(EIP+1, length-2);
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr,4); END;*)
+			IF opfield = 0 THEN (* FLD longreal *)
+				S.GET(adr, FGR[SP]); S.GET(adr+4, FGR[SP+1]); INC(SP, 2)
+			ELSIF opfield = 2 THEN (* FST real *)
+				HALT(niTrap)
+			ELSIF opfield = 3 THEN (* FSTP longreal *)
+				DEC(SP, 2); S.PUT(adr, FGR[SP]); S.PUT(adr+4, FGR[SP+1]);
+			ELSE
+				HALT(88)
+			END
 		END
 	ELSIF OP1 = 0DEX THEN
-		IF OP2 = FADDP THEN DEC(SP, 2); ADDD(SP-2, SP-2, SP)
-		ELSIF OP2 = FMULP THEN DEC(SP, 2); MULD(SP-2, SP-2, SP)
-		ELSIF OP2 = FCOMPP THEN DEC(SP, 2); CEQD(SP, SP-2); CLTD(SP, SP-2); DEC(SP, 2)
-		ELSIF OP2 = FSUBP THEN DEC(SP, 2); SUBD(SP-2, SP-2, SP)
-		ELSIF OP2 = FDIVP THEN DEC(SP, 2); DIVD(SP-2, SP-2, SP)
-		ELSIF OP2 = FDIVRP THEN DEC(SP, 2); DIVD(SP-2, SP, SP-2)
-		ELSE Undefined 
+		IF OP2 = 0C1X THEN (* FADDP *)
+			DEC(SP, 2); ADDD(SP-2, SP-2, SP)
+		ELSIF OP2 = 0C9X THEN (* FMULP *)
+			DEC(SP, 2); MULD(SP-2, SP-2, SP)
+		ELSIF OP2 = 0D9X THEN (* FCOMPP *)
+			DEC(SP, 2); CEQD(SP, SP-2); CLTD(SP, SP-2); DEC(SP, 2)
+		ELSIF OP2 = 0E1X THEN (* FSUBR 1 := 0 - 1, pop*)
+			DEC(SP, 2); SUBD(SP-2, SP, SP-2)
+		ELSIF OP2 = 0E9X THEN (* FSUBP 1 := 1 - 0, pop *)
+			DEC(SP, 2); SUBD(SP-2, SP-2, SP)
+		ELSIF OP2 = 0F1X THEN (* FDIVRP *)
+			DEC(SP, 2); DIVD(SP-2, SP, SP-2)
+		ELSIF modReg = 1FH(*F8..F*) THEN (* FDIVP i:=i/0,pop*)
+			DEC(SP, 2); DIVD(SP-2*rm, SP-2*rm, SP)
+		ELSE
+			HALT(88) 
 		END
 	ELSIF OP1 = 0DFX THEN
-		IF OP2 = FSTSWAX THEN
+		IF OP2 = 0E0X THEN (* FSTSWAX *)
 			S.GET(ebp+56, flags);
 			IF less THEN INCL(flags, 0) ELSE EXCL(flags, 0) END;
 			IF equal THEN INCL(flags, 6) ELSE EXCL(flags, 6) END;
 			EXCL(flags, 2); INC(length);
 			S.PUT(ebp+56, flags)
-		ELSE 
+		ELSIF OP2 >= 0C0X THEN HALT(88);
+		ELSE
+			HALT(88); (* do we come here ? *)
 			GetLength; GetAdr(EIP+1, length-2);
-			IF opfield = 7 THEN DEC(SP, 2); CVTWD(SP, SP); S.PUT(adr, FGR[SP])	(* FISTP longint *)
-			ELSE Undefined END
+			(*IF (rm = 4) & (OP3 = SpRel) THEN INC(adr,4); END;*)
+			IF       opfield = 2 THEN (* FIST mem2i := 0 *) HALT(niTrap)
+			ELSIF opfield = 3 THEN (* FIST mem2i := 0,pop *) HALT(niTrap)
+			ELSIF opfield = 7 THEN (* FISTP longint *)
+				HALT(niTrap); (* ??? *)
+				DEC(SP, 2); CVTWD(SP, SP); S.PUT(adr, FGR[SP])
+			ELSE
+				HALT(88)
+			END
 		END
 	ELSIF OP1 = 9BX THEN	(* do nothing *)
-	ELSE Undefined
+		length := 1;
+	ELSE HALT(88)
 	END;
-		(* set registers to new values *)
-	S.PUT(ebp+36, EAX);  S.PUT(ebp+32, ECX);  S.PUT(ebp+28, EDX);
-	S.PUT(ebp+24, EBX);  S.PUT(ebp+16, EBP);  S.PUT(ebp+12, ESI);
-	S.PUT(ebp+8, EDI);  S.PUT(ebp+48, EIP + length)
+	(* set registers to new values *)
+(*
+	S.PUT(ebp+36, uEAX);  S.PUT(ebp+32, uECX);  S.PUT(ebp+28, uEDX);
+	S.PUT(ebp+24, uEBX);  S.PUT(ebp+16, uEBP);  S.PUT(ebp+12, uESI);
+	S.PUT(ebp+8, uEDI);
+*)
+	S.PUT(ebp+48, EIP + length)
 END Interpret;
 	
 PROCEDURE Reset*;
 BEGIN
-	SP := 0
+	SP := 0; (*debug * opTsI := 0; *)
 END Reset;
-	
+
+PROCEDURE InitCode;
 BEGIN
-	SP := 0;
+	codeptr := SYSTEM.ADR(code[0]);
+	code[0] := 8DX;	(* LEA *)
+	(* code[1..6] is filled in by GetAdr *)
+	code[7] := 89X;  code[8] := 5X;	(* MOV [adr], EAX *)
+	SYSTEM.PUT(SYSTEM.ADR(code[9]), SYSTEM.ADR(adr));
+	code[13] := 8BX;  code[14] := 25X;	(* MOV ESP, [oldesp] *)
+	SYSTEM.PUT(SYSTEM.ADR(code[15]), SYSTEM.ADR(oldesp));
+	code[19] := 8BX;  code[20] := 2DX;	(* MOV EBP, [oldebp] *)
+	SYSTEM.PUT(SYSTEM.ADR(code[21]), SYSTEM.ADR(oldebp));
+	code[25] := 0FFX;  code[26] := 25X;	(* JMP [return] *)
+	SYSTEM.PUT(SYSTEM.ADR(code[27]), SYSTEM.ADR(return));
+	code[31] := 90X	(* NOP *)
+END InitCode;
+
+BEGIN
+	InitCode;
+	SP := 0; (*debug * opTsI := 0; *)
 	Kernel.RemoveIP(NIL, 7);	(* uninstall default handler in Kernel *)
 	Kernel.InstallIP(Interpret, 7)	(* install our handler *)
 END FPA.
 
 Compiler.Compile *\xp
+System.Free FPA ~
+FPA.Reset

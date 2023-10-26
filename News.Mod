@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract.  The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE News; (* ejz,   *)
-	IMPORT BTrees, Strings, HyperDocs, Files, Objects, Texts, Display, Fonts, Display3, Oberon, NetSystem, NetTools, Gadgets, 
-		Attributes, TextGadgets, TextDocs, Documents, Desktops, Links, Modules, MIME, Streams, TextStreams, Mail;
+MODULE News; (** portable *)	(* ejz,   *)
+	IMPORT BTrees, Strings, HyperDocs, Files, Objects, Texts, Display, Fonts, Display3, Oberon, NetSystem, NetTools, Gadgets,
+		Attributes, TextGadgets, TextDocs, Documents, Desktops, Links, Modules, MIME, Streams, TextStreams, Mail, Dates;
 
 (** This module implements a newsreader (RFC 977, 1036) for oberon. The News-modul supports news and nntp urls.
 		The nntp host is specified in the NetSystem section of the Registry (e.g. NNTP=news.inf.ethz.ch).
@@ -32,7 +31,6 @@ MODULE News; (* ejz,   *)
 	CONST
 		DefPort = 119;
 		InitText = "News.Read.Text";
-		NewsReader = "NewsReader for Oberon (ejz)";
 		Done* = NetTools.Done;
 		ErrGroup* = 1;
 		ErrXOver* = 2;
@@ -56,22 +54,16 @@ MODULE News; (* ejz,   *)
 			readArtNrs: ArtNrs;
 			next: Group
 		END;
-		Date* = RECORD
-			day*, month*, year*: INTEGER
-		END;
-		Time* = RECORD
-			hour*, min*, sec*: INTEGER
-		END;
 (** The connection to an nntp. *)
 		Session* = POINTER TO SessionDesc;
-		SessionDesc* = RECORD (NetTools.SessionDesc)
+		SessionDesc* = RECORD (Mail.SMTPSessionDesc)
 		END;
 
 	VAR
 		W, Wr: Texts.Writer;
 		groups, curGrp: Group;
-		newgDate: Date;
-		newgTime: Time;
+		curGrpNewOnly: BOOLEAN;
+		newgDate, newgTime: LONGINT;
 		EMail: ARRAY NetTools.ServerStrLen OF CHAR;
 		refs: Files.File;
 		indexM, indexA: BTrees.Tree;
@@ -90,19 +82,25 @@ MODULE News; (* ejz,   *)
 		END
 	END ScanInt;
 
-	PROCEDURE ScanDate(VAR S: Texts.Scanner; VAR date: Date);
+	PROCEDURE ScanDate(VAR S: Texts.Scanner; VAR date: LONGINT);
+		VAR day, month, year: INTEGER;
 	BEGIN
-		ScanInt(S, date.day); ScanInt(S, date.month); ScanInt(S, date.year);
-		IF date.year = 0 THEN
-			date.year := 80; date.month := 1; date.day := 1
-		END
+		ScanInt(S, day); ScanInt(S, month); ScanInt(S, year);
+		IF year < 100 THEN
+			IF (month = 0) OR (day = 0) THEN
+				year := 1980; month := 1; day := 1
+			ELSE
+				year := year + 1900
+			END
+		END;
+		date := Dates.ToDate(year, month, day)
 	END ScanDate;
 
-	PROCEDURE ScanTime(VAR S: Texts.Scanner; VAR time: Time);
+	PROCEDURE ScanTime(VAR S: Texts.Scanner; VAR time: LONGINT);
+		VAR hour, min, sec: INTEGER;
 	BEGIN
-		ScanInt(S, time.hour);
-		ScanInt(S, time.min);
-		ScanInt(S, time.sec)
+		ScanInt(S, hour); ScanInt(S, min); ScanInt(S, sec);
+		time := Dates.ToTime(hour, min, sec)
 	END ScanTime;
 
 	PROCEDURE TwoDigit(i: INTEGER; VAR str: ARRAY OF CHAR);
@@ -112,43 +110,37 @@ MODULE News; (* ejz,   *)
 		str[2] := 0X
 	END TwoDigit;
 
-	PROCEDURE ConcatDate(VAR line: ARRAY OF CHAR; VAR date: Date);
-		VAR str: ARRAY 8 OF CHAR;
+	PROCEDURE ConcatDate(VAR line: ARRAY OF CHAR; VAR date: LONGINT);
+		VAR
+			str: ARRAY 8 OF CHAR;
+			day, month, year: INTEGER;
 	BEGIN
-		TwoDigit(date.year, str);
+		Dates.ToYMD(date, year, month, day);
+		IF year < 2000 THEN
+			TwoDigit(year MOD 100, str)
+		ELSE
+			Strings.IntToStr(year, str)	
+		END;
 		Strings.Append(line, str);
-		TwoDigit(date.month, str);
+		TwoDigit(month, str);
 		Strings.Append(line, str);
-		TwoDigit(date.day, str);
+		TwoDigit(day, str);
 		Strings.Append(line, str)
 	END ConcatDate;
 
-	PROCEDURE ConcatTime(VAR line: ARRAY OF CHAR; VAR time: Time);
-		VAR str: ARRAY 8 OF CHAR;
+	PROCEDURE ConcatTime(VAR line: ARRAY OF CHAR; VAR time: LONGINT);
+		VAR
+			str: ARRAY 8 OF CHAR;
+			hour, min, sec: INTEGER;
 	BEGIN
-		TwoDigit(time.hour, str);
+		Dates.ToHMS(time, hour, min, sec);
+		TwoDigit(hour, str);
 		Strings.Append(line, str);
-		TwoDigit(time.min, str);
+		TwoDigit(min, str);
 		Strings.Append(line, str);
-		TwoDigit(time.sec, str);
+		TwoDigit(sec, str);
 		Strings.Append(line, str)
 	END ConcatTime;
-
-(** Makes a Date record of the LONINGT from Oberon.GetClock. *)
-	PROCEDURE ConvertDate*(date: LONGINT; VAR rec: Date);
-	BEGIN
-		rec.day := SHORT(date MOD 32);
-		rec.month := SHORT(date DIV 32 MOD 16);
-		rec.year := SHORT(date DIV 512 MOD 128)
-	END ConvertDate;
-
-(** Makes a Time record of the LONINGT from Oberon.GetClock. *)
-	PROCEDURE ConvertTime*(time: LONGINT; VAR rec: Time);
-	BEGIN
-		rec.hour := SHORT(time DIV 4096 MOD 32);
-		rec.min := SHORT(time DIV 64 MOD 64);
-		rec.sec := SHORT(time MOD 64)
-	END ConvertTime;
 
 	PROCEDURE LoadInitText();
 		VAR
@@ -164,13 +156,10 @@ MODULE News; (* ejz,   *)
 		ELSE
 			newsFont := Fonts.Default
 		END;
-		groups := NIL;
-		lastg := NIL;
-		NEW(text);
-		Texts.Open(text, InitText);
+		groups := NIL; lastg := NIL;
+		NEW(text); Texts.Open(text, InitText);
 		Texts.OpenScanner(S, text, 0); Texts.Scan(S);
-		ScanDate(S, newgDate);
-		ScanTime(S, newgTime);
+		ScanDate(S, newgDate); ScanTime(S, newgTime);
 		WHILE ~S.eot DO
 			NEW(group);
 			IF (S.class = Texts.Char) & (S.c = "!") THEN
@@ -195,23 +184,20 @@ MODULE News; (* ejz,   *)
 					groups := group
 				END;
 				lastg := group;
-				group.readArtNrs := NIL;
-				last := NIL;
+				group.readArtNrs := NIL; last := NIL;
 				Texts.Scan(S);
 				IF ((S.class = Texts.Char) & (S.c = ":")) OR ((S.class IN {Texts.Name, Texts.String}) & (S.s = ":")) THEN
 					Texts.Scan(S)
 				END;
 				WHILE ~S.eot & (S.class = Texts.Int) DO
-					NEW(art);
-					art.next := NIL;
+					NEW(art); art.next := NIL;
 					IF last = NIL THEN
 						group.readArtNrs := art
 					ELSE
 						last.next := art
 					END;
 					last := art;
-					art.beg := S.i;
-					Texts.Scan(S);
+					art.beg := S.i; Texts.Scan(S);
 					IF ((S.class = Texts.Char) & (S.c = "-")) OR ((S.class IN {Texts.Name, Texts.String}) & (S.s = "-")) THEN
 						Texts.Scan(S);
 						IF S.class = Texts.Int THEN
@@ -236,22 +222,26 @@ MODULE News; (* ejz,   *)
 		END
 	END LoadInitText;
 
-	PROCEDURE WriteDate(VAR W: Texts.Writer; VAR date: Date);
+	PROCEDURE WriteDate(VAR W: Texts.Writer; VAR date: LONGINT);
+		VAR day, month, year: INTEGER;
 	BEGIN
-		Texts.WriteInt(W, date.day, 0);
+		Dates.ToYMD(date, year, month, day);
+		Texts.WriteInt(W, day, 0);
 		Texts.Write(W, " ");
-		Texts.WriteInt(W, date.month, 0);;
+		Texts.WriteInt(W, month, 0);
 		Texts.Write(W, " ");
-		Texts.WriteInt(W, date.year, 0)
+		Texts.WriteInt(W, year, 0)
 	END WriteDate;
 
-	PROCEDURE WriteTime(VAR W: Texts.Writer; VAR time: Time);
+	PROCEDURE WriteTime(VAR W: Texts.Writer; VAR time: LONGINT);
+		VAR hour, min, sec: INTEGER;
 	BEGIN
-		Texts.WriteInt(W, time.hour, 0);
+		Dates.ToHMS(time, hour, min, sec);
+		Texts.WriteInt(W, hour, 0);
 		Texts.Write(W, " ");
-		Texts.WriteInt(W, time.min, 0);
+		Texts.WriteInt(W, min, 0);
 		Texts.Write(W, " ");
-		Texts.WriteInt(W, time.sec, 0)
+		Texts.WriteInt(W, sec, 0)
 	END WriteTime;
 
 	PROCEDURE *storeInitText();
@@ -496,7 +486,7 @@ MODULE News; (* ejz,   *)
 			NEW(T); Texts.Open(T, "");
 			NetSystem.ReadString(S.C, line);
 			WHILE (line[0] # ".") OR (line[1] # 0X) DO
-				WriteGroup(line);
+				Texts.WriteString(W, "news:"); Texts.WriteString(W, line); Texts.WriteLn(W);
 				NetSystem.ReadString(S.C, line)
 			END;
 			Texts.Append(T, W.buf);
@@ -508,7 +498,7 @@ MODULE News; (* ejz,   *)
 	END AllGroups;
 
 (** List all new groups since the last access. *)
-	PROCEDURE NewGroups*(S: Session; date: Date; time: Time; VAR T: Texts.Text);
+	PROCEDURE NewGroups*(S: Session; date, time: LONGINT; VAR T: Texts.Text);
 	BEGIN
 		line := "NEWGROUPS ";
 		ConcatDate(line, date);
@@ -520,7 +510,7 @@ MODULE News; (* ejz,   *)
 			NEW(T); Texts.Open(T, "");
 			NetSystem.ReadString(S.C, line);
 			WHILE (line[0] # ".") OR (line[1] # 0X) DO
-				WriteGroup(line);
+				Texts.WriteString(W, "news:"); Texts.WriteString(W, line); Texts.WriteLn(W);
 				NetSystem.ReadString(S.C, line)
 			END;
 			Texts.Append(T, W.buf);
@@ -537,8 +527,7 @@ MODULE News; (* ejz,   *)
 		Oberon.GetClock(time, date);
 		NewGroups(S, newgDate, newgTime, T);
 		IF S.res = Done THEN
-			ConvertDate(date, newgDate);
-			ConvertTime(time, newgTime)
+			newgDate := date; newgTime := time
 		END
 	END NewGrp;
 
@@ -663,6 +652,7 @@ MODULE News; (* ejz,   *)
 		FOR a := 0 TO MaxMessages-1 DO
 			marked[a] := FALSE
 		END;
+		IF (end - beg) >= MaxMessages  THEN beg := end - MaxMessages  + 1 END;
 		NetTools.curLen := end-beg;
 		FOR a := beg TO end DO	(* from oldest to newest *)
 			BTrees.SearchLInt(indexA, a, org, re);
@@ -690,8 +680,8 @@ MODULE News; (* ejz,   *)
 		marked := NIL
 	END Thread;
 
-(** List all available articles in group. *)
-	PROCEDURE Articles*(S: Session; group: ARRAY OF CHAR; VAR T: Texts.Text; thread: BOOLEAN);
+(** List all available articles in group in a certain range. 0-0 = all *)
+	PROCEDURE ArticleRange(S: Session; group: ARRAY OF CHAR; VAR T: Texts.Text; thread: BOOLEAN; from, to: LONGINT);
 		VAR
 			nr: LONGINT;
 			org, org2, org3, fixup: LONGINT;
@@ -712,6 +702,22 @@ MODULE News; (* ejz,   *)
 			Strings.StrToIntPos(S.reply, beg, i);
 			Strings.StrToIntPos(S.reply, beg, i);
 			Strings.StrToIntPos(S.reply, end, i);
+			Texts.WriteString(W, group);  Texts.WriteString(W, " available: ");
+			Texts.WriteInt(W, beg, 1);  Texts.Write(W, "-");  Texts.WriteInt(W, end, 1);
+			IF (from #  0) & (to = 0) THEN
+				(* get 'from' newest articles *)
+				beg := end - from + 1;
+			ELSIF (from #  0) & (to # 0) THEN
+				(* from-to articles *)
+				beg := from;  end := to;
+			END;
+			(* be careful that your number range is smaller than MaxMessages  *)
+			IF (end - beg) >= MaxMessages  THEN beg := end - MaxMessages  + 1; END;
+			Texts.WriteString(W, ", get ");  Texts.WriteInt(W, beg, 1);
+			Texts.Write(W, "-");  Texts.WriteInt(W, end, 1);
+			IF curGrpNewOnly THEN Texts.WriteString(W, " unread"); END;
+			Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf);
 			indexM := BTrees.NewStr(Files.New(""), 0, SHORT(2*(end-beg))); BTrees.Flush(indexM);
 			indexA := BTrees.NewLInt(BTrees.Base(indexM), Files.Length(BTrees.Base(indexM)), SHORT(2*(end-beg)));
 			NetTools.curLen := end-beg; availBeg := beg;
@@ -729,35 +735,15 @@ MODULE News; (* ejz,   *)
 				NetSystem.ReadString(S.C, line);
 				WHILE (line[0] # ".") OR (line[1] # 0X) DO	(* parse "message" line *)
 					Strings.StrToInt(line, nr);
-					i := 0; j := 0;
-					WHILE (line[i] # 0X) & (j < 4) DO
-						IF line[i] = Strings.Tab THEN
-							INC(j)
+					IF ~curGrpNewOnly OR ~ReadArt(curGrp, nr) THEN
+						i := 0; j := 0;
+						WHILE (line[i] # 0X) & (j < 4) DO
+							IF line[i] = Strings.Tab THEN
+								INC(j)
+							END;
+							INC(i)
 						END;
-						INC(i)
-					END;
-					line[i-1] := 0X;
-					j := 0;
-					WHILE (line[i] > " ") & (line[i] # ">") DO
-						msgid[j] := line[i];
-						INC(j); INC(i)
-					END;
-					IF line[i] = ">" THEN
-						msgid[j] := line[i];
-						INC(j); INC(i)
-					END;
-					msgid[j] := 0X;
-					Strings.Upper(msgid, msgid);
-					WHILE (line[i] # 0X) & (line[i] # "<") DO
-						INC(i)
-					END;
-					org := Files.Pos(R);
-					BTrees.InsertStr(indexM, msgid, org, bres);	(* add msgid to msgs index *)
-					BTrees.InsertLInt(indexA, nr, org, bres);
-					Files.WriteLInt(R, -1);	(* offset of title line *)
-					Files.WriteLInt(R, nr);	(* the article nr. for article msgid *)
-					iRef := i; fixup := 0;
-					WHILE line[i] = "<" DO
+						line[i-1] := 0X;
 						j := 0;
 						WHILE (line[i] > " ") & (line[i] # ">") DO
 							msgid[j] := line[i];
@@ -769,27 +755,15 @@ MODULE News; (* ejz,   *)
 						END;
 						msgid[j] := 0X;
 						Strings.Upper(msgid, msgid);
-						BTrees.SearchStr(indexM, msgid, org2, bres);	(* lookup the msgid referenced *)
-						IF bres = BTrees.Done THEN
-							Files.WriteLInt(R, org2)	(* add it to the references list *)
-						ELSE	(* referenced article no longer available *)
-							Files.WriteLInt(R, -2); INC(fixup)
-						END;
 						WHILE (line[i] # 0X) & (line[i] # "<") DO
 							INC(i)
-						END
-					END;
-					Files.WriteLInt(R, -1);	(* end of reference list *)
-					org2 := Files.Pos(R);
-					Files.Set(R, refs, org);	(* fixup for title line *)
-					Files.WriteLInt(R, org2);
-					Files.Set(R, refs, org2);	(* write the title line *)
-					Files.WriteString(R, line);
-					IF thread & (fixup > 0) THEN
-						Files.Set(R, refs, org);
-						Files.ReadLInt(R, org);
-						Files.ReadLInt(R, org);
-						i := iRef;
+						END;
+						org := Files.Pos(R);
+						BTrees.InsertStr(indexM, msgid, org, bres);	(* add msgid to msgs index *)
+						BTrees.InsertLInt(indexA, nr, org, bres);
+						Files.WriteLInt(R, -1);	(* offset of title line *)
+						Files.WriteLInt(R, nr);	(* the article nr. for article msgid *)
+						iRef := i; fixup := 0;
 						WHILE line[i] = "<" DO
 							j := 0;
 							WHILE (line[i] > " ") & (line[i] # ">") DO
@@ -802,31 +776,65 @@ MODULE News; (* ejz,   *)
 							END;
 							msgid[j] := 0X;
 							Strings.Upper(msgid, msgid);
-							Files.ReadLInt(R, org);
-							IF org = -2 THEN
-								org2 := Files.Length(refs); DEC(beg);
-								BTrees.InsertStr(indexM, msgid, org2, bres);
-								BTrees.InsertLInt(indexA, beg, org2, bres);
-								org := Files.Pos(R)-4;
-								Files.Set(R, refs, org2);
-								Files.WriteLInt(R, -1);	(* offset of title line *)
-								Files.WriteLInt(R, beg);	(* the article nr. for article msgid *)
-								Files.WriteLInt(R, -1);	(* end of reference list *)
-								org3 := Files.Pos(R);
-								Strings.IntToStr(beg, dummy); Strings.AppendCh(dummy, Strings.Tab);
-								Strings.Append(dummy, "Was: "); Strings.Append(dummy, msgid);
-								Files.WriteString(R, dummy);	(* write the title line *)
-								Files.Set(R, refs, org2);
-								Files.WriteLInt(R, org3);	(* fixup for title line *)
-								Files.Set(R, refs, org);
-								Files.WriteLInt(R, org2);
-								DEC(fixup)
+							BTrees.SearchStr(indexM, msgid, org2, bres);	(* lookup the msgid referenced *)
+							IF bres = BTrees.Done THEN
+								Files.WriteLInt(R, org2)	(* add it to the references list *)
+							ELSE	(* referenced article no longer available *)
+								Files.WriteLInt(R, -2); INC(fixup)
 							END;
 							WHILE (line[i] # 0X) & (line[i] # "<") DO
 								INC(i)
 							END
 						END;
-						org := Files.Length(refs); Files.Set(R, refs, org)
+						Files.WriteLInt(R, -1);	(* end of reference list *)
+						org2 := Files.Pos(R);
+						Files.Set(R, refs, org);	(* fixup for title line *)
+						Files.WriteLInt(R, org2);
+						Files.Set(R, refs, org2);	(* write the title line *)
+						Files.WriteString(R, line);
+						IF thread & (fixup > 0) THEN
+							Files.Set(R, refs, org);
+							Files.ReadLInt(R, org);
+							Files.ReadLInt(R, org);
+							i := iRef;
+							WHILE line[i] = "<" DO
+								j := 0;
+								WHILE (line[i] > " ") & (line[i] # ">") DO
+									msgid[j] := line[i];
+									INC(j); INC(i)
+								END;
+								IF line[i] = ">" THEN
+									msgid[j] := line[i];
+									INC(j); INC(i)
+								END;
+								msgid[j] := 0X;
+								Strings.Upper(msgid, msgid);
+								Files.ReadLInt(R, org);
+								IF org = -2 THEN
+									org2 := Files.Length(refs); DEC(beg);
+									BTrees.InsertStr(indexM, msgid, org2, bres);
+									BTrees.InsertLInt(indexA, beg, org2, bres);
+									org := Files.Pos(R)-4;
+									Files.Set(R, refs, org2);
+									Files.WriteLInt(R, -1);	(* offset of title line *)
+									Files.WriteLInt(R, beg);	(* the article nr. for article msgid *)
+									Files.WriteLInt(R, -1);	(* end of reference list *)
+									org3 := Files.Pos(R);
+									Strings.IntToStr(beg, dummy); Strings.AppendCh(dummy, Strings.Tab);
+									Strings.Append(dummy, "Was: "); Strings.Append(dummy, msgid);
+									Files.WriteString(R, dummy);	(* write the title line *)
+									Files.Set(R, refs, org2);
+									Files.WriteLInt(R, org3);	(* fixup for title line *)
+									Files.Set(R, refs, org);
+									Files.WriteLInt(R, org2);
+									DEC(fixup)
+								END;
+								WHILE (line[i] # 0X) & (line[i] # "<") DO
+									INC(i)
+								END
+							END;
+							org := Files.Length(refs); Files.Set(R, refs, org)
+						END
 					END;
 					NetSystem.ReadString(S.C, line)
 				END;
@@ -849,6 +857,12 @@ MODULE News; (* ejz,   *)
 		END;
 		curGrp := NIL; refs := NIL;
 		indexM := NIL; indexA := NIL
+	END ArticleRange;
+
+(** List all available articles in group. *)
+	PROCEDURE Articles*(S: Session; group: ARRAY OF CHAR; VAR T: Texts.Text; thread: BOOLEAN);
+	BEGIN
+		ArticleRange(S, group, T, thread, 0, 0)
 	END Articles;
 
 	PROCEDURE ReadString(VAR R: Texts.Reader; VAR s: ARRAY OF CHAR);
@@ -856,8 +870,7 @@ MODULE News; (* ejz,   *)
 			l, i: LONGINT;
 			ch: CHAR;
 	BEGIN
-		l := LEN(s)-1;
-		i := 0;
+		l := LEN(s)-1; i := 0;
 		Texts.Read(R, ch);
 		WHILE ~R.eot & (ch # Strings.CR) & (i < l) DO
 			IF R.lib IS Fonts.Font THEN
@@ -899,7 +912,7 @@ MODULE News; (* ejz,   *)
 				END
 			END
 		END;
-		Texts.Append(T, W.buf); Texts.WriteLn(W);
+		Texts.Append(T, W.buf); (*Texts.WriteLn(W);*)
 		cont.len := MAX(LONGINT);
 		IF cont.typ.typ # "multipart" THEN
 			MIME.ReadText(S.S, W, cont, TRUE)
@@ -909,7 +922,7 @@ MODULE News; (* ejz,   *)
 		END;
 		Texts.Append(T, W.buf);
 		IF (cont.typ.typ = "application") & (cont.encoding IN {MIME.EncAsciiCoder, MIME.EncAsciiCoderC, MIME.EncAsciiCoderCPlain}) THEN
-			Mail.DecodeMessage(T, cont)
+			Mail.DecodeMessage(T, h, cont, -1);
 		ELSIF NetTools.QueryString("NewsFont", val) & (Fonts.This(val) # NIL) THEN
 			newsFont := Fonts.This(val);
 			Texts.ChangeLooks(T, 0, T.len, {0}, newsFont, 0, 0)
@@ -981,8 +994,7 @@ MODULE News; (* ejz,   *)
 			Texts.Read(R, ch)
 		END;
 		IF ~R.eot & (ch = "^") THEN
-			time := -1;
-			text := NIL;
+			time := -1; text := NIL;
 			Oberon.GetSelection(text, beg, end, time);
 			IF (text # NIL) & (time >= 0) THEN
 				Texts.OpenReader(R, text, beg);
@@ -1101,7 +1113,7 @@ MODULE News; (* ejz,   *)
 	END CatchUp;
 
 (** News.CatchUpAll
- *)
+		Mark all articles in all subscribed groups. *)
 	PROCEDURE CatchUpAll*;
 		VAR
 			group: Group;
@@ -1110,7 +1122,10 @@ MODULE News; (* ejz,   *)
 		IF Connect(S) THEN
 			group := groups;
 			WHILE group # NIL DO
-				catchUp(S, group); group := group.next
+				IF group.subscribed THEN
+					catchUp(S, group)
+				END;
+				group := group.next
 			END
 		END;
 		IF (S # NIL) & (S.res # Done) THEN
@@ -1299,20 +1314,20 @@ MODULE News; (* ejz,   *)
 			host: ARRAY NetTools.ServerStrLen OF CHAR;
 			group, msgid: ARRAY NetTools.PathStrLen OF CHAR;
 			T: Texts.Text;
-			pos, artnr: LONGINT;
-			date: Date; time: Time;
+			pos, artnr, artnr1: LONGINT;
+			date, time: LONGINT;
 			S: Session;
 			obj, t: Objects.Object;
 			F: Texts.Finder;
 			article: BOOLEAN;
+			sPos: INTEGER;
 	BEGIN
 		S := NIL;
 		article := FALSE;
 		D.dsc := NIL;
 		IF (D.name = "") OR (D.name = "subgroups") THEN
 			TextDocs.InitDoc(D);
-			NEW(T);
-			Texts.Open(T, "");
+			NEW(T); Texts.Open(T, "");
 			SubGroups(T);
 			IF T.len = 0 THEN
 				Texts.WriteString(W, "No subscribed groups");
@@ -1333,20 +1348,8 @@ MODULE News; (* ejz,   *)
 					ELSE
 						Texts.WriteString(W, "New groups since ")
 					END;
-					Texts.WriteInt(W, date.day, 0);
-					Texts.Write(W, ".");
-					Texts.WriteInt(W, date.month, 0);
-					Texts.Write(W, ".");
-					Texts.WriteInt(W, date.year, 0);
-					Texts.Write(W, " ");
-					Texts.WriteInt(W, time.hour, 0);
-					Texts.Write(W, ":");
-					Texts.WriteInt(W, time.min, 0);
-					Texts.Write(W, ":");
-					Texts.WriteInt(W, time.sec, 0);
-					Texts.WriteLn(W);
-					Texts.WriteLn(W);
-					Texts.Insert(T, 0, W.buf)
+					Texts.WriteDate(W, time, date); Texts.WriteLn(W);
+					Texts.WriteLn(W); Texts.Insert(T, 0, W.buf)
 				END;
 				COPY("New Groups", D.name);
 				Close(S)
@@ -1362,6 +1365,7 @@ MODULE News; (* ejz,   *)
 			IF SplitNewsAdr(D.name, host, group) # HyperDocs.UndefKey THEN
 				IF Connect(S) THEN
 					TextDocs.InitDoc(D);
+					curGrpNewOnly := FALSE;
 					IF group = "" THEN
 						COPY("All Groups", D.name);
 						AllGroups(S, T)
@@ -1369,12 +1373,25 @@ MODULE News; (* ejz,   *)
 						COPY(group, D.name);
 						Articles(S, group, T, NetTools.QueryBool("NewsThreading"))
 					ELSE
-						COPY(group, msgid);
-						Strings.AppendCh(msgid, "@");
-						Strings.Append(msgid, host);
-						COPY(msgid, D.name);
-						ArticleByMsgId(S, msgid, T);
-						article := TRUE
+						(* news:<group>@<number[-<number>][\n] *)
+						sPos := 0; Strings.StrToIntPos(host, artnr, sPos);
+						IF artnr # 0 THEN (* a number was found *)
+							IF host[sPos] = "-" THEN (* a range *) 
+								INC(sPos); Strings.StrToIntPos(host, artnr1, sPos)
+								(* get articles #artnr to #artnr1 *)
+							ELSE
+								artnr1 := 0 (* get the artnr newest articles *)
+							END;
+							curGrpNewOnly :=  (host[sPos] = "\" ) & (host[sPos+1] = "n" );  (* look for option \n *)
+							ArticleRange(S, group, T, NetTools.QueryBool("NewsThreading"), artnr, artnr1)
+						ELSE (* a real host *)
+							COPY(group, msgid);
+							Strings.AppendCh(msgid, "@");
+							Strings.Append(msgid, host);
+							COPY(msgid, D.name);
+							ArticleByMsgId(S, msgid, T);
+							article := TRUE
+						END
 					END;
 					Close(S)
 				END
@@ -1385,7 +1402,7 @@ MODULE News; (* ejz,   *)
 					TextDocs.InitDoc(D);
 					ArticleByNr(S, group, artnr, T);
 					COPY(group, D.name);
-					Strings.AppendCh(D.name, "/");
+					Strings.AppendCh(D.name, ".");
 					Strings.IntToStr(artnr, msgid);
 					Strings.Append(D.name, msgid);
 					article := TRUE;
@@ -1556,69 +1573,34 @@ MODULE News; (* ejz,   *)
 	PROCEDURE SendArticle*(S: Session; T: Texts.Text; cont: MIME.Content);
 		VAR
 			s: Streams.Stream;
-			beg, end, enc: LONGINT;
-			head, coded: Texts.Text;
 			h: MIME.Header;
+			head: Texts.Text;
 			R: Texts.Reader;
+			beg: LONGINT;
 			ch: CHAR;
 	BEGIN
 		NetSystem.WriteString(S.C, "POST");
 		ReadResponse(S);
 		IF S.status = 340 THEN
-			NEW(head); Texts.Open(head, "");
 			s := TextStreams.OpenReader(T, 0); 
 			MIME.ReadHeader(s, NIL, h, beg);
+			NEW(head); Texts.Open(head, "");
 			Texts.OpenReader(R, T, beg); Texts.Read(R, ch);
 			IF (ch = Strings.CR) OR (ch = Strings.LF) THEN
 				WHILE (beg > 0) & ((ch = Strings.CR) OR (ch = Strings.LF)) DO
-					DEC(beg);
-					Texts.OpenReader(R, T, beg); Texts.Read(R, ch)
+					DEC(beg); Texts.OpenReader(R, T, beg); Texts.Read(R, ch)
 				END;
 				INC(beg); IF beg > T.len THEN beg := T.len END
 			END;
 			Texts.Save(T, 0, beg, W.buf); Texts.Append(head, W.buf);
-			Texts.WriteLn(W); Texts.Append(head, W.buf);
-			IF cont.encoding = MIME.EncAsciiCoderC THEN
-				Mail.MakeAscii(T, coded, beg, end, TRUE)
-			ELSIF cont.encoding = MIME.EncAsciiCoderCPlain THEN
-				Mail.MakeAscii(T, coded, beg, end, FALSE)
-			ELSE
-				coded := NIL; end := T.len
+			(*Texts.WriteLn(W);*) Texts.Append(head, W.buf);
+			Mail.GetSetting("EMail", S.from, FALSE);
+			Texts.OpenReader(R, T, beg); Texts.Read(R, ch); DEC(beg);
+			WHILE ~R.eot & ((ch <= " ") & (R.lib IS Fonts.Font)) DO
+				Texts.Read(R, ch); INC(beg)
 			END;
-			s := NetTools.OpenStream(S.C);
-			enc := MIME.FindField(h, "From");
-			IF enc <= 0 THEN
-				IF NetTools.QueryString("EMail", EMail) THEN
-					line := "From: "; Strings.Append(line, EMail);
-					NetSystem.WriteString(S.C, line)
-				END
-			END;
-			line := "X-NewsReader: "; Strings.Append(line, NewsReader);
-			NetSystem.WriteString(S.C, line);
-			enc := cont.encoding;
-			IF cont.encoding = MIME.EncAsciiCoderC THEN
-				cont.encoding := MIME.Enc8Bit;
-				MIME.WriteISOMime(s, cont);
-				cont.encoding := enc;
-				NetTools.SendString(S.C, "X-Content-Type: ");
-				NetSystem.WriteString(S.C, MIME.OberonMime)
-			ELSIF cont.encoding # MIME.EncBin THEN
-				MIME.WriteISOMime(s, cont)
-			END;
-			cont.encoding := MIME.EncBin;
-			MIME.WriteText(head, 0, head.len, S.S, cont, TRUE, FALSE);
-			cont.encoding := enc;
-			IF coded # NIL THEN
-				cont.encoding := MIME.Enc8Bit;
-				MIME.WriteText(T, beg, end, s, cont, TRUE, TRUE);
-				NetSystem.WriteString(S.C, Mail.OberonStart);
-				cont.encoding := MIME.EncBin;
-				MIME.WriteText(coded, 0, coded.len, s, cont, TRUE, TRUE)
-			ELSE
-				MIME.WriteText(T, beg, end, s, cont, TRUE, TRUE)
-			END;
-			NetSystem.WriteString(S.C, ".");
-			cont.encoding := enc; ReadResponse(S);
+			Mail.SendText(S, head, T, beg, T.len, cont); 
+			ReadResponse(S);
 			IF S.status = 240 THEN
 				S.res := Done; Mail.SendReplyLine(S, cont)
 			ELSE
@@ -1642,10 +1624,11 @@ MODULE News; (* ejz,   *)
 				- Text with objects -> ooberon *)
 	PROCEDURE Send*;
 		VAR
-			T: Texts.Text;
+			T, sig: Texts.Text;
 			cont: MIME.Content;
 			Sc: Attributes.Scanner;
 			S: Session;
+			val: ARRAY 64 OF CHAR;
 	BEGIN
 		T := Oberon.MarkedText();
 		IF T # NIL THEN
@@ -1660,6 +1643,17 @@ MODULE News; (* ejz,   *)
 				cont.encoding := MIME.Enc8Bit
 			ELSE
 				Mail.QueryContType(T, 0, cont)
+			END;
+			Mail.GetSetting("NewsSignature", val, FALSE);
+			IF val # "" THEN
+				NEW(sig); Texts.Open(sig, val);
+				IF sig.len > 0 THEN
+					Texts.Save(T, 0, T.len, W.buf);
+					NEW(T); Texts.Open(T, "");
+					Texts.WriteLn(W); Texts.Append(T, W.buf);
+					Texts.Save(sig, 0, sig.len, W.buf);
+					Texts.Append(T, W.buf)
+				END
 			END;
 			Texts.WriteString(W, "sending ");
 			Texts.Append(Oberon.Log, W.buf);
@@ -1687,8 +1681,7 @@ MODULE News; (* ejz,   *)
 	BEGIN
 		lib := W.lib; Texts.SetFont(W, newsFont);
 		grp := FALSE; sub := FALSE; frm := FALSE;
-		IF NetTools.QueryString("EMail", EMail) THEN
-		END;
+		Mail.GetSetting("EMail", EMail, FALSE);
 		Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 		IF (S.class = Texts.Char) & (S.c = "^") THEN
 			text := NIL; time := -1;
@@ -1764,4 +1757,4 @@ News.Read.Text
 
 News.StoreInitText
 
-System.Free News Mail NetTools HyperDocTools HyperDocs ~
+System.Free News ~

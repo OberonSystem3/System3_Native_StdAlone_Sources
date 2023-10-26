@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HTMLForms;
+MODULE HTMLForms;	(** portable *)
 	IMPORT Objects, Display, Fonts, Texts, Oberon, Display3, Attributes, Gadgets, Lists, Strings, Links, HTMLDocs, TextGadgets,
 		HyperDocs;
 
@@ -197,7 +196,12 @@ MODULE HTMLForms;
 					HTMLDocs.AddFormObj(P, curForm, obj, "@RESET", FALSE, TRUE)
 ELSIF (typ = "SUBMIT") OR (typ = "IMAGE") THEN
 					obj := Gadgets.CreateObject("BasicGadgets.NewButton");
-					Attributes.SetString(obj, "Cmd", "HTMLDocs.SubmitQuery");
+attr := HTMLDocs.FindAttr(attrs, "CMD");
+IF attr # NIL THEN
+	Attributes.SetString(obj, "Cmd", attr.value)
+ELSE
+	Attributes.SetString(obj, "Cmd", "HTMLDocs.SubmitQuery")
+END;
 					Attributes.SetString(obj, "Query", "FORM");
 					obj2 := HTMLDocs.FindFormObj(curForm, "@METHOD");
 					Attributes.GetString(obj2, "Value", str);
@@ -289,7 +293,7 @@ ELSIF (typ = "SUBMIT") OR (typ = "IMAGE") THEN
 			val, i: LONGINT;
 			list: Lists.List;
 			item: Lists.Item;
-			litem:HTMLDocs.Item;
+			litem: HTMLDocs.Item;
 			curForm: HTMLDocs.Form;
 			str: ARRAY 8 OF CHAR;
 			done: BOOLEAN;

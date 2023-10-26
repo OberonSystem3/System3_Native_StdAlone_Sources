@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,19 +13,19 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Math;
+MODULE Math;	(** portable *)
 
-(* Math.Functions of the 387 *)
-(* ARD, 21. 9. 92 *)
-(* ARD, 10. 6. 94 diff between sin and cos of 386 and 486??? --> 1.0 not on tos *)
-(* pm 29.01.96  modifications for OP2 compiler *)
-
+(**
+	Commonly needed Math for REALs.
+*)
 
 IMPORT S := SYSTEM, Kernel;
 
-CONST e* =    2.7182818285;
+CONST
+	e* = 2.7182818284590452354E0;
+	pi* = 3.14159265358979323846E0;
 
-VAR pi*: REAL;
+VAR
 		(* sqrt: *) c11, c12, c13, c14, c15: REAL;
 		(* exp: *) c21, c22, c23, c24: REAL;
 		(* ln: *) c41, c42, c43, c44, c45: REAL;
@@ -34,21 +33,21 @@ VAR pi*: REAL;
 		(* atan: *) c51, s51, c52, s52, p50, q52, q51, q50: REAL;
 
 PROCEDURE -Sin(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 004H, 024H 	(* FLD [ESP] *)
 	DB 0D9H, 0FEH	(* FSIN *)
 	DB 058H	(* POP EAX *)
 END Sin;
 
 PROCEDURE -Cos(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 004H, 024H	(* FLD [ESP] *)
 	DB 0D9H, 0FFH	(* FCOS *)
 	DB 058H	(* POP EAX *)
 END Cos;
 
 PROCEDURE -Arctan(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 004H, 024H	(* FLD [ESP] *)
 	DB 0D9H, 0E8H	(* FLD1 *)
 	DB 0D9H, 0F3H	(* FPATAN ST(1)/ST(0) *)
@@ -56,14 +55,14 @@ CODE
 END Arctan;
 
 PROCEDURE -Sqrt(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 004H, 024H	(* FLD [ESP] *)
 	DB 0D9H, 0FAH	(* FSQRT ST(0) *)
 	DB 058H	(* POP EAX *)
 END Sqrt;
 
 PROCEDURE -Ln(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 0E8H	(* FLD1 *)
 	DB 0D9H, 0EAH 	(* FLDL2E *)
 	DB 0DEH, 0F9H	(* FDIVP ST(1)/ST(0) *)
@@ -72,13 +71,8 @@ CODE
 	DB 058H	(* POP EAX *)
 END Ln;
 
-PROCEDURE -Pi():REAL;
-CODE
-	DB 0D9H, 0EBH	(* FLDPI *)
-END Pi;
-
 PROCEDURE -Exp(x: REAL):REAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 004H, 24H	(* FLD [ESP] *)
 	DB 0D9H, 0EAH	(* FLDL2E *)
 	DB 0DEH, 0C9H	(* FMULP ST(1), ST(0) *)
@@ -201,7 +195,6 @@ BEGIN
 END exp;
 
 BEGIN 
-	IF Kernel.copro THEN pi := Pi() ELSE S.PUT(S.ADR(pi), 40490FD9H) (*3.1415926535*) END;
 	S.PUT(S.ADR(c11), 03EAFBA81H);
 	S.PUT(S.ADR(c12), 03F665222H);
 	S.PUT(S.ADR(c13), 0BEBA6391H);

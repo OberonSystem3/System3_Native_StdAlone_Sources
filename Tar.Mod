@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,10 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Tar;	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified for S3 C.Hoffmann, 21.9.95 *)
+MODULE Tar;	(** portable *)	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified for S3 C.Hoffmann, 21.9.95 *)
 
-	IMPORT Gadgets, Desktops, Display, Documents,  Texts, TextDocs, TextFrames, TextGadgets,
-		Oberon, Objects, Files, Out;
+	IMPORT Gadgets, Desktops, Display, Documents,  Texts, TextDocs, TextGadgets, Objects, Files, Out;
 
 	CONST
 		Menu = "Tar.Extract Tar.ExtractAll";
@@ -65,7 +63,12 @@ MODULE Tar;	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified fo
 		VAR i: INTEGER;
 	BEGIN
 		i := 124; size := 0;
-		WHILE buf[i] >= "0" DO size := size*8 + ORD(buf[i]) - ORD("0"); INC(i) END;
+		REPEAT
+			IF ("0" <= buf[i]) & (buf[i] <= "9") THEN
+				size := size*8 + ORD(buf[i]) - ORD("0")
+			END;
+			INC(i)
+		UNTIL i = 136
 	END ExtractSize;
 	
 	PROCEDURE ReadEntries(fileName: ARRAY OF CHAR; VAR F: Files.File; VAR entries: Entry);
@@ -114,9 +117,9 @@ MODULE Tar;	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified fo
 				ELSE Files.WriteBytes(W, buf, size); size := 0
 				END;
 			END;
-			Files.Register(dest); Out.String(" "); Out.Int(e.size, 10); Out.Ln;
+			Files.Register(dest); Out.String(" "); Out.Int(e.size, 10); Out.Ln
 		ELSE
-			Out.String("  failed")
+			Out.String("  failed"); Out.Ln
 		END
 	END GetFile;
 	
@@ -124,19 +127,17 @@ MODULE Tar;	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified fo
 PROCEDURE DocHandler*(D: Objects.Object; VAR M: Objects.ObjMsg);	(** Handle  D: Document *)
 BEGIN
 	WITH D: Documents.Document DO
-		IF M IS Objects.AttrMsg THEN
-			WITH M: Objects.AttrMsg DO
-				IF (M.id = Objects.get) THEN
-					IF (M.name = "Gen") THEN
-						M.class:= Objects.String; M.res:= 0; M.s:= "Tar.NewDoc";	(* ???? *)
-					ELSIF (M.name = "Menu") THEN
-						M.class := Objects.String; M.res:= 0; M.s := Menu
-					ELSIF (M.name = "Adaptive") THEN
-						M.class := Objects.Bool; M.res:= 0; M.b := TRUE
-					END
-				END;
-				IF (M.res < 0) THEN Documents.Handler(D,M); END;
-			END;
+		IF M IS Objects.LinkMsg THEN
+			WITH M: Objects.LinkMsg DO
+				IF (M.id = Objects.get) & (M.name = "DeskMenu") THEN
+					M.obj := Desktops.NewMenu(Menu); M.res := 0
+				ELSIF (M.id = Objects.get) & (M.name = "SystemMenu") THEN
+					M.obj := Desktops.NewMenu(Menu); M.res := 0
+				ELSIF (M.id = Objects.get) & (M.name = "UserMenu") THEN
+					M.obj := Desktops.NewMenu(Menu); M.res := 0
+				ELSE Documents.Handler(D, M)
+				END
+			END
 		ELSE
 			Documents.Handler(D,M);
 		END;
@@ -209,7 +210,3 @@ END NewDoc;
 	END ExtractAll;
 
 END Tar.
-
-System.Free Tar ~
-Desktops.OpenDoc ProjObV4.tar(Tar.NewDoc)
-

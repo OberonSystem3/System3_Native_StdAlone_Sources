@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Books; (* ejz, further hacked by jm *)
+MODULE Books;	(** portable *) (* ejz, further hacked by jm *)
 	IMPORT Books0, Panels, Objects, Documents, Gadgets, Display, Display3, TextGadgets, TextGadgets0, BasicGadgets,
 		Texts, Fonts, Oberon, Modules, Desktops, Effects;
 
@@ -267,9 +266,8 @@ MODULE Books; (* ejz, further hacked by jm *)
 			obj: Objects.Object;
 			P, F0: Panel;
 			T, T0, Tn: TGFrame;
-			butH, x, y, w, h: INTEGER;
+			butH, x, y, h: INTEGER;
 			R: Display3.Mask;
-			newP: BOOLEAN;
 			tl, tl2: Books0.TextList;
 			PROCEDURE MoveButton(name: ARRAY OF CHAR; dX, dY, nH: INTEGER);
 				VAR msg: Display.ModifyMsg;
@@ -362,7 +360,6 @@ MODULE Books; (* ejz, further hacked by jm *)
 								GetNote(P, Tn);
 								IF (T # NIL) & (Tn # NIL) THEN
 									IF (twoRow IN P.options) = (M.W < (8*buttonW-2)) THEN
-										newP := FALSE;
 										MoveButton("prev", 0, 0, M.H);
 										MoveButton("next", 0, 0, M.H);
 										MoveButton("cont", 0, 0, M.H);
@@ -372,7 +369,6 @@ MODULE Books; (* ejz, further hacked by jm *)
 										MoveButton("down", 0, 0, M.H);
 										MoveButton("up", 0, 0, M.H)
 									ELSE
-										newP := TRUE;
 										IF M.W < (8*buttonW-2) THEN
 											INCL(P.options, twoRow)
 										ELSE
@@ -428,7 +424,7 @@ MODULE Books; (* ejz, further hacked by jm *)
 							WITH M: Display.DisplayMsg DO
 								Panels.PanelHandler(F, M);
 								IF M.device = Display.screen THEN
-									x := M.x + F.X; y := M.y + F.Y; w := F.W; h := F.H;
+									x := M.x + F.X; y := M.y + F.Y; h := F.H;
 									Gadgets.MakeMask(F, x, y, M.dlink, R);
 									Display3.ReplConst(R, Display3.white, x, y, 1, h, Display.replace)
 								END

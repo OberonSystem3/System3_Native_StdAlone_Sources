@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -21,9 +20,11 @@ of the source code to another platform with the name OBERON. *)
 	
 	
 	Diese Software basiert auf JPEG Software der "Independent JPEG Group"
+	
+	12.12.95 / tk	bit ordering problem eliminated
 *)
 
-MODULE JPEG;
+MODULE JPEG;	(** portable *)
 
 IMPORT 
 	F:=Files, T:=Texts, P:=Pictures, D:=Display, BIT, Files, Oberon, Objects, Pictures;
@@ -960,7 +961,7 @@ VAR
 		
 		(*IF (c # 0FFX) OR (c2 # MSOI) THEN
 			ErrMsg("no MSOI marker", 1); RETURN FALSE
-		END;*)		
+		END;*)
 		cInfo.unreadMarker := c2;
 					
 		RETURN TRUE;	
@@ -1086,11 +1087,11 @@ VAR
 			END;
 
 			cInfo.unreadMarker:=0X;
-			
+
 			IF err # 0 THEN RETURN JPEGSUSPENDED END
 		END (* Loop *);	
 	END readMarkers;
-	
+
 	(* Lesen eines Restart Markers vom InputFile, falls der Marker nicht vorhanden ist, 
 		werden Rettungsmassnahmen zur weiteren Dekodierung getroffen *)
 	PROCEDURE resyncToRestart(cInfo: CInfoPtr):BOOLEAN;
@@ -1603,7 +1604,7 @@ VAR
 			compptr := cInfo.curCompInfo[ci];
 			qtblno := compptr.quantTblNo;
 			IF (qtblno < 0) OR (qtblno >= NUMQUANTTBLS) OR (cInfo.quantTbl[qtblno] = NIL) THEN
-				ErrMsg("bad qtbl index", 34); RETURN 
+				ErrMsg("bad qtbl index", 34); RETURN
 			END;
 			qtbl := cInfo.quantTbl[qtblno];
 			IF cInfo.selectIDCT = Scale THEN
@@ -2360,7 +2361,7 @@ VAR
 		NEW(cInfo.cconvert);
 		IF (cInfo.jpegColorSpace # JCSRGB) & (cInfo.jpegColorSpace # JCSYCBCR) & 
 			(cInfo.jpegColorSpace # JCSGRAYSCALE)  THEN
-			ErrMsg("bad jpegColorSpace", 41);  RETURN
+			ErrMsg("bad jpegColorSpace", 41); RETURN
 		END;
 		IF cInfo.outColorSpace = JCSGRAYSCALE THEN
 			cInfo.outColorComponents := 1;
@@ -3763,7 +3764,7 @@ VAR
 				T.WriteLn(W);
 				T.Append(Oberon.Log,W.buf); *)
 			ELSE
-				NEW(pict);  Decode(fileIn,pict,idct,factor,dither,colorMode);
+				NEW(pict); Decode(fileIn,pict,idct,factor,dither,colorMode);
 		
 				IF pict # NIL THEN
 					fileOut:=F.New(outName);
@@ -3785,7 +3786,7 @@ VAR
 		WITH obj: Pictures.Picture DO
 			IF msg IS Objects.AttrMsg THEN
 				WITH msg: Objects.AttrMsg DO 
-					IF (msg.id = Objects.get) & (msg.name = "Gen") THEN 
+					IF (msg.id = Objects.get) & (msg.name = "Gen") THEN
 						msg.class := Objects.String; COPY("Pictures.NewPicture", msg.s); msg.res:=0 
 					END;
 				END;
@@ -3926,7 +3927,3 @@ BEGIN
 	T.OpenWriter(W);
 
 END JPEG.
-
-JPEG.Pict \o train.jpg t.Pict
-
-Bad1.jpg

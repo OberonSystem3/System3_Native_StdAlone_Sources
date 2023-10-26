@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
+MODULE Splines;	(** portable *)  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 	IMPORT Display, Files, Printer, Oberon, Graphics, GraphicFrames;
 
 	CONST N = 20;
@@ -32,8 +31,8 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 
 	VAR method*: Graphics.Method;
 
-	PROCEDURE mark(f: GraphicFrames.Frame; col, x0, y0: INTEGER; sp: Spline);
-		VAR i, n, x, y: INTEGER;
+	PROCEDURE mark(col, x0, y0: INTEGER; sp: Spline);
+		VAR i, n: INTEGER;
 	BEGIN i := 1;
 		IF sp.open THEN n := sp.n ELSE n := sp.n-1 END ;
 		WHILE i < n DO
@@ -41,13 +40,13 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 		END
 	END mark;
 
-	PROCEDURE markOrg(f: GraphicFrames.Frame; col, x, y: INTEGER; sp: Spline);
+	PROCEDURE markOrg(col, x, y: INTEGER; sp: Spline);
 	BEGIN INC(x, sp.u[0]); INC(y, sp.v[0]);
 		Display.ReplConst(col, x, y, 4, 4, 0)
 	END markOrg;
 
-	PROCEDURE ShowPoly(f: GraphicFrames.Frame; col: INTEGER; VAR p, q: Poly; lim: REAL);
-		VAR t: REAL; x, y: LONGINT;
+	PROCEDURE ShowPoly(col: INTEGER; VAR p, q: Poly; lim: REAL);
+		VAR t: REAL;
 	BEGIN t := 0;
 		REPEAT
 			Display.Dot(col, SHORT(ENTIER(((p.a * t + p.b) * t + p.c) * t + p.d)),
@@ -114,7 +113,7 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 		d[i] := d[0]
 	END ClosedSpline;
 
-	PROCEDURE CompSpline(f: GraphicFrames.Frame; col, x0, y0: INTEGER; sp: Spline);
+	PROCEDURE CompSpline(col, x0, y0: INTEGER; sp: Spline);
 		VAR i, n: INTEGER; dx, dy, ds: REAL;
 			x, xd, y, yd, s: RealVector;
 			p, q: PolyVector;
@@ -147,7 +146,7 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 		p[i].t := s[i]; q[i].t := s[i];
 		(*display polynomials*)
 		i := 0;
-		WHILE i < n-1 DO ShowPoly(f, col, p[i], q[i], p[i+1].t - p[i].t); INC(i) END
+		WHILE i < n-1 DO ShowPoly(col, p[i], q[i], p[i+1].t - p[i].t); INC(i) END
 	END CompSpline;
 
 	PROCEDURE New*;
@@ -169,12 +168,12 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 				IF M.col = Display.BG THEN col := obj.col ELSE col := M.col END ;
 				WITH obj: Spline DO
 					IF M.mode = 0 THEN
-						IF obj.selected THEN mark(f, Display.FG, x, y, obj) END ;
-						CompSpline(f, col, x, y, obj); markOrg(f, Display.FG, x, y, obj)
-					ELSIF M.mode = 1 THEN mark(f, Display.FG, x, y, obj)
-					ELSIF M.mode = 2 THEN mark(f, f.col, x, y, obj); markOrg(f, Display.FG, x, y, obj)
-					ELSE mark(f, f.col, x, y, obj);
-						CompSpline(f, f.col, x, y, obj); markOrg(f, f.col, x, y, obj)
+						IF obj.selected THEN mark(Display.FG, x, y, obj) END ;
+						CompSpline(col, x, y, obj); markOrg(Display.FG, x, y, obj)
+					ELSIF M.mode = 1 THEN mark(Display.FG, x, y, obj)
+					ELSIF M.mode = 2 THEN mark(f.col, x, y, obj); markOrg(Display.FG, x, y, obj)
+					ELSE mark(f.col, x, y, obj);
+						CompSpline(f.col, x, y, obj); markOrg(f.col, x, y, obj)
 					END
 				END;
 				Display.ResetClip
@@ -215,7 +214,7 @@ MODULE Splines;  (*NW 3.11.90 / 5.7.93 / tk ported to System 3 7.6.95*)
 	END Write;
 
 	PROCEDURE Print(obj: Graphics.Object; x, y: INTEGER);
-		VAR i, j, n, open: INTEGER;
+		VAR i, n, open: INTEGER;
 			u, v: ARRAY N OF INTEGER;
 	BEGIN
 		WITH obj: Spline DO

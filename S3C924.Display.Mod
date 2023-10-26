@@ -14,29 +14,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Display;	
-(* Type: 86C924					*)
-(* Date: 23.4.93					*)
-(* Author: A. R. Disteli			*)
-(* Modified for Native Oberon: muller 25.07.95 *)
-(* muller 08.02.96, ported to Native Oberon 2.05 *)
-(* pjm 28.08.96, config *)
-
-(*	Aenderungen gegenüber der	Version für den 86C805:		(cs/17.05.93)	*)
-
-(*	-	PROCEDURE WaitFIFOempty:																	*)
-(*		Statt immer auf eine leere FIFO zu warten, wird nur auf die benötigte	*)
-(*		Anzahl freier Plätze gewartet. Aus Performancegründen wurden die 		 *)
-(*		8 Fälle ausformuliert. (Dies erspart u.a. das Erstellen der Abfragemaske) *)
-
-(*	-	fehlende WaitFIFO nachgetragen:																*)
-(*		An diversen Stellen (v.a. in Schleifen) wurden fehlende Waits eingefügt. *)
-
-(*	-	Initialisierung des Grafikmodus:																	*)
-(*		Statt des VESA-Modus 105H und anschliessender S3-Aktivierung von		*)
-(*		Hand wird direkt der S3-Modus 205H eingeschaltet.								 *)
-
-
+MODULE Display;	(* 86C924 ard, pjm *)
 
 	IMPORT SYSTEM, Objects, Kernel;
 	
@@ -52,6 +30,8 @@ MODULE Display;
 		get* = 0; set* = 1; reset* = 2; (*SelectMsg id*)
 		drop* = 0; integrate* = 1; (*ConsumeMsg id*)
 		
+		unknown* = 0; index8* = 8; color555* = 16; color565* = 17; color664* = 18; color888* = 24; color8888* = 32;
+
 		(* S3 Constants *)
 		index = 3D4H;
 		data = 3D5H;
@@ -78,8 +58,13 @@ MODULE Display;
 		MFcont = 0BEE8H;
 		pixTrans = 0E2E8H;
 
-	TYPE Pattern* = LONGINT;
-			PatternPtr = POINTER TO RECORD w, h, pixmap: SHORTINT END;
+	TYPE Color* = LONGINT;
+	
+			Pattern* = LONGINT;
+			PatternPtr = POINTER TO RECORD
+				w, h: CHAR;
+				pixmap: ARRAY 8192 OF CHAR
+			END;
 			List = POINTER TO ListDesc;
 			ListDesc = RECORD
 				next: List;
@@ -143,7 +128,7 @@ MODULE Display;
 		Height*: (* map hight*)
 			INTEGER;
 			
-		arrow*, star*, cross*, downArrow*, hook*: Pattern;
+		arrow*, star*, cross*, downArrow*, hook*,
 		grey0*, grey1*, grey2*, ticks*, solid*: Pattern;
 
 		Broadcast*: MsgProc;
@@ -156,8 +141,12 @@ MODULE Display;
 		pixctrl1, pixctrl2, copycmd: LONGINT;	
 		mask: INTEGER;
 		
+		depth: INTEGER;
+		palette: ARRAY 256 OF LONGINT;
+
+		
 	PROCEDURE WaitFIFO1;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab1:
 		IN AX, DX
@@ -166,7 +155,7 @@ lab1:
 	END WaitFIFO1;
 	
 	PROCEDURE WaitFIFO2;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab2:
 		IN AX, DX
@@ -175,7 +164,7 @@ lab2:
 	END WaitFIFO2;
 	
 	PROCEDURE WaitFIFO3;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab3:
 		IN AX, DX
@@ -184,7 +173,7 @@ lab3:
 	END WaitFIFO3;
 	
 	PROCEDURE WaitFIFO4;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab4:
 		IN AX, DX
@@ -193,7 +182,7 @@ lab4:
 	END WaitFIFO4;
 	
 	PROCEDURE WaitFIFO5;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab5:
 		IN AX, DX
@@ -202,7 +191,7 @@ lab5:
 	END WaitFIFO5;
 	
 	PROCEDURE WaitFIFO6;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab6:
 		IN AX, DX
@@ -211,7 +200,7 @@ lab6:
 	END WaitFIFO6;
 	
 	PROCEDURE WaitFIFO7;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab7:
 		IN AX, DX
@@ -220,7 +209,7 @@ lab7:
 	END WaitFIFO7;
 	
 	PROCEDURE WaitFIFO8;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV DX, 09AE8H
 lab8:
 		IN AX, DX
@@ -239,14 +228,15 @@ lab8:
 	PROCEDURE max (i, j: INTEGER): INTEGER; BEGIN IF i >= j THEN RETURN i ELSE RETURN j END END max;
 	PROCEDURE min (i, j: INTEGER): INTEGER; BEGIN	IF i >= j THEN RETURN j ELSE RETURN i END END min;
 		
-	PROCEDURE Map*(X: INTEGER): LONGINT;
+	PROCEDURE Map*(x: LONGINT): LONGINT;
 	BEGIN RETURN 0A0000H	(* Start of the video RAM *)
 	END Map;
 	
-	PROCEDURE AdjustClip*(X, Y, W, H: INTEGER);
+	PROCEDURE AdjustClip*(x, y, w, h: LONGINT);
 	VAR right, top, left, bottom: INTEGER;
 	BEGIN 
-		right := X + W; top := Y + H; clipx := max(clipx, X); clipy := max(clipy, Y); 
+		right := SHORT(x + w); top := SHORT(y + h);
+		clipx := max(clipx, SHORT(x)); clipy := max(clipy, SHORT(y)); 
 		clipright := min(right, clipright); cliptop := min(top, cliptop);
 		top := height-1-cliptop; left := clipx; bottom := height-1-clipy; right := clipright-1;
 		IF top < 0 THEN top := 0 ELSIF top > height-1 THEN top := height-1 END;
@@ -261,8 +251,8 @@ lab8:
 	END AdjustClip;
 
 	PROCEDURE GetDim*(pat: Pattern; VAR w, h: INTEGER);
-	VAR s: SHORTINT;
-	BEGIN SYSTEM.GET(pat, s); w := s; SYSTEM.GET(pat+1, s); h := s; 
+	VAR s: CHAR;
+	BEGIN SYSTEM.GET(pat, s); w := ORD(s); SYSTEM.GET(pat+1, s); h := ORD(s); 
 	END GetDim;
 
 	PROCEDURE ResetClip*;
@@ -277,12 +267,12 @@ lab8:
 		SYSTEM.PORTOUT(MFcont, 4000H + width-1);	(* right *)
 	END ResetClip;
 	
-	PROCEDURE SetClip*(x, y, w, h: INTEGER);
+	PROCEDURE SetClip*(x, y, w, h: LONGINT);
 	VAR right, top, left, bottom: INTEGER;
 	BEGIN	
-		clipright := x+w;
-		cliptop := y+h;
-		clipy := y; clipx := x;
+		clipright := SHORT(x+w);
+		cliptop := SHORT(y+h);
+		clipy := SHORT(y); clipx := SHORT(x);
 		top := height-1-cliptop; left := clipx; bottom := height-1-clipy; right := clipright-1;
 		WaitFIFO4;
 		SYSTEM.PORTOUT(MFcont, 1000H + top);	(* top *)
@@ -296,9 +286,10 @@ lab8:
 		x := clipx; y := clipy; w := clipright - clipx; h := cliptop - clipy
 	END GetClip;
 
-	PROCEDURE SetColor*(col, red, green, blue: INTEGER);	(* 0 <= col, red, green, blue < 256 *)
+	PROCEDURE SetColor*(col: Color; red, green, blue: LONGINT);	(* 0 <= col, red, green, blue < 256 *)
 	VAR ch: CHAR;
 	BEGIN
+		palette[col] := ASH(ASH(red, 8) + green, 8) + blue;
 		IF (col = 0) OR (col = 15) THEN	(* either 0 or 15 must be black.  set the border to black. *)
 				(* note: the S3 uses the palette for the border colour too *)
 			SYSTEM.PORTIN(3DAH, ch);
@@ -311,64 +302,66 @@ lab8:
 		red := (red + 4) DIV 4 -1;
 		green := (green + 4) DIV 4 -1;
 		blue := (blue + 4) DIV 4 -1;
-		SYSTEM.PORTOUT(3C8H, SHORT(col));
-		SYSTEM.PORTOUT(3C9H, SHORT(red));
-		SYSTEM.PORTOUT(3C9H, SHORT(green));
-		SYSTEM.PORTOUT(3C9H, SHORT(blue))
+		SYSTEM.PORTOUT(3C8H, CHR(col));
+		SYSTEM.PORTOUT(3C9H, CHR(red));
+		SYSTEM.PORTOUT(3C9H, CHR(green));
+		SYSTEM.PORTOUT(3C9H, CHR(blue))
 	END SetColor;
 
-	PROCEDURE GetColor*(col: INTEGER; VAR red, green, blue: INTEGER);
-	VAR help: CHAR;
+	PROCEDURE GetColor*(col: Color; VAR red, green, blue: INTEGER);
 	BEGIN
-		SYSTEM.PORTOUT(3C7H, SHORT(col));
-		SYSTEM.PORTIN(3C9H, help); red := ORD(help);
-		SYSTEM.PORTIN(3C9H, help); green := ORD(help);
-		SYSTEM.PORTIN(3C9H, help); blue := ORD(help);
-		red := red * 4 + red DIV 16;
-		green := green * 4 + green DIV 16;
-		blue := blue * 4 + blue DIV 16
-	 END GetColor;
+		IF col >= 0 THEN col := palette[col] END;
+		red := SHORT(ASH(col, -16) MOD 256);
+		green := SHORT(ASH(col, -8) MOD 256);
+		blue := SHORT(col MOD 256)
+	END GetColor;
 	
-	PROCEDURE Dot*(col, x, y, mode: INTEGER);
+	PROCEDURE RGB*(red, green, blue: LONGINT): Color;
+	BEGIN
+		RETURN MIN(LONGINT) + ASH(red, 16) + ASH(green, 8) + blue
+	END RGB;
+
+	PROCEDURE Dot*(col: Color; x, y, mode: LONGINT);
 	BEGIN
 		y := Height-1-y; 
 		WaitFIFO7;
 		IF mode = invert THEN SYSTEM.PORTOUT(FGmix, LONG(25H)) ELSE SYSTEM.PORTOUT(FGmix, LONG(27H)) END;
-		SYSTEM.PORTOUT(FGcol, col);
+		SYSTEM.PORTOUT(FGcol, SHORT(col));
 		SYSTEM.PORTOUT(MFcont, SHORT(pixctrl1));
-		SYSTEM.PORTOUT(curX, x);
-		SYSTEM.PORTOUT(curY, y);
+		SYSTEM.PORTOUT(curX, SHORT(x));
+		SYSTEM.PORTOUT(curY, SHORT(y));
 		SYSTEM.PORTOUT(cmdReg, 121BH);
 		SYSTEM.PORTOUT(shortStroke, LONG(10H));
 	END Dot;
 
-	PROCEDURE CopyBlock*(SX, SY, W, H, DX, DY, mode: INTEGER);
+	PROCEDURE CopyBlock*(sx, sy, w, h, dx, dy, mode: LONGINT);
 	VAR xpos, ypos: INTEGER;
 	BEGIN
-		IF (W > 0) & (H > 0) THEN
+		IF (w > 0) & (h > 0) THEN 
 			xpos := 0; ypos := 0; 
-			IF SY < DY THEN INC(SY, H-1); INC(DY, H-1); ypos := 128 END;
-			IF SX < DX THEN INC(SX, W-1); INC(DX, W-1) ELSE xpos := 32 END;
-			SY := Height - 1 - SY; DY := Height - 1 - DY;
-			DEC(W); DEC(H); 
+			IF sy < dy THEN INC(sy, h-1); INC(dy, h-1); ypos := 128 END;
+			IF sx < dx THEN INC(sx, w-1); INC(dx, w-1) ELSE xpos := 32 END;
+			sy := Height - 1- sy; dy := Height -1- dy;
+			DEC(w); DEC(h); 
 			WaitFIFO1;
 			IF mode = invert THEN SYSTEM.PORTOUT(FGmix, LONG(65H)) ELSE SYSTEM.PORTOUT(FGmix, LONG(67H)) END;
 			WaitFIFO8;
 			SYSTEM.PORTOUT(MFcont, SHORT(pixctrl1));
-			SYSTEM.PORTOUT(curX, SX);
-			SYSTEM.PORTOUT(curY, SY);
-			SYSTEM.PORTOUT(diaStep, DX);
-			SYSTEM.PORTOUT(axStep, DY);
-			SYSTEM.PORTOUT(majAxis, W);
-			SYSTEM.PORTOUT(MFcont, H);
+			SYSTEM.PORTOUT(curX, SHORT(sx));
+			SYSTEM.PORTOUT(curY, SHORT(sy));
+			SYSTEM.PORTOUT(diaStep, SHORT(dx));
+			SYSTEM.PORTOUT(axStep, SHORT(dy));
+			SYSTEM.PORTOUT(majAxis, SHORT(w));
+			SYSTEM.PORTOUT(MFcont, SHORT(h));
 			SYSTEM.PORTOUT(cmdReg, SHORT(copycmd) + xpos + ypos)
 		END
 	END CopyBlock;
 
-	PROCEDURE SetMode*(X: INTEGER; s: SET);
-	BEGIN END SetMode;
+	PROCEDURE SetMode*(x: LONGINT; s: SET);
+	BEGIN
+	END SetMode;
 	
-	PROCEDURE CopyPattern*(col: INTEGER; pat: LONGINT; X, Y, mode: INTEGER);
+	PROCEDURE CopyPattern*(col: Color; pat: Pattern; x, y, mode: LONGINT);
 	VAR width, height: SHORTINT; 
 			diastep, axstep, errterm, bit16: INTEGER; 
 			bit8: CHAR; bit24, bit32: SET;
@@ -380,13 +373,13 @@ lab8:
 		axstep := 0;
 		diastep := -2*width;
 		errterm := -width-1;
-		INC(X, LONG(width-1)); 
-		Y := Height-1-Y;
+		INC(x, LONG(LONG(width-1))); 
+		y := Height-1-y;
 		WaitFIFO8; 
 		IF mode = invert THEN SYSTEM.PORTOUT(FGmix, LONG(25H)); SYSTEM.PORTOUT(BGmix, LONG(3H)) 
 		ELSIF mode = paint THEN SYSTEM.PORTOUT(FGmix, LONG(27H)); SYSTEM.PORTOUT(BGmix, LONG(3H))
 		ELSE SYSTEM.PORTOUT(FGmix, LONG(27H)); SYSTEM.PORTOUT(BGmix, LONG(1H)) END;
-		SYSTEM.PORTOUT(FGcol, col);
+		SYSTEM.PORTOUT(FGcol, SHORT(col));
 		SYSTEM.PORTOUT(MFcont, SHORT(pixctrl2));
 		SYSTEM.PORTOUT(majAxis, LONG(width)-1);
 		SYSTEM.PORTOUT(diaStep, diastep);
@@ -396,21 +389,21 @@ lab8:
 			WHILE height > 0 DO DEC(height);
 				SYSTEM.GET(pat, bit8); INC(pat);
 				WaitFIFO4;
-				SYSTEM.PORTOUT(curX, X);
-				SYSTEM.PORTOUT(curY, Y);
+				SYSTEM.PORTOUT(curX, SHORT(x));
+				SYSTEM.PORTOUT(curY, SHORT(y));
 				SYSTEM.PORTOUT(cmdReg, 2313H);
 				SYSTEM.PORTOUT(pixTrans, ORD(bit8) * 100H);
-				DEC(Y);
+				DEC(y);
 			END
 		ELSIF width <= 16 THEN
 			WHILE height > 0 DO DEC(height);
 				SYSTEM.GET(pat, bit16); INC(pat, 2);
 				WaitFIFO4;
-				SYSTEM.PORTOUT(curX, X);
-				SYSTEM.PORTOUT(curY, Y);
+				SYSTEM.PORTOUT(curX, SHORT(x));
+				SYSTEM.PORTOUT(curY, SHORT(y));
 				SYSTEM.PORTOUT(cmdReg, 2313H);
 				SYSTEM.PORTOUT(pixTrans, bit16);
-				DEC(Y);
+				DEC(y);
 			END
 		ELSIF width <=24 THEN
 			WHILE height > 0 DO DEC(height);
@@ -418,132 +411,133 @@ lab8:
 				bit24 := SYSTEM.LSH(bit24 * {0 .. 23}, 8);
 				bit24 := SYSTEM.ROT(bit24, 16);
 				WaitFIFO5;
-				SYSTEM.PORTOUT(curX, X);
-				SYSTEM.PORTOUT(curY, Y);
+				SYSTEM.PORTOUT(curX, SHORT(x));
+				SYSTEM.PORTOUT(curY, SHORT(y));
 				SYSTEM.PORTOUT(cmdReg, 2313H);
 				SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, bit24*{0..15}));
 				bit24 := SYSTEM.ROT(bit24, 16);
 				SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, bit24*{0..15}));
-				DEC(Y);
+				DEC(y);
 			END
 		ELSE
 			WHILE height > 0 DO DEC(height);
 				SYSTEM.GET(pat, bit32); INC(pat, 4);
 				bit32 := SYSTEM.ROT(bit32, 16);
 				WaitFIFO5;
-				SYSTEM.PORTOUT(curX, X);
-				SYSTEM.PORTOUT(curY, Y);
+				SYSTEM.PORTOUT(curX, SHORT(x));
+				SYSTEM.PORTOUT(curY, SHORT(y));
 				SYSTEM.PORTOUT(cmdReg, 2313H);
 				SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, bit32*{0..15}));
 				bit32 := SYSTEM.ROT(bit32, 16);
 				SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, bit32*{0..15}));
-				DEC(Y);
+				DEC(y);
 			END
 		END;
 	END CopyPattern;
 
-	PROCEDURE ReplConst*(col, X, Y, W, H, mode: INTEGER);
+	PROCEDURE ReplConst*(col: Color; x, y, w, h, mode: LONGINT);
 	BEGIN
-		IF (W > 0) & (H > 0) THEN 
-			DEC(H); DEC(W); Y := Height-1-Y; 
+		IF (w > 0) & (h > 0) THEN 
+			DEC(h); DEC(w); y := Height-1-y; 
 			WaitFIFO8;
 			IF mode = invert THEN SYSTEM.PORTOUT(FGmix, LONG(25H)) ELSE SYSTEM.PORTOUT(FGmix, LONG(27H)) END;
-			SYSTEM.PORTOUT(FGcol, col);
+			SYSTEM.PORTOUT(FGcol, SHORT(col));
 			SYSTEM.PORTOUT(MFcont, SHORT(pixctrl1));
-			SYSTEM.PORTOUT(curX, X);
-			SYSTEM.PORTOUT(curY, Y);
-			SYSTEM.PORTOUT(majAxis, W);
-			SYSTEM.PORTOUT(minAxis, H);
+			SYSTEM.PORTOUT(curX, SHORT(x));
+			SYSTEM.PORTOUT(curY, SHORT(y));
+			SYSTEM.PORTOUT(majAxis, SHORT(w));
+			SYSTEM.PORTOUT(minAxis, SHORT(h));
 			SYSTEM.PORTOUT(cmdReg, 4073H)
 		END
 	END ReplConst;
 
-	PROCEDURE FillPattern*(col: INTEGER; pat: Pattern; pX, pY, X, Y, W, H, mode: INTEGER);
+	PROCEDURE FillPattern*(col: Color; pat: Pattern; px, py, x, y, w, h, mode: LONGINT);
 		VAR patwidth, patheight: SHORTINT; 
 			diastep, axstep, errterm, bit16: INTEGER; 
 			offset, W0, Y0, X0: INTEGER; 
 			pat0, bit32: LONGINT;
 			wth, hgt: INTEGER;
 	BEGIN 
-		IF (W > 0) & (H > 0) THEN 
+		IF (w > 0) & (h > 0) THEN 
 			SYSTEM.GET(pat, patwidth);
 			SYSTEM.GET(pat+1, patheight);
 			INC(pat, 2);
-			wth := (W+7) DIV 8 * 8;	(* nof complete bytes *)
+			wth := SHORT(w+7) DIV 8 * 8;	(* nof complete bytes *)
 			axstep := 0;
 			diastep := -2*wth;
 			errterm := -wth-1;
-			INC(X, W-1); 
-			Y0 := Y; X0 := X; Y := Height-1-Y;
+			INC(x, w-1); 
+			Y0 := SHORT(y); X0 := SHORT(x); y := Height-1-y;
 			WaitFIFO8;
 			IF mode = invert THEN SYSTEM.PORTOUT(FGmix, LONG(25H)); SYSTEM.PORTOUT(BGmix, LONG(3H)) 
 			ELSIF mode = paint THEN SYSTEM.PORTOUT(FGmix, LONG(27H)); SYSTEM.PORTOUT(BGmix, LONG(3H))
 			ELSE SYSTEM.PORTOUT(FGmix, LONG(27H)); SYSTEM.PORTOUT(BGmix, LONG(1H)) END;
-			SYSTEM.PORTOUT(FGcol, col);
+			SYSTEM.PORTOUT(FGcol, SHORT(col));
 			SYSTEM.PORTOUT(MFcont, SHORT(pixctrl2));
-			SYSTEM.PORTOUT(majAxis, W-1);
+			SYSTEM.PORTOUT(majAxis, SHORT(w-1));
 			SYSTEM.PORTOUT(diaStep, diastep);
 			SYSTEM.PORTOUT(axStep, axstep);
 			SYSTEM.PORTOUT(errTerm, errterm);
-			pat0 := pat; W0 := W;
-			hgt := patheight - (Y0 + pY) MOD patheight;
-			offset := (Y0 + pY) MOD patheight;
+			pat0 := pat; W0 := SHORT(w);
+			hgt := patheight - (Y0 + SHORT(py)) MOD patheight;
+			offset := (Y0 + SHORT(py)) MOD patheight;
 			IF patwidth = 16 THEN
 				pat := pat + 2*offset;
-				WHILE H > 0 DO 
-					W := (W + 7) DIV 8 * 4;
+				WHILE h > 0 DO 
+					w := (w + 7) DIV 8 * 4;
 					SYSTEM.GET(pat, bit16); INC(pat, 2);
-					bit16 := SYSTEM.ROT(bit16, pX-X0);
+					bit16 := SYSTEM.ROT(bit16, SHORT(px)-X0);
 					WaitFIFO3;
-					SYSTEM.PORTOUT(curX, X);
-					SYSTEM.PORTOUT(curY, Y);
+					SYSTEM.PORTOUT(curX, SHORT(x));
+					SYSTEM.PORTOUT(curY, SHORT(y));
 					SYSTEM.PORTOUT(cmdReg, 2313H);
-					WHILE W > 0 DO
+					WHILE w > 0 DO
 						WaitFIFO1;
 						SYSTEM.PORTOUT(pixTrans, bit16);
-						DEC(W,2);
+						DEC(w,2);
 					END;
-					DEC(Y);
-					DEC(H); DEC(hgt); W := W0;
+					DEC(y);
+					DEC(h); DEC(hgt); w := W0;
 					IF hgt <= 0 THEN hgt := patheight; pat := pat0 END;
 				END
 			ELSIF patwidth = 32 THEN
 				pat := pat + 4*offset;
-				WHILE H > 0 DO 
-					W := (W + 7) DIV 8 * 2;
+				WHILE h > 0 DO 
+					w := (w + 7) DIV 8 * 2;
 					SYSTEM.GET(pat, bit32); INC(pat, 4);
-					bit32 := SYSTEM.ROT(bit32, pX-X0+16);
+					bit32 := SYSTEM.ROT(bit32, SHORT(px)-X0+16);
 					WaitFIFO3;
-					SYSTEM.PORTOUT(curX, X);
-					SYSTEM.PORTOUT(curY, Y);
+					SYSTEM.PORTOUT(curX, SHORT(x));
+					SYSTEM.PORTOUT(curY, SHORT(y));
 					SYSTEM.PORTOUT(cmdReg, 2313H);
-					WHILE W > 0 DO
+					WHILE w > 0 DO
 						WaitFIFO2;
 						SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, bit32)*{0..15}));
 						bit32 := SYSTEM.ROT(bit32, 16);
 						SYSTEM.PORTOUT(pixTrans, SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, bit32)*{0..15}));
-						DEC(W,4)
+						DEC(w,4)
 					END;
-					DEC(Y);
-					DEC(H); DEC(hgt); W := W0;
+					DEC(y);
+					DEC(h); DEC(hgt); w := W0;
 					IF hgt <= 0 THEN hgt := patheight; pat := pat0 END
 				END
 			END
 		END
 	END FillPattern;
 	
-	PROCEDURE ReplPattern*(col: INTEGER; pat: Pattern; X, Y, W, H, mode: INTEGER);
-	BEGIN FillPattern(col, pat, 0, 0, X, Y, W, H, mode)
+	PROCEDURE ReplPattern*(col: Color; pat: Pattern; x, y, w, h, mode: LONGINT);
+	BEGIN
+		FillPattern(col, pat, 0, 0, x, y, w, h, mode)
 	END ReplPattern;
 
-	PROCEDURE NewPattern*(width, height: INTEGER; VAR image: ARRAY OF SET): Pattern;
-	VAR len, src, dest: LONGINT; i: INTEGER; p: PatternPtr; inter: SET;  pl: List;
-	BEGIN 
-		len := (width+7) DIV 8;
-		SYSTEM.NEW(p, 4+len*height); p.w := SHORT(width); p.h := SHORT(height);
-		src := SYSTEM.ADR(image); dest := SYSTEM.ADR(p.pixmap);
+	PROCEDURE NewPattern*(w, h: LONGINT; VAR image: ARRAY OF SET): Pattern;
+	VAR len, src, dest, i: LONGINT;  p: PatternPtr;  pl: List;
+	BEGIN
+		len := (w+7) DIV 8;
+		SYSTEM.NEW(p, 4+len*h);  p.w := CHR(w);  p.h := CHR(h);
+		src := SYSTEM.ADR(image[0]);  dest := SYSTEM.ADR(p.pixmap[0]);
 		i := 0;
-		WHILE i < height DO SYSTEM.MOVE(src, dest, len); INC(src, 4); INC(dest, len); INC(i) END;
+		WHILE i < h DO SYSTEM.MOVE(src, dest, len);  INC(src, 4);  INC(dest, len);  INC(i) END;
 		NEW(pl);  pl.pat := p;  pl.next := Pat;  Pat := pl;	(* put in list to avoid GC *)
 		RETURN SYSTEM.ADR(p.w)
 	END NewPattern;
@@ -703,46 +697,54 @@ lab8:
 		
 		image[0] := -{};
 		image[1] := -{};
-		solid := NewPattern(16, 2, image);
-		
+		image[2] := -{};
+		image[3] := -{};
+		image[4] := -{};
+		image[5] := -{};
+		image[6] := -{};
+		image[7] := -{};
+		solid := NewPattern(16, 8, image)
 	END CreatePatterns;
 	
-	PROCEDURE Depth*(X: INTEGER): INTEGER;
-	BEGIN RETURN 8 END Depth;
+	PROCEDURE Depth*(x: LONGINT): INTEGER;
+	BEGIN
+		RETURN depth
+	END Depth;
 	
-	PROCEDURE DisplayBlock*(B:LONGINT; DX, DY, W, H, SX, SY, mode:INTEGER);
+	PROCEDURE TrueColor*(x: LONGINT): BOOLEAN;
+	BEGIN
+		RETURN FALSE
+	END TrueColor;
+
+	PROCEDURE DisplayBlock*(adr, dx, dy, w, h, sx, sy, mode: LONGINT);
 	VAR BitmapWth, locW, locH: LONGINT;
-	CODE
+	CODE {SYSTEM.i386}
 		MOVSX EAX, Width
 		MOV locW[EBP], EAX	; locW := Width
 		
 		MOVSX EAX, Height
 		DEC EAX
-		DEC EAX
-		MOV locH[EBP], EAX	; locH := Height-2
+		MOV locH[EBP], EAX	; locH := Height-1
 		
-		MOVSX EAX, SY[EBP]
-		MOV DWORD SY[EBP], EAX
-		
-		MOV ESI, B[EBP]    		; address of bitmap descriptor
+		MOV ESI, adr[EBP]    		; address of bitmap descriptor
 		MOV EDI, 12[ESI]
 		MOV ESI, 8[ESI] 
 		MOV BitmapWth[EBP], ESI
-		MOVZX ECX, DY[EBP]
+		MOV ECX, dy[EBP]
 		IMUL ESI,ECX
-		MOVZX EBX, WORD 32[EBP]	; DX
+		MOV EBX, dx[EBP]
 		ADD ESI, EBX	
 		ADD ESI, EDI				; esi = source index register
 		MOV EDI, locW[EBP]
 		MOV EBX, locH[EBP]
 		DEC EBX										;!!!!
-		SUB EBX,DWORD SY[EBP]
+		SUB EBX,sy[EBP]
 		IMUL EDI,EBX 
-		MOVZX EBX, SX[EBP]
+		MOV EBX, sx[EBP]
 		ADD EDI, EBX				; edi = destination index register without VGAaddr
 		MOV EAX, locH[EBP]
-		SUB AX, SY[EBP]
-		MOV SY[EBP], AX
+		SUB EAX, sy[EBP]
+		MOV sy[EBP], EAX
 		
 		MOV DX, 9AE8H
 lab1:
@@ -769,19 +771,19 @@ contlab:
 		OUT DX, AX
 		
 		MOV DX, 086E8H
-		MOV AX, SX[EBP]
+		MOV AX, WORD sx[EBP]
 		OUT DX, AX
 		MOV DX, 082E8H
-		MOV AX, SY[EBP]
+		MOV AX, WORD sy[EBP]
 		OUT DX, AX
 		
 		MOV DX, 096E8H
-		MOV AX, W[EBP]
+		MOV AX, WORD w[EBP]
 		DEC AX
 		OUT DX, AX
 		
 		MOV DX, 0BEE8H
-		MOV AX, H[EBP]
+		MOV AX, WORD h[EBP]
 		DEC AX
 		OUT DX, AX
 		
@@ -792,7 +794,7 @@ contlab:
 		MOV DX, 0E2E8H
 		
 RowLoopR:
-		MOV CX, W[EBP]
+		MOV CX, WORD w[EBP]
 		INC CX
 		SHR CX, 1
 		PUSH ESI
@@ -805,27 +807,40 @@ lab2:
 		JNZ lab2
 		POP ESI
 		ADD ESI, BitmapWth[EBP]
-		DEC H[EBP]
+		DEC h[EBP]
 		JNZ RowLoopR
 DispEnd:
 	END DisplayBlock;
 	
-	PROCEDURE GetVal(str: ARRAY OF CHAR): LONGINT;
+	PROCEDURE TransferFormat*(x: LONGINT): LONGINT;
+	BEGIN
+		RETURN unknown
+	END TransferFormat;
+
+	PROCEDURE TransferBlock*(VAR buf: ARRAY OF CHAR;  ofs, stride, x, y, w, h, mode: LONGINT);
+	BEGIN
+		HALT(99)
+	END TransferBlock;
+	
+	PROCEDURE GetVal(str: ARRAY OF CHAR;  default: LONGINT): LONGINT;
 	VAR i: SHORTINT;  v, sgn: LONGINT;  s: ARRAY 10 OF CHAR;
 	BEGIN
 		Kernel.GetConfig(str, s);
-		v := 0;  i := 0;
-		WHILE s[i] # 0X DO v := v*10+(ORD(s[i])-48); INC(i) END;
+		IF s[0] = 0X THEN
+			v := default
+		ELSE
+			v := 0;  i := 0;
+			WHILE s[i] # 0X DO v := v*10+(ORD(s[i])-48); INC(i) END
+		END;
 		RETURN v
 	END GetVal;
 
 BEGIN
-	Width := SHORT(GetVal("DWidth"));
-	IF Width = 0 THEN Width := 1024 END;	(* assume 1024 if not specified *)
-	Height := SHORT(GetVal("DHeight"));
-	IF Height = 0 THEN Height := 768 END;	(* assume 768 if not specified *)
-	dmem := GetVal("DMem")*1024;
-	IF dmem = 0 THEN dmem := 1024*1024 END;	(* assume 1Mb if not specified *)
+	depth := SHORT(GetVal("Color", 1));	(* assume 1 if not specified *)
+	IF depth = 0 THEN depth := 1 ELSE depth := 8 END;
+	Width := SHORT(GetVal("DWidth", 1024));	(* assume 1024 if not specified *)
+	Height := SHORT(GetVal("DHeight", 768));	(* assume 768 if not specified *)
+	dmem := GetVal("DMem", 1024)*1024;	(* assume 1Mb if not specified *)
 	UBottom := Height - SHORT(dmem DIV Width) + 1;
 	Left:= 0; ColLeft:= 0; Bottom:= 0; 
 	Pat := NIL;

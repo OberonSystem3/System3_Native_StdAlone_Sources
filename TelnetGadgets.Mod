@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE TelnetGadgets;	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994*)
+MODULE TelnetGadgets;	(** portable *)	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994*)
 	IMPORT Kernel, Fonts, Display, Printer, Texts, Oberon, Objects, Terminals, TerminalGadgets, Gadgets, NetSystem, NetTools,
 		Strings, HyperDocs, Documents, Desktops, TextGadgets, TextDocs, Input, SYSTEM;
 
@@ -487,10 +486,8 @@ END SetUp;
 
 	PROCEDURE Send*;
 		VAR S: Texts.Scanner; F: TerminalGadgets.Frame; obj: Objects.Object;
-			doc: Documents.Document;
 	BEGIN
 		Texts.OpenScanner(S,Oberon.Par.text,Oberon.Par.pos); Texts.Scan(S);
-		doc := Desktops.CurDoc(Gadgets.context);
 		IF S.class = Texts.Name THEN obj := Gadgets.FindObj(Gadgets.context, S.s);
 			IF obj # NIL THEN F := obj(TerminalGadgets.Frame); Texts.Scan(S);
 				IF S.class = Texts.String THEN SendString(F.text, S.s) END
@@ -582,7 +579,7 @@ END SetUp;
 			print: ARRAY 2 OF CHAR;
 		PROCEDURE P(x: LONGINT): INTEGER;
 		BEGIN
-			RETURN SHORT((x * 10000 + Printer.Unit DIV 2) DIV Printer.Unit)
+			RETURN SHORT((x * Display.Unit + Printer.Unit DIV 2) DIV Printer.Unit)
 		END P;
 	BEGIN
 		print[1] := 0X;

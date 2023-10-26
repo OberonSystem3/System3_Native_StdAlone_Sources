@@ -14,14 +14,14 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE CD;	(* fbogsany 06.01.96, driver support based on Disk.Mod - pmuller 06.06.95 *)
+MODULE CD;	(** non-portable *)	(* fbogsany 06.01.96, driver support based on Disk.Mod - pmuller 06.06.95 *)
 (* changes for InitDriver - SA96, tburri 06.96 *)
 
 IMPORT Oberon, Texts, Kernel, Modules, SYSTEM, Out;
 
 CONST
 	DriveNum = 0;	(* change this if your drive is the second on this interface *)
-
+ 
 TYPE
 	Packet = ARRAY 12 OF CHAR;
 
@@ -41,19 +41,18 @@ VAR
 (* RepInWord - Block port input instruction. *)
 
 PROCEDURE RepInWord(port, buf, len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV EDX, port[EBP]
 	MOV EDI, buf[EBP]
 	MOV ECX, len[EBP]
 	CLD
-;;	REP INSW
-	DB 0F3H, 066H, 06DH	;; temp - error in assembler
+	REP INSW
 END RepInWord;
 
 (* RepOutWord - Block port output instruction. *)
 
 PROCEDURE RepOutWord(port, buf, len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV EDX, port[EBP]
 	MOV ESI, buf[EBP]
 	MOV ECX, len[EBP]
@@ -222,7 +221,7 @@ BEGIN
 	cmd[0] := 1BX;
 	cmd[1] := 1X;
 	cmd[4] := 2X;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Eject;
@@ -233,7 +232,7 @@ VAR cmd: Packet;
 	p: LONGINT;
 BEGIN
 	cmd[0] := 4EX;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Stop;
@@ -246,7 +245,7 @@ BEGIN
 	cmd[0] := 1BX;
 	cmd[1] := 1X;
 	cmd[4] := 3X;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Load;
@@ -258,7 +257,7 @@ VAR cmd: Packet;
 BEGIN
 	cmd[0] := 4BX;
 	cmd[8] := 0X;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Pause;
@@ -270,7 +269,7 @@ VAR cmd: Packet;
 BEGIN
 	cmd[0] := 4BX;
 	cmd[8] := 1X;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Resume;
@@ -284,7 +283,7 @@ BEGIN
 	cmd[0] := 43X;
 	FOR i := 1 TO 11 DO cmd[i] := 0X END;
 	cmd[8] := 4X;
-	IF AtapiCommand(controller, 0, 4) THEN
+	IF AtapiCommand(controller, DriveNum, 4) THEN
 		status := PacketCommand(controller, cmd);
 		cmd[0] := 0X;
 		cmd[1] := 0X;
@@ -306,7 +305,7 @@ BEGIN
 	FOR i := 2 TO 11 DO cmd[i] := 0X END;
 	cmd[6] := CHR(track);
 	cmd[8] := 0CX;
-	IF AtapiCommand(controller, 0, 12) THEN
+	IF AtapiCommand(controller, DriveNum, 12) THEN
 		status := PacketCommand(controller, cmd);
 		FOR i := 0 TO 11 DO cmd[i] := 0X END;
 		RepInWord(controller.port, SYSTEM.ADR(cmd), 6);
@@ -328,7 +327,7 @@ BEGIN
 	cmd[6] := CHR(min1);
 	cmd[7] := CHR(sec1);
 	cmd[8] := CHR(frame1);
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd)
 	END
 END Play;
@@ -339,7 +338,7 @@ VAR cmd: Packet;
 		p: LONGINT;
 BEGIN
 	cmd[0] := 25X;
-	IF AtapiCommand(controller, 0, 0) THEN
+	IF AtapiCommand(controller, DriveNum, 0) THEN
 		status := PacketCommand(controller, cmd);
 		RepInWord(controller.port, SYSTEM.ADR(cmd), 4);
 		len := ORD(cmd[4])*1000000H + ORD(cmd[5])*10000H + ORD(cmd[6])*100H + ORD(cmd[7])
@@ -356,7 +355,7 @@ BEGIN
 	cmd[0] := 3X;
 	FOR i := 1 TO 11 DO cmd[i] := 0X END;
 	cmd[4] := CHR(18);
-	IF AtapiCommand(controller, 0, 18) THEN
+	IF AtapiCommand(controller, DriveNum, 18) THEN
 		status := PacketCommand(controller, cmd);
 		RepInWord(controller.port, SYSTEM.ADR(response), 9);
 		acs := response[12]; acsq := response[13]
@@ -376,7 +375,7 @@ BEGIN
 	cmd[3] := 01X;
 	FOR i := 4 TO 11 DO cmd[i] := 0X END;
 	cmd[8] := CHR(16);
-	IF AtapiCommand(controller, 0, 16) THEN
+	IF AtapiCommand(controller, DriveNum, 16) THEN
 		status := PacketCommand(controller, cmd);
 		FOR i := 0 TO 15 DO response[i] := 0X END;
 		RepInWord(controller.port, SYSTEM.ADR(response), 8);
@@ -397,7 +396,7 @@ BEGIN
 	FOR i := 1 TO 11 DO cmd[i] := 0X END;
 	cmd[2] := 0DX;
 	cmd[8] := 8X;
-	IF AtapiCommand(controller, 0, 8) THEN
+	IF AtapiCommand(controller, DriveNum, 8) THEN
 		status := PacketCommand(controller, cmd);
 		FOR i := 0 TO 7 DO response[i] := 0X END;
 		RepInWord(controller.port, SYSTEM.ADR(response), 4);

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
+MODULE Scrollbars;	(** portable *)		(** ps (based on sources of rv and Effects),   *)
 
 	IMPORT
 		Input, Files, Effects, Printer, Printer3, Display3, Oberon, Objects, Display, Gadgets, Attributes;
@@ -41,7 +40,7 @@ MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
 
 	PROCEDURE TimeOk (): BOOLEAN;
 	BEGIN
-		IF Oberon.Time() <= mayscroll THEN RETURN FALSE
+		IF Oberon.Time() - mayscroll <= 0 THEN RETURN FALSE
 		ELSE mayscroll := Oberon.Time() + WaitTime; RETURN TRUE
 		END
 	END TimeOk;
@@ -146,14 +145,15 @@ MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
 	END GetValue;
 
 	PROCEDURE AdjustKnoblen (F: Frame);
-	VAR W: INTEGER;
+	VAR W: INTEGER; kl: LONGINT;
 	BEGIN
 		IF F.minO # NIL THEN Attributes.GetInt(F.minO, "Value", F.min) END;
 		IF F.maxO # NIL THEN Attributes.GetInt(F.maxO, "Value", F.max) END;
 		IF F.vertical THEN W := F.H ELSE W := F.W END;
 		IF hasarrows IN F.state0 THEN DEC(W, 2*barW) END;
-		F.knoblen := SHORT(W - 2 - ABS(F.max - F.min));
-		IF F.knoblen < barW THEN F.knoblen := barW END
+		kl := LONG(W) - 2 - ABS(F.max - F.min);
+		IF kl < barW THEN kl := barW END;
+		F.knoblen := SHORT(kl)
 	END AdjustKnoblen;
 	
 	PROCEDURE DrawKnob (Q: Display3.Mask; x, y, w, h: INTEGER; vertical: BOOLEAN);
@@ -448,7 +448,7 @@ MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
 	END CopyFrame;
 
 	PROCEDURE FrameAttr (F: Frame; VAR M: Objects.AttrMsg);
-		VAR msg: Display.ModifyMsg; val: LONGINT;
+		VAR msg: Display.ModifyMsg;
 	BEGIN
 		IF M.id = Objects.get THEN
 			IF M.name = "Gen" THEN
@@ -599,7 +599,7 @@ MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
 	END FrameFile;
 
 	PROCEDURE FrameHandler* (F: Objects.Object; VAR M: Objects.ObjMsg);
-	VAR x, y, w, h: INTEGER; F1: Frame; Q: Display3.Mask; O: Display3.OverlapMsg;
+	VAR x, y, w, h: INTEGER; F1: Frame; Q: Display3.Mask;
 	BEGIN
 		WITH F: Frame DO
 			IF M IS Display.FrameMsg THEN
@@ -671,5 +671,5 @@ MODULE Scrollbars;		(** ps (based on sources of rv and Effects),   *)
 
 BEGIN
 	WaitTime := 50 * Input.TimeUnit DIV 1000; HoldTime :=  500 * Input.TimeUnit DIV 1000;
-	mayscroll := MIN(LONGINT);
+	mayscroll := Oberon.Time()
 END Scrollbars.

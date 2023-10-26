@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,10 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Sort;	(*SHML 13.11.91 / mf 13.10.94 / tk adapted for System3 1.6.95*)
+MODULE Sort;	(** portable *)	(*SHML 13.11.91 / mf 13.10.94 / tk adapted for System3 1.6.95*)
 
-	IMPORT
-		Oberon, Texts, Display, Objects, Gadgets, TextGadgets, Documents, Desktops;
+	IMPORT Oberon, Texts, Objects, Gadgets, TextGadgets, Documents, Desktops;
 
 	CONST NofLines=4000;
 
@@ -51,7 +49,7 @@ MODULE Sort;	(*SHML 13.11.91 / mf 13.10.94 / tk adapted for System3 1.6.95*)
 			array[i]:=a
 		END Sift;
 		
-	BEGIN	left:=n DIV 2; right:=n-1;
+	BEGIN	left:=n DIV 2+1; right:=n-1;
 		WHILE left > 0 DO DEC(left); Sift(left, right) END;
 		WHILE right > 0 DO
 			a:=array[0]; array[0]:=array[right]; array[right]:=a;
@@ -107,30 +105,14 @@ MODULE Sort;	(*SHML 13.11.91 / mf 13.10.94 / tk adapted for System3 1.6.95*)
 		Texts.Append(text, W.buf)
 	END FillText;
 	
-	PROCEDURE ThisFrame(X, Y: INTEGER; VAR F: Display.Frame);
-	VAR M: Display.LocateMsg;
-	BEGIN M.X := X; M.Y := Y; M.F := NIL; M.loc := NIL; Display.Broadcast(M); F := M.loc
-	END ThisFrame;
-	
-	PROCEDURE GetText(VAR par: Display.Frame): Texts.Text;
-	VAR M: Objects.LinkMsg; t: Texts.Text;
-	BEGIN
-		t := NIL; ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, par);
-		IF par # NIL THEN
-			M.id := Objects.get; M.name := "Model"; M.obj := NIL; M.res := -1; par.handle(par, M);
-			IF (M.obj # NIL) & (M.obj IS Texts.Text) THEN t := M.obj(Texts.Text) END
-		END;
-		RETURN t
-	END GetText;
-	
 	PROCEDURE Sort*;	(**("^" | "*" | <name>) ["/" {c}]	where c IN {"r", "e", "u"}**)
 		(**Sort a marked viewer, a selection, or a file. Option /r means in reverse order; /e keep empty lines**)
 		VAR S: Texts.Scanner; n: INTEGER; text, sel: Texts.Text; beg, end, time: LONGINT;
-			buf: Texts.Buffer; array: Array; reverse, empty, unique: BOOLEAN; F: Display.Frame; TF: TextGadgets.Frame; D: Objects.Object;
+			buf: Texts.Buffer; array: Array; reverse, empty, unique: BOOLEAN; TF: TextGadgets.Frame; D: Objects.Object;
 	BEGIN	
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF S.class=Texts.Char THEN
-			IF S.c="*"  THEN	text:=GetText(F)
+			IF S.c="*"  THEN	text:=Oberon.MarkedText()
 			ELSIF S.c="^" THEN	Oberon.GetSelection(sel, beg, end, time);
 				IF time >= 0 THEN	NEW(buf); Texts.OpenBuf(buf); Texts.Save(sel, beg, end, buf);
 					NEW(text); Texts.Open(text, ""); Texts.Append(text, buf)

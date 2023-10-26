@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,12 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.95 release 2.0*)
+MODULE Draw;	(** portable *) (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.95 release 2.0*)
 
 	IMPORT Files, Fonts, Viewers, Printer, Texts, Oberon, Display,
 		TextFrames, MenuViewers, Graphics, GraphicFrames;
 
-	VAR W: Texts.Writer;
+	VAR W: Texts.Writer; BackCol: INTEGER;
 
 	(*Exported commands:
 		Open, Delete,
@@ -46,7 +45,7 @@ MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.9
 		END ;
 		IF S.class = Texts.Name THEN
 			NEW(G); Graphics.Open(G, S.s);
-			NEW(F); GraphicFrames.Open(F, G, -1, 0, 14, TRUE);
+			NEW(F); GraphicFrames.Open(F, G, -1, 0, BackCol, TRUE);
 			Oberon.AllocateUserViewer(Oberon.Par.vwr.X, X, Y);
 			IF Files.Old("Draw.Menu.Text") = NIL THEN
 				M := TextFrames.NewMenu(S.s, "System.Close  System.Copy  System.Grow  Draw.Delete  Draw.Store")
@@ -179,6 +178,7 @@ MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.9
 			G: Graphics.Graph;
 			F: TextFrames.Frame;
 			V: Viewers.Viewer;
+			printer, options: ARRAY 64 OF CHAR;
 
 		PROCEDURE Copies;
 			VAR ch: CHAR;
@@ -194,7 +194,16 @@ MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.9
 	BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		Graphics.scale := SHORT((Display.Unit DIV Printer.Unit * 6 + 5) DIV 5);
 		IF S.class = Texts.Name THEN
-			Printer.Open(S.s, "");
+			COPY(S.s, printer);
+			IF S.nextCh = Oberon.OptionChar THEN
+				Texts.Scan(S);	(* option char *)
+				Texts.Scan(S);	(* options *)
+				IF (S.class # Texts.Name) & (S.class # Texts.String) THEN options := ""
+				ELSE COPY(S.s, options)
+				END
+			ELSE options := ""
+			END;
+			Printer.Open(printer, options);
 			IF Printer.res = 0 THEN
 				IF Oberon.Par.frame = Oberon.Par.vwr.dsc THEN
 					F := Oberon.Par.frame(TextFrames.Frame);
@@ -232,9 +241,9 @@ MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.9
 					END
 				END ;
 				Printer.Close
-			ELSIF Printer.res = 1 THEN Texts.WriteString(W, " no printer")
+			ELSIF Printer.res = 1 THEN Texts.WriteString(W, " no such printer")
 			ELSIF Printer.res = 2 THEN Texts.WriteString(W, " no link")
-			ELSIF Printer.res = 3 THEN Texts.WriteString(W, " bad response")
+			ELSIF Printer.res = 3 THEN Texts.WriteString(W, " printer not ready")
 			ELSIF Printer.res = 4 THEN Texts.WriteString(W, " no permission")
 			END
 		END ;
@@ -337,5 +346,9 @@ MODULE Draw; (*NW 29.6.88 / 2.12.93 / JG 14.6.94 ported to System 3 / EOS 12.5.9
 	END StoreLibrary;
 
 BEGIN Texts.OpenWriter(W); Texts.WriteString(W, "Draw - NW 2.12.93");
-	Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+	Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+	IF Display.Depth(0) # 1 THEN BackCol := 14 ELSE BackCol := Display.BG END
 END Draw.
+
+System.Free Draw GraphicFrames Graphics ~
+Draw.Open t

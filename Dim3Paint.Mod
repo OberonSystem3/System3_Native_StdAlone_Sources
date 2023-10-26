@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Dim3Paint;	(* David Ulrich Nov  95 - März 96 *)
+MODULE Dim3Paint;	(** portable *)	(* David Ulrich Nov  95 - März 96 *)
 (** Dim3Paint covers the basic drawing functions of the module Dim3Engine. It includes color management and
       polygon drawing with and without the dynamic screen data structure **)
 
@@ -46,7 +45,6 @@ TYPE
 		texture: TextureMap;
 		X, Y, W: INTEGER;
 		u, v, uStep, vStep: REAL;
-		bgColor: CHAR;
 		next: TSEntry;
 	END;
 	
@@ -67,7 +65,7 @@ VAR
 	PatternTable: ARRAY 4 OF LONGINT;
 	ColorTab: ARRAY 3,256 OF INTEGER;
 	PDots: ARRAY 4,4 OF BOOLEAN;
-	seed: LONGINT; i: INTEGER;
+	seed: LONGINT;
 	GrayIndex: ARRAY 5 OF INTEGER;
 	
 	
@@ -293,7 +291,7 @@ END FreeDSEntry;
 PROCEDURE FreeDSList* (VAR ds: ARRAY OF DSEntry; n: INTEGER);
 	VAR
 		i: INTEGER;
-		entry,old: DSEntry;
+		entry: DSEntry;
 BEGIN
 	FOR i := 0 TO n DO
 		IF ds[i] # NIL THEN
@@ -369,7 +367,7 @@ END DrawRest;
 (* Draw pattern using ReplConst and Dot *)
 PROCEDURE DrawPattern(baseCol, patCol: INTEGER; pattern: LONGINT;
 								  X, Y, W: INTEGER);
-VAR	oddY, oddX, nullBit: BOOLEAN; index: INTEGER; pictAdr: LONGINT;
+VAR	oddY, oddX: BOOLEAN; index: INTEGER; pictAdr: LONGINT;
 BEGIN
 	oddY := ODD(Y); oddX := ODD(X);
 	IF ((pattern = Light) & oddY) OR (pattern = NoPattern) THEN
@@ -408,10 +406,10 @@ END SplitSegment;
 (* draw a gouraud shaded polygon scanline, with dithering and specular reflection *)
 PROCEDURE DrawSpecularSegment(sel: BOOLEAN; col: ARRAY OF REAL; planeCol: INTEGER; grayscale: BOOLEAN; entry: DSEntry;
 												  			xL, xR: REAL; Y, botL, botR, topL, topR: INTEGER; y, i, s: ARRAY OF REAL);
-VAR XL, XR, W: INTEGER; t1, t2, t3, iL, iR, dInten, dSpec, sL, sR: REAL;
+VAR XL, XR, W: INTEGER; t1, t3, iL, iR, dInten, dSpec, sL, sR: REAL;
 
 	PROCEDURE Display(X, W: INTEGER; iLeft, sLeft: REAL);
-	VAR  x, color, oddY, oddX, patCol, i: INTEGER; inten, spec: REAL; pat, pictAdr: LONGINT; rand: REAL;
+	VAR  x, color, oddY, oddX, patCol: INTEGER; inten, spec: REAL; pat, pictAdr: LONGINT; rand: REAL;
 	BEGIN
 		IF W > 2 THEN rand := Random() ELSE rand := 0 END;
 		IF ODD(Y) THEN oddY := 0 ELSE oddY := 2 END;
@@ -525,7 +523,7 @@ PROCEDURE DrawDitherSegment(sel: BOOLEAN; col: ARRAY OF REAL; planeCol: INTEGER;
 VAR XL, XR, W: INTEGER; t1, t2, t3, iL, iR, dInten: REAL;
 
 	PROCEDURE Display(X, W: INTEGER; iLeft: REAL);
-	VAR  x, color, oddY, oddX, patCol, i: INTEGER; inten: REAL; pat, pictAdr: LONGINT; rand: REAL;
+	VAR  x, color, oddY, oddX, patCol: INTEGER; inten: REAL; pat, pictAdr: LONGINT; rand: REAL;
 	BEGIN
 		IF W > 2 THEN rand := Random() ELSE rand := 0 END;
 		IF ODD(Y) THEN oddY := 0 ELSE oddY := 2 END;
@@ -794,7 +792,7 @@ PROCEDURE DrawShadePoly* (P: Pictures.Picture; VAR ds: ARRAY OF DSEntry; col: AR
 VAR
 	xL, xR, mL, mR, dxL, dxR, dyL, dyR, yt, pw, ph: REAL;
 	sy, topY, stopL, stopR: LONGINT; 
-	topL, topR, botL, botR, t, Y, z: INTEGER;
+	topL, topR, botL, botR, t, Y: INTEGER;
 	drawScanline: PROCEDURE(sel: BOOLEAN; col: ARRAY OF REAL; planeCol: INTEGER; grayscale: BOOLEAN;
 												  entry: DSEntry; xL, xR: REAL; Y, botL, botR, topL, topR: INTEGER; y, i, s: ARRAY OF REAL);
 BEGIN
@@ -1002,7 +1000,7 @@ END DrawPolygon;
 
 (** draw the transparent texture polygons back to front, free TSList **)
 PROCEDURE DrawTSList* (P: Pictures.Picture; ts: TSEntry);
-VAR entry, last: TSEntry; x, color, width, height: INTEGER; baseAdr, adr, U, V, pictAdr, wht, Vmult: LONGINT; c, bg: CHAR; u, v, us, vs: REAL;
+VAR entry, last: TSEntry; x, width, height: INTEGER; baseAdr, adr, U, V, pictAdr, Vmult: LONGINT; c, bg: CHAR; u, v, us, vs: REAL;
 		oldText: TextureMap;
 BEGIN
 	Dim3Base.SetPicture(P); V := -1000;
@@ -1050,9 +1048,9 @@ END DrawTSList;
 PROCEDURE DrawTransparent (P: Pictures.Picture; VAR ds: ARRAY OF DSEntry; texture: TextureMap; 
 												VAR tsList: TSEntry; VAR x, y, u, v: ARRAY OF REAL; n: INTEGER);
 VAR
-	xL, xR, mL, mR, dxL, dxR, dyL, dyR, yt, t1, t2, t3, uR, uL, vR, vL, uStep, vStep, invW: REAL;
-	sy, topY, stopL, stopR, baseAdr: LONGINT; dummy: ARRAY 3 OF REAL; test: BOOLEAN; 
-	topL, topR, botL, botR, t, X, W, Y, XL, XR, width, height, w2, h2: INTEGER; entry: DSEntry;
+	xL, xR, mL, mR, dxL, dxR, dyL, dyR, t1, t3, uR, uL, vR, vL, uStep, vStep, invW: REAL;
+	sy, topY, stopL, stopR, baseAdr: LONGINT; test: BOOLEAN; 
+	topL, topR, botL, botR, t, W, Y, XL, XR, width, height, w2, h2: INTEGER; entry: DSEntry;
 
 	PROCEDURE display(P: Pictures.Picture; texture: TextureMap; X, Y, W: INTEGER; u, v: REAL);
 	VAR entry: TSEntry;
@@ -1222,12 +1220,12 @@ END DrawTransparent;
 PROCEDURE DrawTexture (P: Pictures.Picture; VAR ds: ARRAY OF DSEntry; texture: TextureMap; 
 												VAR x, y, u, v: ARRAY OF REAL; n: INTEGER);
 VAR
-	xL, xR, mL, mR, dxL, dxR, dyL, dyR, yt, t1, t2, t3, uR, uL, vR, vL, uStep, vStep, invW: REAL;
-	sy, topY, stopL, stopR, baseAdr: LONGINT; dummy: ARRAY 3 OF REAL; test: BOOLEAN; 
-	topL, topR, botL, botR, t, X, W, Y, XL, XR, height, width, width2, height2: INTEGER; entry: DSEntry;
+	xL, xR, mL, mR, dxL, dxR, dyL, dyR, t1, t3, uR, uL, vR, vL, uStep, vStep, invW: REAL;
+	sy, topY, stopL, stopR, baseAdr: LONGINT; test: BOOLEAN; 
+	topL, topR, botL, botR, t, W, Y, XL, XR, height, width, width2, height2: INTEGER; entry: DSEntry;
 	
 	PROCEDURE display (P: Pictures.Picture; texture: TextureMap;  X, Y, W: INTEGER; u, v: REAL);
-	VAR x, color: INTEGER; adr, U, V, pictAdr, Vmult: LONGINT;c: CHAR;
+	VAR x: INTEGER; adr, U, V, pictAdr, Vmult: LONGINT;
 	BEGIN
 		pictAdr := Dim3Base.GetAddress(X, Y); V := -1000;
 		FOR x := 1 TO W DO
@@ -1495,7 +1493,7 @@ END DrawPersTexture;
 
 (** calculate and shade the mipmaps: P is the origin picture for texture **)
 PROCEDURE ShadeTexture* (P: Pictures.Picture;VAR texture: ARRAY OF TextureMap; VAR numPict: INTEGER; trans: BOOLEAN; light: REAL);
-VAR   x, y, color, i, r, g, b, w, h, maxlevel, delay, k, c11, c12, c21, c22, w2, h2, m, n, anz, anz2, baseX, baseY: INTEGER; 
+VAR   x, y, color, i, r, g, b, w, h, maxlevel, delay, c11, c12, c21, c22, w2, h2, m, n, anz, anz2, baseX, baseY: INTEGER; 
 		R, G, B, adr, w1, h1, baseAdr, textAdr: LONGINT; sumR, sumG, sumB, wAlt, anz3: INTEGER;
 		pictColorTab: ARRAY 3, 256 OF INTEGER; bgColor, col: CHAR;
 BEGIN

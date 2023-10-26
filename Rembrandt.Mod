@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Rembrandt;
+MODULE Rembrandt;	(** portable *)
 (** Ist das Hauptmodul für den Rembrandt-Editor *)
 (* tk, picture-depth corrections 25.5.1995 *)
 (* jm, fixed Copy 4.12.95 *)
@@ -158,7 +157,9 @@ BEGIN
 	ELSIF M.name = "LineupHY" THEN M.class := Objects.Int; M.res := 0; M.i := F.H DIV 2 - 5
 	ELSIF M.name = "Cmd" THEN
 		Gadgets.framehandle(F, M);
-		IF M.res < 0 THEN M.class := Objects.String; M.s := ""; M.res := 0 END;
+		IF M.res < 0 THEN M.class := Objects.String; M.s := ""; M.res := 0 END
+	ELSIF M.name = "Zoom" THEN
+		M.class:= Objects.Int; M.i:= F.zoom; M.res:= 0
     ELSE Gadgets.framehandle(F, M)
     END
   ELSIF M.id = Objects.set THEN
@@ -188,10 +189,13 @@ BEGIN
 		END;
 		Gadgets.Update(F)
 	  END
-    ELSE Gadgets.framehandle(F, M);
+	ELSIF (M.name = "Zoom") & (M.class = Objects.Int) & (M.i > 0) THEN
+		F.zoom:= SHORT(M.i); Gadgets.Update(F); M.res:= 0
+    ELSE Gadgets.framehandle(F, M)
     END
   ELSIF M.id = Objects.enum THEN
-    M.Enum("Color"); M.Enum("Cmd"); M.Enum("Locked"); M.Enum("Border"); Gadgets.framehandle(F, M)
+    M.Enum("Color"); M.Enum("Cmd"); M.Enum("Locked"); M.Enum("Border"); M.Enum("Zoom");
+    Gadgets.framehandle(F, M)
   END
 END FrameAttributes;
 
@@ -250,25 +254,25 @@ END SetSelection;
 PROCEDURE GetSelection(VAR F: Frame; VAR P: Pictures.Picture; VAR time: LONGINT; VAR x, y, w, h: INTEGER);
 VAR M: SelectMsg; M2: Display.SelectMsg; time2: LONGINT;
 BEGIN
-	M.id:= Display.get; M.time:=0; M.pict:= NIL; M.F:= NIL; M.obj:= NIL;
+	M.id := Display.get; M.time := 0; M.pict := NIL; M.F := NIL; M.obj := NIL;
 	Display.Broadcast(M);
-	time:= M.time;
+	time := M.time;
 	time2 := 0;
-	M2.id:= Display.get; M2.time:=0; M2.F:= NIL; M2.obj:= NIL;
+	M2.id := Display.get; M2.time := 0; M2.F := NIL; M2.obj := NIL;
 	Display.Broadcast(M2);
 	IF M2.obj # NIL THEN
 		IF M2.obj IS Frame THEN M2.obj := M2.obj(Frame).pict END;
 		IF M2.obj IS Pictures.Picture THEN time2:= M2.time  END
 	END;
-	IF (time>0) & (time>time2) THEN
-		IF M.pict#NIL THEN
+	IF (time > 0) & (time > time2) THEN
+		IF M.pict # NIL THEN
 			F:= M.sel(Frame); 
 			P:= M.pict; x:= M.u; y:= M.v; w:= M.w; h:= M.h; 
 		END
-	ELSIF time2>0 THEN 
+	ELSIF time2 > 0 THEN 
 		IF M2.obj IS Pictures.Picture THEN
-			IF M.sel IS Frame THEN F:= M.sel(Frame) ELSE F:= NIL END;
-			P:= M2.obj(Pictures.Picture); time:= time2; x:=0; y:=0; w:= P.width; h:= P.height
+			IF M.sel IS Frame THEN F := M.sel(Frame) ELSE F:= NIL END;
+			P := M2.obj(Pictures.Picture); time:= time2; x:=0; y:=0; w:= P.width; h:= P.height
 		END
 	END
 END GetSelection;
@@ -627,7 +631,7 @@ PROCEDURE Print (F: Frame; VAR M: Display.DisplayMsg);
 VAR R: D3.Mask;
 
   PROCEDURE PP(x: INTEGER): INTEGER;
-  BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+  BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
   END PP;
 
 BEGIN
@@ -713,7 +717,7 @@ BEGIN
 			Out.String("  discarding picture object ");
 			IF (obj # NIL) & (obj IS Objects.Dummy) THEN Out.String(obj(Objects.Dummy).GName) END;
 			Out.Ln;
-			NEW(F.pict); Pictures.Create(F.pict, 32, 32, Display.Depth(Display.ColLeft))
+			NEW(F.pict); Pictures.Create(F.pict, 32, 32, Display.Depth(0))
 		END
 	ELSE HALT(99)
 	END;
@@ -1378,7 +1382,7 @@ BEGIN
 			NEW(P); Rembrandt0.AllocatePictureMem(P, F.sw, F.sh, F.pict.depth);
 			CopyPalette(F.pict, P); 	(* tk *)
 			ScreentoPict(F, x, y, fx, fy,ox, oy);
-			CopyPalette(F.pict, P);  Pictures.CopyBlock(F.pict, P, ox, oy, F.sw, F.sh, 0, 0, Display.replace);
+			CopyPalette(F.pict, P); Pictures.CopyBlock(F.pict, P, ox, oy, F.sw, F.sh, 0, 0, Display.replace);
 			NEW(F0); NewP(F0, P);
 			Attributes.SetBool(F0, "Locked", TRUE); Attributes.SetBool(F0, "Border", FALSE);
 			cM.obj:= F0; cM.id:= Display.integrate; cM.F:= NIL; Display.Broadcast(cM)  
@@ -1388,13 +1392,14 @@ BEGIN
 END TrackSelection;
 
 PROCEDURE MovePicture(F: Frame; VAR M: Oberon.InputMsg; x, y: INTEGER);
-VAR Q: D3.Mask; ox, oy, ow, oh: INTEGER; 
+VAR ox, oy, ow, oh: INTEGER;
+	f: Display.Frame; C: Display.ConsumeMsg; CM: Objects.CopyMsg;
 BEGIN
-	Gadgets.MakeMask(F, x, y, M.dlink, Q);
+	(* Gadgets.MakeMask(F, x, y, M.dlink, Q); *)
 	ow:= F.pict.width*F.zoom; oh:= F.pict.height*F.zoom;
 	PicttoScreen(F, x, y, 0, 0, ox, oy); 
 	F.sx:= ox; F.sy:= oy;
-	Effects.MoveRect(Q, M.keys, M.X, M.Y, ox, oy, ow, oh);
+	Effects.MoveRect(NIL (* Q *), M.keys, M.X, M.Y, ox, oy, ow, oh);
 	IF M.keys = {MM} THEN
 		F.px:= F.px+(ox-F.sx) DIV F.zoom;
 		F.py:= F.py-(oy-F.sy) DIV F.zoom;
@@ -1403,12 +1408,29 @@ BEGIN
 			F.sx:=0; F.sy:=0; 
 			Gadgets.Update(F);
 			SetSelection(F, Image);
+
 		ELSE
 			Gadgets.Update(F)
 		END;
 	ELSE
 		IF F.selection=Image THEN
-			F.sx:=0; F.sy:=0; 
+			F.sx:=0; F.sy:=0; x := M.x + F.X; y := M.y + F.Y;
+			Gadgets.ThisFrame(M.X, M.Y, f, ox, oy);
+			IF (f # NIL) & (f # F) THEN
+				IF M.keys = {MM, MR} THEN
+					CM.id := Objects.deep
+				ELSIF M.keys = {ML, MM} THEN
+					CM.id := Objects.shallow
+				ELSE
+					CM.id := -1
+				END;
+				IF CM.id IN {Objects.deep, Objects.shallow} THEN
+					Objects.Stamp(CM); F.handle(F, CM); CM.obj.slink := NIL; (* copy the object *)
+					CM.obj(Display.Frame).W := F.pict.width; CM.obj(Display.Frame).H := F.pict.height;
+					C.id := Display.drop; C.obj := CM.obj; C.F := f; C.u := ox + (x - M.X); C.v := oy + (y - M.Y);
+					Display.Broadcast(C)
+				END
+			END
 		END
 	END;
 	M.res:=0
@@ -2113,7 +2135,7 @@ BEGIN
 	IF time>0 THEN
 		IF (sw>=32) OR (sh>=32) THEN Out.String("Patternsize too big"); Out.Ln
 		ELSE
-			y:=0; Out.Open;
+			y:=0;
 			Out.String("VAR pattern: ARRAY "); Out.Int(P.height, 2); Out.String(" OF SET;"); Out.Ln; 
 			Out.String("       pat: LONGINT;");Out.Ln;
 			WHILE y<P.height DO
@@ -2197,15 +2219,13 @@ BEGIN
           ELSIF M IS Oberon.InputMsg THEN
             WITH M: Oberon.InputMsg DO
    	         IF (M.id = Oberon.track) & Gadgets.InActiveArea(F, M) & ~F.locked THEN Edit(F, M, x, y, w ,h)
-				ELSIF (M.id=Oberon.consume) & (F.car) & ~F.locked THEN
-					Write(F, M, x, y); M.res:=0
-				ELSE
-					Gadgets.framehandle(F, M)
+				ELSIF (M.id=Oberon.consume) & (F.car) & ~F.locked THEN Write(F, M, x, y); M.res:=0
+				ELSE Gadgets.framehandle(F, M)
               END
             END
           ELSIF M IS Display.ModifyMsg THEN Gadgets.framehandle(F, M)
 		  ELSIF M IS FocusMsg THEN
-					IF F.car THEN M(FocusMsg).F := F; M(FocusMsg).u:=x; M(FocusMsg).v:=y; M.res:=0 END
+			IF F.car THEN M(FocusMsg).F := F; M(FocusMsg).u:=x; M(FocusMsg).v:=y; M.res:=0 END
           ELSIF M IS Oberon.ControlMsg THEN
 				WITH M : Oberon.ControlMsg DO
 					IF M.id= Oberon.defocus THEN Defocus(F)
@@ -2221,15 +2241,15 @@ BEGIN
 				END
 			 ELSIF M IS Display.SelectMsg THEN Select(F, x, y, M(Display.SelectMsg))
 			 ELSIF M IS Display.ConsumeMsg THEN
-				WITH M: Display.ConsumeMsg DO 
+				WITH M: Display.ConsumeMsg DO
 					IF M.id = Display.integrate THEN
 						IF M.obj IS Pictures.Picture THEN CopyOver(F, M.obj(Pictures.Picture), x, y)
 						ELSIF M.obj IS Frame THEN CopyOver(F, M.obj(Frame).pict, x, y)
 						END
 					END
 				END
-          ELSE Gadgets.framehandle(F, M)
-          END
+			ELSE Gadgets.framehandle(F, M)
+			END
         END
       END
     ELSIF M IS Objects.AttrMsg THEN FrameAttributes(F, M(Objects.AttrMsg))
@@ -2244,9 +2264,7 @@ BEGIN
     ELSIF M IS Objects.CopyMsg THEN
       WITH M: Objects.CopyMsg DO
         IF M.stamp = F.stamp THEN M.obj := F.dlink
-        ELSE
-          NEW(F1); F.stamp := M.stamp; F.dlink := F1;
-          Copy(M, F, F1); M.obj := F1
+        ELSE NEW(F1); F.stamp := M.stamp; F.dlink := F1; Copy(M, F, F1); M.obj := F1
         END
       END
     ELSE Gadgets.framehandle(F, M)

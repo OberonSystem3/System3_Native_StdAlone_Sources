@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Rembrandt0;
+MODULE Rembrandt0;	(** portable *)
 
 (** Dieses Modul enthält div. Prozeduren für den Rembrandt-Editor und Farboperationen, die auch in weiteren
 	Modulen gebraucht werden können. Einige Prozeduren und Variablen sind aus dem Backdrops-Modul übernommen
@@ -344,13 +343,13 @@ BEGIN
 END NewColorObj;
 
 PROCEDURE HandleColFrame*(F: Objects.Object; VAR M: Objects.ObjMsg);
-  VAR x, y, w, h: INTEGER; Q: D3.Mask; F1: ColFrame;
+  VAR x, y: INTEGER; Q: D3.Mask; F1: ColFrame;
 BEGIN
   WITH F: ColFrame DO
 	IF M IS Display.DisplayMsg THEN
 		WITH M: Display.DisplayMsg DO
 			IF (M.device = Display.screen) & ((M.F = NIL) OR (M.F = F)) THEN (* message addressed to box *)
-				x := M.x + F.X; y := M.y + F.Y; w := F.W; h := F.H;
+				x := M.x + F.X; y := M.y + F.Y;
 				Gadgets.MakeMask(F, x, y, M.dlink, Q); D3.ReplConst(Q, color.col, x, y, F.W, F.H, Display.replace); 
 			ELSE
 				Gadgets.framehandle(F, M)
@@ -422,9 +421,7 @@ END ReplConst;
 
 (** Speicherblock für Picture allozieren oder Fehlermeldung ausgeben **)
 PROCEDURE AllocatePictureMem*(VAR P: Pictures.Picture; w, h, d: INTEGER);
-VAR mem: LONGINT;
 BEGIN
-	mem:= LONG(w)*h*(d DIV 8);
 	Pictures.Create(P, w, h, d);
 	IF P.depth = 0 THEN
 		Out.String("Not enough free memory"); Out.Ln; P := NIL

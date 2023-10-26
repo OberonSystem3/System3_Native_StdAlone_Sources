@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HTMLImages;
+MODULE HTMLImages;	(** portable *)
 	IMPORT Objects, Strings, HyperDocs, Display, Texts, Display3, Oberon, Gadgets, Effects, Links, Rembrandt, HTTPDocs0,
 		HTMLDocs, Documents, Desktops, Attributes, Files, Pictures, Fonts;
 
@@ -633,10 +632,11 @@ HALT(99)
 					Attributes.SetString(icon, "Cmd", "HTMLDocs.ExecNext")
 				END
 			END;
+			
 			NEW(battr); battr.b := locked;
 			Attributes.InsertAttr(E.attrs, "Locked", battr);
-			NEW(battr);
-			battr.b := border > 0;
+			
+			NEW(battr); battr.b := border > 0;
 			Attributes.InsertAttr(E.attrs, "Border", battr);
 			Attributes.SetBool(icon, "Border", battr.b);
 			IF w > 0 THEN
@@ -797,7 +797,7 @@ Attributes.SetString(F, "Cmd", "HyperDocs.FollowLink  % R  #UseMapKey");
 			END;
 			area := area.next
 		END
-	END Restore;*)
+	END Restore;	*)
 
 	PROCEDURE *ImgHandle(F: Objects.Object; VAR M: Objects.ObjMsg);
 		VAR
@@ -806,7 +806,7 @@ Attributes.SetString(F, "Cmd", "HyperDocs.FollowLink  % R  #UseMapKey");
 			link: Links.Link;
 			name: ARRAY 64 OF CHAR;
 			map: Map;
-			A: Objects.AttrMsg;
+A: Objects.AttrMsg;
 		PROCEDURE GetMap();
 		BEGIN
 			link := Links.FindLink("UseMap", F(Gadgets.Frame).link);
@@ -828,8 +828,7 @@ Attributes.SetString(F, "Cmd", "HyperDocs.FollowLink  % R  #UseMapKey");
 				WITH M: Display.FrameMsg DO
 					IF (M.F = NIL) OR (M.F = F) THEN
 					(*	IF M IS Display.DisplayMsg THEN
-							Rembrandt.Handle(F, M);
-							GetMap();
+							Rembrandt.Handle(F, M); GetMap();
 							IF map # NIL THEN
 								x := M.x + F.X; y := M.y + F.Y;
 								WITH M: Display.DisplayMsg DO
@@ -859,14 +858,14 @@ Attributes.SetString(F, "Cmd", "HyperDocs.FollowLink  % R  #UseMapKey");
 										ELSE
 											Rembrandt.Handle(F, M)
 										END
-									ELSIF M.keys = {} THEN
-										A.id := Objects.get; A.name := "Cmd"; A.res := -1; A.s := "";
-										F.handle(F, A);
-										IF (A.res = 0) & (A.s # "") THEN
-											Oberon.DrawCursor(Oberon.Mouse, Effects.PointHand, M.X, M.Y); M.res := 0
-										ELSE
-											Rembrandt.Handle(F, M)
-										END
+ELSIF M.keys = {} THEN
+	A.id := Objects.get; A.name := "Cmd"; A.res := -1; A.s := "";
+	F.handle(F, A);
+	IF (A.res = 0) & (A.s # "") THEN
+		Oberon.DrawCursor(Oberon.Mouse, Effects.PointHand, M.X, M.Y); M.res := 0
+	ELSE
+		Rembrandt.Handle(F, M)
+	END
 									ELSE
 										Rembrandt.Handle(F, M)
 									END

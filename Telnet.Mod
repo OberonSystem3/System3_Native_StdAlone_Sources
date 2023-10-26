@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Telnet;	(* ip/mg 17.3.94 / 07.04.95 *)
+MODULE Telnet;	(** portable *)	(* ip/mg 17.3.94 / 07.04.95 *)
 
-IMPORT Input, Display, Fonts, Texts, MenuViewers, TextFrames, Oberon, TerminalFrames, Terminals, NetSystem, Objects, Out;
+IMPORT Input, Display, Fonts, Texts, MenuViewers, TextFrames, Oberon, TerminalFrames, Terminals, NetSystem, Objects;
 
 CONST
 	left = 2; middle = 1; right = 0; OpenHeight = 24;
@@ -128,17 +127,8 @@ VAR
 BEGIN
 	WITH me: Task DO
 		T := me.T; C := T.C;
-		IF (C = NIL) OR (NetSystem.State(C) IN {NetSystem.out, NetSystem.closed}) THEN
-			IF C # NIL THEN
-				IF NetSystem.Available(C) = 0 THEN i := 0;
-					NetSystem.CloseConnection(C);
-					me.T.C := NIL
-				END
-			END;
-			WHILE cclos[i] # 0X DO Terminals.Receive(T, cclos[i]); INC(i) END;
-			Terminals.Receive(T, 0DX); Terminals.Receive(T, 0AX); Terminals.Flush(T);
-			Oberon.Remove(me)
-		ELSE l := NetSystem.Available(C);
+		IF C # NIL THEN
+			l := NetSystem.Available(C);
 			IF l > 0 THEN
 				REPEAT NetSystem.Read(C, ch); DEC(l);
 					IF ch = 0FFX THEN (* IAC *)
@@ -156,12 +146,21 @@ BEGIN
 					ELSIF ~((ch = 0X) OR (07X = ch) OR (ch = 011X) OR (ch = 012X)) THEN
 						Terminals.Receive(T, ch)
 					ELSIF (ch = 011X) OR (ch = 012X) THEN
-(*						Log.Int(ORD(ch))	*)
+						(* skip *)
 					END
 				UNTIL l <= 0;
 				Terminals.Flush(T)
+			ELSE
+				IF NetSystem.State(C) IN {NetSystem.out, NetSystem.closed} THEN
+					NetSystem.CloseConnection(C);
+					me.T.C := NIL
+				END
 			END;
 			me.time := Oberon.Time() + Input.TimeUnit DIV 50
+		ELSE	(* closed *)
+			i := 0;  WHILE cclos[i] # 0X DO Terminals.Receive(T, cclos[i]); INC(i) END;
+			Terminals.Receive(T, 0DX); Terminals.Receive(T, 0AX); Terminals.Flush(T);
+			Oberon.Remove(me)
 		END
 	END
 END Receiver;
@@ -172,7 +171,7 @@ BEGIN NetSystem.Write(C, 0FFX); NetSystem.Write(C, 0FDX); NetSystem.Write(C, 03X
 	NetSystem.Write(C, 0FFX); NetSystem.Write(C, 0FBX); NetSystem.Write(C, 018X)
 END SetUp;
 
-PROCEDURE Open*;	(** ^ |  ( hostname | IP address ) **)
+PROCEDURE Open*;	(** ^ |  ( hostname | IP address ) [port] **)
 VAR
 	S: Texts.Scanner;
 	F: TerminalFrames.Frame;
@@ -181,7 +180,7 @@ VAR
 	task: Task;
 	T: Terminal;
 	text: Texts.Text;
-	x, y, res: INTEGER;
+	x, y, res, port: INTEGER;
 	beg, end, time: LONGINT;
 		adr: NetSystem.IPAdr;
 BEGIN
@@ -189,10 +188,15 @@ BEGIN
 	IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(text, beg, end, time);
 		IF time > 0 THEN Texts.OpenScanner(S, text, beg); Texts.Scan(S) END
 	END;
-	IF (S.class = Texts.Name) OR (S.class = Texts.String) THEN
-		Out.String("Telnet.Open ");  Out.String(S.s);  Out.Ln;
+	IF S.class IN {Texts.Name, Texts.String} THEN
+		Texts.WriteString(W, "Telnet.Open "); Texts.WriteString(W, S.s); 
+		Texts.Append(Oberon.Log, W.buf);
 		NetSystem.GetIP(S.s, adr);
-		NetSystem.OpenConnection(C, 0, adr, 23, res);
+		Texts.Scan(S);
+		IF S.class = Texts.Int THEN port := SHORT(S.i);  Texts.Write(W, " ");  Texts.WriteInt(W, port, 1)
+		ELSE port := 23 END;
+		NetSystem.OpenConnection(C, 0, adr, port, res);
+		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
 		IF res = NetSystem.done THEN
 			NEW(T); Terminals.Open(T, TextFrames.Text(""), Send0, Break0, TerminalFrames.NotifyDisplay, OpenHeight);
 			NEW(task); task.safe := FALSE; task.handle := Receiver; task.T := T;
@@ -334,3 +338,5 @@ END Clear;
 BEGIN cclos := "connection closed";
 	Texts.OpenWriter(W)
 END Telnet.
+
+Telnet.Open oberon.ethz.ch 13

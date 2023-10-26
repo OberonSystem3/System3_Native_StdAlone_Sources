@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE V24;	(* pjm/ejz *)
+MODULE V24;	(** portable *)	(* pjm/ejz *)
 
-(** V24 (aka RS232) serial interface *)
+(** V24/RS232 serial communications interface. *)
 
 (* Currently only supports 2 com ports *)
 
@@ -31,9 +30,13 @@ CONST
 	(** stop bits *)
 	Stop1* = 1;  Stop2* = 2;  Stop1dot5* = 3;
 	(** modem control - MC *)
-	DTR* = 0;  RTS* = 1;	(* output *)
-	Break* = 2;	(* input/output *)
-	DSR* = 3;  CTS* = 4;  RI* = 5;  DCD* = 6;	(* input *)
+	DTR* = 0;  RTS* = 1;	(** output *)
+	Break* = 2;	(** input/output *)
+	DSR* = 3;  CTS* = 4;  RI* = 5;  DCD* = 6;	(** input *)
+	
+	Ok* =  0; PortInUse* =  1; NoSuchPort* =  2; WrongBPS* =  3; WrongData* =  4; WrongParity* =  5;
+	WrongStop* =  6; Failed* =  MAX(INTEGER);
+		
 	BufSize = 4096;
 	
 TYPE
@@ -143,25 +146,25 @@ BEGIN
 						ports[port] := p;
 							(* enable receive interrupts *)
 						SYSTEM.PORTOUT(base+1, 01X);	(* ICR *)
-						res := 0
-					ELSE res := 1 (* port in use *)
+						res := Ok
+					ELSE res := PortInUse (* port in use *)
 					END
-				ELSE res := 4 (* bad data/parity/stop *)
+				ELSE res := WrongData (* bad data/parity/stop *)
 				END
-			ELSE res := 3 (* bad bps *)
+			ELSE res := WrongBPS (* bad bps *)
 			END
-		ELSE res := 2	(* no such port *)
+		ELSE res := NoSuchPort	(* no such port *)
 		END
-	ELSE res := 2	(* no such port *)
+	ELSE res := NoSuchPort	(* no such port *)
 	END
 END Start;
 
-(** Stop - Close the specified port.  Effect on Model Control lines is undefined. *)
+(** Stop - Close the specified port.  Effect on Modem Control lines is undefined. *)
 
 PROCEDURE Stop*(port: LONGINT);
 VAR base, a: LONGINT;  s: SET;
 BEGIN
-	IF (port >= 0) & (port <= 1) THEN
+	IF (port >= 0) & (port <= numports) THEN
 		IF port = 0 THEN base := 3F8H ELSE base := 2F8H END;
 		REPEAT	(* wait for last byte to leave *)
 			a := base+5;  SYSTEM.PORTIN(a, SYSTEM.VAL(CHAR, s))	(* LSR *)
@@ -187,7 +190,7 @@ BEGIN
 	RETURN (p.tail-p.head) MOD BufSize
 END Available;
 
-(** Receive - Read one byte from the specified port.  Waits until a byte is available.  res = 0 iff ok. *)
+(** Receive - Read one byte from the specified port.  Waits until a byte is available.  res = Ok iff ok. *)
 
 PROCEDURE Receive*(port: LONGINT;  VAR x: SYSTEM.BYTE;  VAR res: LONGINT);
 VAR p: Port;
@@ -195,21 +198,21 @@ BEGIN
 	p := ports[port];
 	REPEAT UNTIL p.tail # p.head;
 	x := p.buf[p.head];  p.head := (p.head+1) MOD BufSize;
-	res := 0
+	res := Ok
 END Receive;
 
-(** ReceiveBytes - Read n bytes from the specified port.  Waits until n bytes are available.  res = 0 iff ok. *)
+(** ReceiveBytes - Read n bytes from the specified port.  Waits until n bytes are available.  res = Ok iff ok. *)
 
 PROCEDURE ReceiveBytes*(port: LONGINT;  VAR x: ARRAY OF SYSTEM.BYTE;  n: LONGINT;  VAR res: LONGINT);
 VAR i: LONGINT;
 BEGIN
-	i := 0;  res := 0;
-	WHILE (i # n) & (res = 0) DO
+	i := 0;  res := Ok;
+	WHILE (i # n) & (res = Ok) DO
 		Receive(port, x[i], res);  INC(i)
 	END
 END ReceiveBytes;
 
-(** Send - Send a byte to the specified port.  Waits until buffer space is available.  res = 0 iff ok. *)
+(** Send - Send a byte to the specified port.  Waits until buffer space is available.  res = Ok iff ok. *)
 
 PROCEDURE Send*(port: LONGINT;  x: SYSTEM.BYTE;  VAR res: LONGINT);
 VAR p: Port;  s: SET;  adr: LONGINT;
@@ -218,16 +221,16 @@ BEGIN
 	REPEAT	(* wait for transmitter empty *)
 		SYSTEM.PORTIN(adr, SYSTEM.VAL(CHAR, s))	(* LSR *)
 	UNTIL 5 IN s;
-	SYSTEM.PORTOUT(p.base, x);  res := 0
+	SYSTEM.PORTOUT(p.base, x);  res := Ok
 END Send;
 
-(** SendBytes - Send n bytes to the specified port.  Waits until buffer space is available.  res = 0 iff all ok. *)
+(** SendBytes - Send n bytes to the specified port.  Waits until buffer space is available.  res = Ok iff all ok. *)
 
 PROCEDURE SendBytes*(port: LONGINT;  VAR x: ARRAY OF SYSTEM.BYTE;  n: LONGINT;  VAR res: LONGINT);
 VAR i: LONGINT;
 BEGIN
-	i := 0;  res := 0;
-	WHILE (i # n) & (res = 0) DO
+	i := 0;  res := Ok;
+	WHILE (i # n) & (res = Ok) DO
 		Send(port, x[i], res);  INC(i)
 	END
 END SendBytes;
@@ -271,7 +274,7 @@ BEGIN
 END SetMC;
 
 (** GetMC - Return the state of the specified Model Control lines of the specified port.  s contains
-	the current state of DSR, CTS & Break. *)
+	the current state of DSR, CTS, RI, DCD & Break. *)
 	
 PROCEDURE GetMC*(port: LONGINT;  VAR s: SET);
 VAR p: LONGINT;  t: SET;

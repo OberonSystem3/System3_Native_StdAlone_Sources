@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE DiffGadgets; (** PS   *)
+MODULE DiffGadgets;	(** portable *) (** PS   *)
 
 	IMPORT Input, Files, Objects, Fonts, Texts, Display, Display3, Effects, Gadgets, Oberon, 
 		TextGadgets0, TextGadgets, Documents, Desktops;
@@ -23,7 +22,7 @@ MODULE DiffGadgets; (** PS   *)
 		BarW = 14;
 		TitleH  = 14;
 
-		CR = 0DX; TAB = 09X;
+		CR = 0DX;
 
 	TYPE
 		Line = POINTER TO LineDesc;
@@ -338,11 +337,11 @@ BEGIN
 	Display3.ReplConst(Q, Display3.textbackC, mX, tY, w, TitleH, Display.replace);
 	Display3.FilledRect3D(Q, Display3.topC, Display3.bottomC, Display3.textbackC, x, tY, F.slider.W, TitleH, 1, Display.replace);
 	Display3.ReplConst(Q, Display3.bottomC, mX, tY, 1, TitleH, Display.replace);
-	Display3.String(Q, Display3.black, mX+4, tY+3, Fonts.Default, F.name1, Display.paint);
+	Display3.String(Q, Display3.black, mX+4, tY+3, Fonts.Default, F.name1, Display3.paint);
 	mX:= x+F.T2.X;
 	Display3.ReplConst(Q, Display3.topC, mX-1, tY, 1, TitleH, Display.replace);
 	Display3.ReplConst(Q, Display3.bottomC, mX, tY, 1, TitleH, Display.replace);
-	Display3.String(Q, Display3.black, mX+4, tY+3, Fonts.Default, F.name2, Display.paint);
+	Display3.String(Q, Display3.black, mX+4, tY+3, Fonts.Default, F.name2, Display3.paint);
 
 	Objects.Stamp(N); ToFrame(F.T1); ToFrame(F.T2); ToFrame(F.slider);
 
@@ -353,7 +352,7 @@ BEGIN
 END Restore;
 
 PROCEDURE Copy* (VAR M: Objects.CopyMsg; from, to: Frame);
-	VAR main: Gadgets.Frame; N: Objects.CopyMsg;
+	VAR N: Objects.CopyMsg;
 BEGIN
 	Gadgets.CopyFrame(M, from, to);
 	N.id := Objects.shallow; Objects.Stamp(N);
@@ -379,7 +378,7 @@ BEGIN
 END InChild;
 
 PROCEDURE Handle* (F: Objects.Object; VAR M: Objects.ObjMsg);
-	VAR x, y, w, h: INTEGER; F1: Frame; Q: Display3.Mask; obj: Objects.Object;
+	VAR x, y, w, h: INTEGER; F1: Frame; Q: Display3.Mask;
 BEGIN
 	WITH F: Frame DO
 		IF M IS Display.FrameMsg THEN
@@ -529,7 +528,7 @@ BEGIN
 END Init;
 
 PROCEDURE New*;
-	VAR F: Frame; T1, T2: Texts.Text; obj: Objects.Object; sliderCmd: ARRAY 32 OF CHAR; M: Display.ModifyMsg;
+	VAR F: Frame; T1, T2: Texts.Text;
 BEGIN
 	NEW(F); F.X:= 0; F.Y:= 0; F.W:= 320; F.H:= 200;
 	NEW(T1); Texts.Open(T1, "");

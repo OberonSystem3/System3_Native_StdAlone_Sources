@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -33,9 +32,9 @@ of the source code to another platform with the name OBERON. *)
 		7	Prints a cross reference list  (also option \x)
 		8	Write statistics
 ==========================================================================*)
-MODULE Coco;
+MODULE Coco;	(** portable *)
 
-IMPORT Objects, Display, Oberon, Texts, Links, Gadgets, CRS, CRP, CRT;
+IMPORT Oberon, Texts, CRS, CRP, CRT;
 
 CONST minErrDist = 8;
 
@@ -156,28 +155,6 @@ BEGIN
 	END ;
 END Options;
 
-	PROCEDURE GetMarked(VAR text: Texts.Text);
-		VAR
-			F, V: Display.Frame;
-			u, v: INTEGER;
-			obj: Objects.Object;
-	BEGIN
-		text := NIL;
-		Gadgets.ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, F, u, v);
-		IF F = NIL THEN
-			V := Oberon.MarkedViewer();
-			IF (V # NIL) & (V.dsc # NIL) THEN
-				F := V.dsc.next
-			END
-		END;
-		IF F # NIL THEN
-			Links.GetLink(F, "Model", obj);
-			IF (obj # NIL) & (obj IS Texts.Text) THEN
-				text := obj(Texts.Text)
-			END
-		END
-	END GetMarked;
-
 PROCEDURE Compile*;
 	VAR s: Texts.Scanner; src, t: Texts.Text;
 		pos, beg, end, time: LONGINT; i: INTEGER;
@@ -191,7 +168,7 @@ BEGIN
 	IF s.class = Texts.Name THEN
 		NEW(src); Texts.Open(src, s.s)
 	ELSIF (s.class = Texts.Char) & (s.c = "*") THEN
-		GetMarked(src)
+		src := Oberon.MarkedText()
 	ELSIF (s.class = Texts.Char) & (s.c = "@") THEN
 		Oberon.GetSelection(t, beg, end, time);
 		IF time >= 0 THEN src := t; pos := beg; s.s := " " END

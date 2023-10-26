@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE SetGadgets;	(* ps -   *)
+MODULE SetGadgets;	(** portable *)	(* ps -   *)
 
-	IMPORT BIT, Files, Input, Strings, Display, Display3, Printer, Printer3, Objects, Fonts, Effects, Oberon, Gadgets;
+	IMPORT BIT, Files, Strings, Display, Display3, Printer, Printer3, Objects, Effects, Oberon, Gadgets;
 
 	CONST
 		SetVersion = 1;	FrameVersion = 1;
@@ -63,7 +62,7 @@ BEGIN Gadgets.CopyObject(M, from, to); to.val := from.val
 END CopySet;
 
 PROCEDURE SetHandler* (obj: Objects.Object; VAR M: Objects.ObjMsg);
-VAR obj2: Set; x: INTEGER; ver: LONGINT;
+VAR obj2: Set; ver: LONGINT;
 BEGIN
 	WITH obj: Set DO
 		IF M IS Objects.AttrMsg THEN
@@ -198,7 +197,7 @@ BEGIN
 END HandleAttributes;
 
 PROCEDURE Restore (F: Frame; Q: Display3.Mask; x, y, w, h: INTEGER);
-VAR sw, i, xx, yy: INTEGER;
+VAR sw, i, xx: INTEGER;
 BEGIN
 	Display3.FilledRect3D(Q, Display3.bottomC, Display3.topC, backC, x, y, w, h, 1, Display.replace);
 	sw := (w - 2) DIV 32; xx := x + (w - 32*sw) DIV 2;
@@ -217,7 +216,7 @@ PROCEDURE Print (F: Frame; VAR M: Display.DisplayMsg);
 	VAR Q: Display3.Mask; i: LONGINT; x, y, w, h, sw: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -378,7 +377,7 @@ Frame
 	Links:	-
 
 Example
-			
+			
 
 *)
 

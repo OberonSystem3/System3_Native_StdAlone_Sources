@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,15 +13,12 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Objects; (* JG 21.9.93/comments jm 28.2.95 *)
+MODULE Objects;	(** portable *) (* JG 21.9.93/comments jm 28.2.95 *)
 
 (** Module Objects forms the basis of the object-oriented part of the Oberon system. 
 It provides the system with the type Object and defines what messages objects understand. 
 Most entities in Oberon are derived from this base type.
 *)
-
-(* 09.02.96 pjm - GC of Libraries 
-	15.08.96 pjm - new libraries from ps *)
 
   IMPORT SYSTEM, Kernel, Files, Modules;
 
@@ -34,7 +30,7 @@ Most entities in Oberon are derived from this base type.
     (** AttrMsg class *)
     Inval* = 0; String* = 2; Int* = 3; Real* = 4; LongReal* = 5; Char* = 6; Bool* = 7;
 
-    MaxNews = 32; MaxRuns = 64;
+    MaxNews = 64; MaxRuns = 64;
 	StepSize = 64; 	(* number of elems to grow an index block *)
 	Version = 052454942H;
 
@@ -178,7 +174,14 @@ Most entities in Oberon are derived from this base type.
     EnumProc* = PROCEDURE (L: Library);	(** Enumerator of public libraries *)
 
 	RunRec = RECORD beg, end: INTEGER END;
-
+	
+	Alias = POINTER TO AliasDesc;
+	AliasDesc = RECORD
+		next: Alias;
+		name: Name;
+		lib: Library
+	END;
+	
   VAR
     LibBlockId*: CHAR;	(** Identification character as first character of a Library file. *)
     FirstLib: Library;
@@ -190,8 +193,8 @@ Most entities in Oberon are derived from this base type.
     nofreg: INTEGER;
     LibExt: ARRAY  8, 8 OF CHAR;
     LibNew: ARRAY 8 OF NewProc;
-
-	conv: BOOLEAN;
+    
+    FirstAlias: Alias;
 
   PROCEDURE Stamp* (VAR M: ObjMsg);	(** Timestamp a message.  *)
   BEGIN M.stamp := stamp;
@@ -200,15 +203,20 @@ Most entities in Oberon are derived from this base type.
 
   (*general library management*)
 
+	(* Delete library L from the list, without changing L.next. *)
+	
 	PROCEDURE Cleanup(L: SYSTEM.PTR);
-	VAR p0, p: Library;
+	VAR p0, p: Library; a0, a: Alias;
 	BEGIN
 		WITH L: Library DO
 			p0 := FirstLib;  p := p0.next;
 			WHILE (p # NIL) & (p # L) DO p0 := p;  p := p.next END;
 			IF p = L THEN (* found in list *)
 				p0.next := p.next
-			END
+			END;
+			a0 := FirstAlias; a := a0.next;
+			WHILE (a # NIL) & (a.lib # L) DO a0 := a; a := a.next END;
+			IF a # NIL THEN a0.next := a.next END
 		END
 	END Cleanup;
 
@@ -226,57 +234,49 @@ Most entities in Oberon are derived from this base type.
 
 (** Search, load and cache a public library. *)
   PROCEDURE ThisLibrary* (name: ARRAY OF CHAR): Library;
-    VAR L: Library; len, n, n0, t, i, j: INTEGER;
-      ext: ARRAY 8 OF CHAR;  proc: NewProc;
+    VAR L: Library; len, n, n0, t, i, j: INTEGER; proc: NewProc;  A: Alias;
   BEGIN
-    COPY(name, ext);  ext[6] := 0X;
-    IF conv & (ext = "Syntax") THEN
-    	i := 6;  j := 0;
-    	WHILE (name[i] # 0X) & (name[i] # ".") DO INC(i) END;
-    	WHILE name[i] # 0X DO
-    		IF name[i] = "." THEN j := 0;  INC(i)
-    		ELSE ext[j] := name[i];  INC(i);  INC(j)
-    		END
-    	END;
-    	ext[j] := 0X;
-    	IF ext = "Fnt" THEN
-			Kernel.WriteString(name);  Kernel.WriteString(" -> ");
-			ext := "Oberon";  i := 0;	(* Syntax -> Oberon *)
-			WHILE ext[i] # 0X DO name[i] := ext[i]; INC(i) END;
-			WHILE (name[i] >= "0") & (name[i] <= "9") DO INC(i) END;
-			IF name[i] = "j" THEN name[i] := "i"	(* italic bold -> italic *)
-			ELSIF name[i] = "m" THEN name[i] := "b"	(* medium -> bold *)
-			END;
-			Kernel.WriteString(name);  Kernel.WriteChar(7X);  Kernel.WriteLn
-		END
-	END;
-    L := FirstLib.next;
-    WHILE (L # NIL) & (name # L.name) DO L := L.next END;
-	IF L = NIL THEN
-		n := nofreg; n0 := 0; len := -1;
-		WHILE n0 # nofreg DO	(* find longest matching extension *)
-			IF Match(name, LibExt[n0], t) & (t >= len) THEN
-				n := n0; len := t
-			END;
-			INC(n0)
-		END;
-		IF n # nofreg THEN
-			proc := LibNew[n];
-			L := proc(); 
-			COPY(name, L.name); L.next := FirstLib.next; FirstLib.next := L;
-			L.Load(L);  Kernel.RegisterObject(L, Cleanup, FALSE)
-		END
-	END;
+    A := FirstAlias.next;
+    WHILE (A # NIL) & (name # A.name) DO A := A.next END;
+    IF A # NIL THEN
+      L := A.lib
+    ELSE
+      L := FirstLib.next;
+      WHILE (L # NIL) & (name # L.name) DO L := L.next END;
+      IF L = NIL THEN
+        n := nofreg; n0 := 0; len := -1;
+        WHILE n0 # nofreg DO	(* find longest matching extension *)
+          IF Match(name, LibExt[n0], t) & (t >= len) THEN
+            n := n0; len := t
+          END;
+          INC(n0)
+        END;
+        IF n # nofreg THEN
+          proc := LibNew[n];
+          L := proc();
+          COPY(name, L.name);
+          L.Load(L);  Kernel.RegisterObject(L, Cleanup, FALSE);
+          IF name = L.name THEN
+            L.next := FirstLib.next; FirstLib.next := L
+          ELSE
+            NEW(A); COPY(name, A.name); A.lib := L; A.next := FirstAlias.next; FirstAlias.next := A;
+            Kernel.WriteString("Alias: ");
+            Kernel.WriteString(name);  Kernel.WriteString(" -> ");  Kernel.WriteString(L.name);
+            Kernel.WriteLn
+          END
+        END
+      END
+    END;
     RETURN L
   END ThisLibrary;
 
 (** Free library from public library cache *)
   PROCEDURE FreeLibrary* (name: ARRAY OF CHAR);
-    VAR L, L0: Library;
+    VAR L: Library;
   BEGIN
-    L0 := FirstLib;  L := L0.next;
+    L := FirstLib.next;
     WHILE L # NIL DO
-      IF name = L.name THEN L0.next := L.next ELSE L0 := L END;
+      IF name = L.name THEN Cleanup(L) END;
       L := L.next
     END
   END FreeLibrary;
@@ -284,22 +284,23 @@ Most entities in Oberon are derived from this base type.
 (** Enumerate public libraries. Don't free libraries during enumeration! *)
   PROCEDURE Enumerate* (P: EnumProc);
     VAR L: Library;
-  BEGIN L := FirstLib.next;
+  BEGIN
+    L := FirstLib.next;
     WHILE L # NIL DO P(L); L := L.next END
   END Enumerate;
 
 (** Register a new library file extension and its associated generator procedure. *)
   PROCEDURE Register* (ext: ARRAY OF CHAR; new: NewProc);
-    VAR n, len: INTEGER; L, L0: Library;
+    VAR n, len: INTEGER; L: Library;
   BEGIN n := 0;
     WHILE (n # nofreg) & (ext # LibExt[n]) DO INC(n) END;
     IF n # nofreg THEN LibNew[n] := new
       ELSE COPY(ext, LibExt[nofreg]); LibNew[nofreg] := new; INC(nofreg)
     END;
     (* free library entries that match *)
-    L0 := FirstLib;  L := L0.next;
+    L := FirstLib.next;
     WHILE L # NIL DO
-    	IF Match(L.name, ext, len) THEN L0.next := L.next ELSE L0 := L END;
+    	IF Match(L.name, ext, len) THEN Cleanup(L) END;
     	L := L.next
     END
   END Register;
@@ -729,16 +730,11 @@ Most entities in Oberon are derived from this base type.
 		END
   END PutName;
 
-PROCEDURE Init;
-VAR s: ARRAY 8 OF CHAR;
-BEGIN
-	Kernel.GetConfig("FontConv", s);
-	conv := s[0] # "0"
-END Init;
-
-BEGIN Init; LibBlockId := 0DBX;
+BEGIN LibBlockId := 0DBX;
 	NEW(FirstLib);  FirstLib.next := NIL;
 	Kernel.DisableTracing(SYSTEM.ADR(FirstLib^), SYSTEM.ADR(FirstLib.next));
+	NEW(FirstAlias);  FirstAlias.next := NIL;
+	Kernel.DisableTracing(SYSTEM.ADR(FirstAlias^), SYSTEM.ADR(FirstAlias.lib));
 	stamp := MIN(LONGINT);
 	NEW(NoObj);
 	nofreg := 0;

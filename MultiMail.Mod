@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,8 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE MultiMail; (* ejz,   *)
-	IMPORT Files, Objects, Fonts, Texts, Oberon, Strings, Base64, NetTools, MIME, Mail, Links, Gadgets, Lists, Streams,
+MODULE MultiMail;	(** portable *) (* ejz,   *)
+	IMPORT Files, Objects, Texts, Oberon, Strings, Fonts, Base64, NetTools, MIME, Mail, Links, Gadgets, Lists, Streams,
 		TextStreams;
 
 	VAR
@@ -75,20 +74,21 @@ MODULE MultiMail; (* ejz,   *)
 		VAR
 			S: Mail.SMTPSession;
 			Sw: Streams.Stream;
-			server, email, outbox: ARRAY 64 OF CHAR;
+			server, email: ARRAY 64 OF CHAR;
 			cont: MIME.Content;
 			obj: Objects.Object;
-			text, mail, coded, sig: Texts.Text;
+			text, mail, ascii: Texts.Text;
 			buf: Texts.Buffer;
 			list: Lists.List;
 			item: Lists.Item;
 			boundary: ARRAY 128 OF CHAR;
-			magStr: ARRAY 16 OF CHAR;
-			pos, end, magic: LONGINT;
+			magStr, val: ARRAY 16 OF CHAR;
+			pos, magic: LONGINT;
 			F: Files.File;
 			h: MIME.Header;
 			R: Texts.Reader;
 			ch: CHAR;
+			autoCc: BOOLEAN;
 	BEGIN
 		Texts.OpenWriter(W);
 		obj := Gadgets.FindObj(Gadgets.context, "body");
@@ -96,28 +96,29 @@ MODULE MultiMail; (* ejz,   *)
 		text := obj(Texts.Text);
 		obj := Gadgets.FindObj(Gadgets.context, "files");
 		list := obj(Lists.List);
-
-(* gen boundary *)
-		magic := Oberon.Time();
-		boundary := "------------";
-		Strings.IntToStr(magic, magStr);
-		Strings.Append(boundary, magStr);
 		NEW(mail); Texts.Open(mail, "");
 		NEW(buf); Texts.OpenBuf(buf);
 
+		Mail.GetSetting("SMTP", server, FALSE); Mail.GetSetting("EMail", email, FALSE);
+		Mail.GetSetting("AutoCc", boundary, TRUE); Strings.StrToBool(boundary, autoCc);
+
+(* gen boundary *)
+		magic := Oberon.Time(); boundary := "------------";
+		Strings.IntToStr(magic, magStr); Strings.Append(boundary, magStr);
+
 (* mime header *)
-		Sw := TextStreams.OpenReader(text, 0);
+		Sw := TextStreams.OpenReader(text, 0); 
 		MIME.ReadHeader(Sw, NIL, h, pos);
 		Texts.OpenReader(R, text, pos); Texts.Read(R, ch);
-		IF (ch = Strings.CR) OR (ch = Strings.LF) THEN
+		IF ((ch = Strings.CR) OR (ch = Strings.LF)) OR R.eot THEN
+			ch := Strings.CR;
 			WHILE (pos > 0) & ((ch = Strings.CR) OR (ch = Strings.LF)) DO
-				DEC(pos);
-				Texts.OpenReader(R, text, pos); Texts.Read(R, ch)
+				DEC(pos); Texts.OpenReader(R, text, pos); Texts.Read(R, ch)
 			END;
 			INC(pos); IF pos > text.len THEN pos := text.len END
 		END;
 		Texts.Save(text, 0, pos, buf); Texts.Append(mail, buf);
-		INC(pos); Texts.WriteLn(W);
+		Texts.WriteLn(W);
 		Texts.WriteString(W, "X-Mailer: MultiMail for Oberon (ejz)"); Texts.WriteLn(W);
 		Texts.WriteString(W, "MIME-Version: 1.0"); Texts.WriteLn(W);
 		Texts.WriteString(W, 'Content-Type: multipart/mixed; boundary="');
@@ -127,66 +128,42 @@ MODULE MultiMail; (* ejz,   *)
 		Texts.WriteLn(W); Texts.WriteLn(W);
 
 (* message *)
-		Texts.OpenReader(R, text, pos); Texts.Read(R, ch);
-		WHILE ~R.eot & ((ch = Strings.CR) OR (ch = Strings.LF)) & (R.lib IS Fonts.Font) DO
-			Texts.Read(R, ch); INC(pos)
-		END;
 		Texts.WriteString(W, "--"); Texts.WriteString(W, boundary);
 		Texts.WriteLn(W); Texts.Append(mail, W.buf);
-		IF pos > text.len THEN pos := text.len END;
-		end := text.len;
+		Mail.GetSetting("ContType", val, TRUE);
 		NEW(cont); cont.typ := MIME.GetContentType("text/plain");
-		Mail.GetSetting("ContType", email, TRUE);
-		IF email[0] = "0" THEN
+		IF val[0] = "0" THEN
 			cont.encoding := MIME.EncBin
-		ELSIF email[0] = "1" THEN
+		ELSIF val[0] = "1" THEN
 			cont.encoding := MIME.Enc8Bit
-		ELSIF email[0] = "2" THEN
+		ELSIF val[0] = "2" THEN
 			cont.typ := MIME.GetContentType(MIME.OberonMime); cont.encoding := MIME.EncAsciiCoderC
 		ELSE
 			cont.encoding := MIME.EncAuto;
 			Mail.QueryContType(text, pos, cont)
 		END;
-		Mail.GetSetting("Signature", email, FALSE);
-		IF email # "" THEN
-			NEW(sig); Texts.Open(sig, email);
-			IF sig.len > 0 THEN
-				Texts.Save(text, 0, text.len, W.buf);
-				NEW(text); Texts.Open(text, "");
-				Texts.Append(text, W.buf);
-				Texts.WriteLn(W); Texts.Append(text, W.buf);
-				Texts.Save(sig, 0, sig.len, W.buf);
-				Texts.Append(text, W.buf);
-				end := text.len
-			END
-		END;
-		IF cont.encoding = MIME.EncAsciiCoderC THEN
-			Mail.MakeAscii(text, coded, pos, end, TRUE)
-		ELSIF cont.encoding = MIME.EncAsciiCoderCPlain THEN
-			Mail.MakeAscii(text, coded, pos, end, FALSE)
-		ELSE
-			coded := NIL
+		IF cont.encoding IN {MIME.EncAsciiCoder, MIME.EncAsciiCoderC, MIME.EncAsciiCoderCPlain} THEN
+			Texts.WriteString(W, "X-Content-Type: "); Texts.WriteString(W, MIME.OberonMime);
+			Texts.WriteLn(W); Texts.Append(mail, W.buf)
 		END;
 		Sw := TextStreams.OpenWriter(mail);
-		IF cont.encoding = MIME.EncAsciiCoderC THEN
-			cont.encoding := MIME.Enc8Bit;
-			MIME.WriteISOMime(Sw, cont);
-			TextStreams.WriteString(Sw, "X-Content-Type: ");
-			TextStreams.WriteString(Sw, MIME.OberonMime);
-			TextStreams.WriteLn(Sw)
-		ELSIF cont.encoding # MIME.EncBin THEN
-			MIME.WriteISOMime(Sw, cont)
-		END;
-		TextStreams.WriteLn(Sw);
-		IF coded # NIL THEN
-			cont.encoding := MIME.Enc8Bit;
-			MIME.WriteText(text, pos, end, Sw, cont, FALSE, TRUE);
-			TextStreams.WriteString(Sw, Mail.OberonStart);
-			TextStreams.WriteLn(Sw);
-			cont.encoding := MIME.EncBin;
-			MIME.WriteText(coded, 0, coded.len, Sw, cont, FALSE, TRUE)
+		MIME.WriteISOMime(Sw, cont);
+		TextStreams.WriteLn(Sw); TextStreams.WriteLn(Sw);
+		IF cont.encoding IN {MIME.EncAsciiCoder, MIME.EncAsciiCoderC, MIME.EncAsciiCoderCPlain} THEN
+			IF cont.encoding IN {MIME.EncAsciiCoder, MIME.EncAsciiCoderC} THEN
+				MIME.WriteText(text, pos, text.len, Sw, cont, FALSE, TRUE)
+			END;
+			TextStreams.WriteString(Sw, Mail.OberonStart); TextStreams.WriteLn(Sw);
+			Mail.MakeAscii(text, pos, text.len, cont.encoding # MIME.EncAsciiCoder, ascii);
+			cont.typ := MIME.GetContentType("text/plain");
+			MIME.WriteText(ascii, 0, ascii.len, Sw, cont, FALSE, TRUE)
 		ELSE
-			MIME.WriteText(text, pos, end, Sw, cont, FALSE, TRUE)
+			Texts.OpenReader(R, text, pos); Texts.Read(R, ch); INC(pos);
+			WHILE ~R.eot & (ch <= " ") & (R.lib IS Fonts.Font) DO
+				Texts.Read(R, ch); INC(pos)
+			END;
+			DEC(pos);
+			MIME.WriteText(text, pos, text.len, Sw, cont, FALSE, TRUE)
 		END;
 		TextStreams.WriteLn(Sw); Sw.Flush(Sw);
 
@@ -218,13 +195,11 @@ MODULE MultiMail; (* ejz,   *)
 		Texts.WriteString(W, "--"); Texts.WriteString(W, boundary); Texts.WriteString(W, "--"); Texts.WriteLn(W);
 		Texts.WriteLn(W); Texts.Append(mail, W.buf);
 
-		Mail.GetSetting("SMTP", server, FALSE); Mail.GetSetting("EMail", email, FALSE); Mail.GetSetting("OutBox", outbox, FALSE);
-		IF outbox = "CURRENT" THEN outbox := "" END;
 		cont.typ := MIME.GetContentType("text/plain"); cont.encoding := MIME.EncBin;
 		Mail.OpenSMTP(S, server, email, Mail.DefSMTPPort);
 		IF S.res = NetTools.Done THEN
 			Texts.WriteString(W, "mailing "); Texts.Append(Oberon.Log, W.buf);
-			Mail.SendMail(S, mail, cont, outbox);
+			Mail.SendMail(S, mail, cont, autoCc);
 			Mail.CloseSMTP(S)
 		END;
 		Texts.WriteString(W, S.reply); Texts.WriteLn(W);

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Dim3Frames;	(* David Ulrich Nov 95 - März 96 *)
+MODULE Dim3Frames;	(** portable *)	(* David Ulrich Nov 95 - März 96 *)
 (** This module implements a 3D Engine frame and gadget **)
 
 IMPORT
@@ -659,6 +658,11 @@ BEGIN
 	END
 END AlignSelection;
 
+PROCEDURE Poll;	(* for LNO *)
+BEGIN
+	IF Input.Available() = 0 THEN END
+END Poll;
+
 (** make benchmark test **)
 PROCEDURE Benchmark*;
 CONST nFrames = 160;
@@ -678,7 +682,8 @@ BEGIN
 	FOR i := 1 TO nFrames DIV 8 DO
 		RestoreFrame(F, R, F.absX, F.absY);
 		Dim3Engine.MoveCamera(F.camera, 0, 0, -80/nFrames);
-		Dim3Engine.RotateCamera(F.camera, 8*Math.pi/(6*nFrames), 0, 0, 1)
+		Dim3Engine.RotateCamera(F.camera, 8*Math.pi/(6*nFrames), 0, 0, 1);
+		Poll
 	END;
 	Dim3Engine.InitCamera(F.camera);
 	Dim3Engine.MoveCamera(F.camera, 0, 0, -10);
@@ -689,6 +694,7 @@ BEGIN
 		Dim3Engine.MoveCamera(F.camera, 0, 0, 10);
 		Dim3Engine.RotateCamera(F.camera, 4*Math.pi/nFrames, 0, 1, 0);
 		Dim3Engine.MoveCamera(F.camera, 0, 0, -10);
+		Poll
 	END;
 	Dim3Engine.InitCamera(F.camera);
 	Dim3Engine.RotateCamera(F.camera, Math.pi, 0, 1, 0);
@@ -698,6 +704,7 @@ BEGIN
 	FOR i := 1 TO nFrames DIV 4 DO
 		RestoreFrame(F, R, F.absX, F.absY);
 		Dim3Engine.RotateCamera(F.camera, 8*Math.pi/(6*nFrames), 0, 0, 1);
+		Poll
 	END;
 	Dim3Engine.InitCamera(F.camera);
 	Dim3Engine.RotateCamera(F.camera, Math.pi, 0, 1, 0);
@@ -709,6 +716,7 @@ BEGIN
 		Dim3Engine.MoveCamera(F.camera, 0, 0, 10);
 		Dim3Engine.RotateCamera(F.camera, 4*Math.pi/nFrames, 0, 1, 0);
 		Dim3Engine.MoveCamera(F.camera, 0, 0, -10);
+		Poll
 	END;
 	Dim3Engine.InitCamera(F.camera);
 	Dim3Engine.MoveCamera(F.camera, 0, 0, -10);
@@ -717,7 +725,8 @@ BEGIN
 	FOR i := 1 TO nFrames DIV 8 DO
 		RestoreFrame(F, R, F.absX, F.absY);
 		Dim3Engine.MoveCamera(F.camera, 0, 0, 80/nFrames);
-		Dim3Engine.RotateCamera(F.camera, 8*Math.pi/(6*nFrames), 0, 0, 1)
+		Dim3Engine.RotateCamera(F.camera, 8*Math.pi/(6*nFrames), 0, 0, 1);
+		Poll
 	END;
 	Dim3Engine.InitCamera(F.camera);
 	RestoreFrame(F, R, F.absX, F.absY);

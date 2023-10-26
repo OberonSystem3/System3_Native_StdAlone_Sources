@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,123 +13,113 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE In; (* Stream-oriented text input, MR 1992, NW 22.5.93, JG 26.7.93, JM 2.5.95 *)
+MODULE In; (** portable *)	(* based on module from "Programming in Oberon" *)
 
 (** Stream oriented text input. Module In encapsulates the parameter scanning process of commands.
 *)
 
-  IMPORT Texts, Viewers, Objects, Oberon, Display;
+IMPORT Texts, Oberon;
 
 VAR
-  Done*: BOOLEAN;	(** Has the last scan operation been successful? *)
-  S: Texts.Scanner;
-
-(* Returns the frame that is at X, Y on the display. u, v contain the relative coordinates inside this frame *)
-PROCEDURE ThisFrame(X, Y: INTEGER; VAR F: Display.Frame);
-VAR M: Display.LocateMsg;
-BEGIN M.X := X; M.Y := Y; M.F := NIL; M.loc := NIL; Display.Broadcast(M); F := M.loc
-END ThisFrame;
-
-(* Get the marked text *)
-PROCEDURE GetText(VAR par: Display.Frame): Texts.Text;
-VAR M: Objects.LinkMsg; t: Texts.Text;
-BEGIN
-	t := NIL;
-	ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, par);
-	IF par # NIL THEN
-		M.id := Objects.get; M.name := "Model"; M.obj := NIL; M.res := -1; par.handle(par, M);
-		IF (M.obj # NIL) & (M.obj IS Texts.Text) THEN t := M.obj(Texts.Text) END
-	END;
-	RETURN t
-END GetText;
+	Done*: BOOLEAN;	(** Has the last scan operation been successful? *)
+	S: Texts.Scanner;
 
 (** Initializes the parameter scanner. The parameter stream is assumed to be the selection when ^ is scanned, the marked text viewer when * is scanned; otherwise the text that follows the command itself. *)
 PROCEDURE Open*;
-  VAR beg, end, time: LONGINT; T: Texts.Text; F: Display.Frame;
-BEGIN Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(S);
-  IF (S.class = Texts.Char) & (S.c = "^") THEN
-    Oberon.GetSelection(T, beg, end, time);
-    IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Done := TRUE
-      ELSE Done := FALSE
-    END
-  ELSIF (S.class = Texts.Char) & (S.c = "*") THEN
-    T := GetText(F);
-    IF T # NIL THEN
-      Texts.OpenScanner(S, T, 0); Done := TRUE
-    ELSE Done := FALSE
-    END
-  ELSE T := Oberon.Par.text; Texts.OpenScanner(S, T, Oberon.Par.pos); Done := TRUE
-  END
+VAR beg, end, time: LONGINT; T: Texts.Text;
+BEGIN
+	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(S);
+	IF (S.class = Texts.Char) & (S.c = "^") THEN
+		Oberon.GetSelection(T, beg, end, time);
+		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Done := TRUE
+		ELSE Done := FALSE
+		END
+	ELSIF (S.class = Texts.Char) & (S.c = "*") THEN
+		T := Oberon.MarkedText();
+		IF T # NIL THEN Texts.OpenScanner(S, T, 0); Done := TRUE
+		ELSE Done := FALSE
+		END
+	ELSE
+		T := Oberon.Par.text; Texts.OpenScanner(S, T, Oberon.Par.pos); Done := TRUE
+	END
 END Open;
 
 (** Scan a single character. The character returned is the character immediately following the last scanned token.*)
-PROCEDURE Char* (VAR ch: CHAR);
+PROCEDURE Char*(VAR ch: CHAR);
 BEGIN
-  IF Done THEN ch := S.nextCh; Done := ~S.eot; Texts.Read(S, S.nextCh) END
+	IF Done THEN ch := S.nextCh; Done := ~S.eot; Texts.Read(S, S.nextCh) END
 END Char;
 
 (** Scan an integer. *)
-PROCEDURE Int* (VAR i: INTEGER);
+PROCEDURE Int*(VAR i: INTEGER);
 BEGIN
-  IF Done THEN Texts.Scan(S);
-    IF (S.class = Texts.Int) & (MIN(INTEGER) <= S.i) & (S.i <= MAX(INTEGER)) THEN i := SHORT(S.i)
-      ELSE Done := FALSE
-    END
-  END
+	IF Done THEN
+		Texts.Scan(S);
+		IF (S.class = Texts.Int) & (MIN(INTEGER) <= S.i) & (S.i <= MAX(INTEGER)) THEN
+			i := SHORT(S.i)
+		ELSE
+			Done := FALSE
+		END
+	END
 END Int;
 
 (** Scan a long integer. *)
 PROCEDURE LongInt* (VAR i: LONGINT);
 BEGIN
-  IF Done THEN Texts.Scan(S);
-    IF S.class = Texts.Int THEN i := S.i ELSE Done := FALSE END
-  END
+	IF Done THEN
+		Texts.Scan(S);
+		IF S.class = Texts.Int THEN i := S.i ELSE Done := FALSE END
+	END
 END LongInt;
 
 (** Scan a real number. *)
 PROCEDURE Real* (VAR x: REAL);
 BEGIN
-  IF Done THEN Texts.Scan(S);
-    IF S.class = Texts.Real THEN x := S.x
-      ELSIF S.class = Texts.Int THEN x := S.i
-      ELSE Done := FALSE
-      END
-  END
+	IF Done THEN Texts.Scan(S);
+		IF S.class = Texts.Real THEN x := S.x
+		ELSIF S.class = Texts.Int THEN x := S.i
+		ELSE Done := FALSE
+		END
+	END
 END Real;
 
 (** Scan a long real number. *)
 PROCEDURE LongReal* (VAR y: LONGREAL);
 BEGIN
-  IF Done THEN Texts.Scan(S);
-    IF S.class = Texts.LongReal THEN y := S.y
-      ELSIF S.class = Texts.Real THEN y := S.x
-      ELSIF S.class = Texts.Int THEN y := S.i
-      ELSE Done := FALSE
-      END
-  END
+	IF Done THEN
+		Texts.Scan(S);
+		IF S.class = Texts.LongReal THEN y := S.y
+		ELSIF S.class = Texts.Real THEN y := S.x
+		ELSIF S.class = Texts.Int THEN y := S.i
+		ELSE Done := FALSE
+		END
+	END
 END LongReal;
 
 (** Scan a name. The syntax of a name is the same as that of the module Texts scanner. *)
 PROCEDURE Name* (VAR name: ARRAY OF CHAR);
 BEGIN
-	IF Done THEN Texts.Scan(S);
-      IF S.class = Texts.Name THEN COPY(S.s, name)
-      ELSE Done := FALSE
-      END
-    END
+	IF Done THEN
+		Texts.Scan(S);
+		IF S.class = Texts.Name THEN COPY(S.s, name)
+		ELSE Done := FALSE
+		END
+	END
 END Name;
 
 (** Scan a double quoted string. The quotes are not returned. *)
 PROCEDURE String* (VAR str: ARRAY OF CHAR);
 BEGIN
-	IF Done THEN Texts.Scan(S);
-      IF (S.class = Texts.String) OR (S.class = Texts.Name) THEN COPY(S.s, str)
-      ELSE Done := FALSE
-      END
-   END
+	IF Done THEN
+		Texts.Scan(S);
+		IF (S.class = Texts.String) OR (S.class = Texts.Name) THEN COPY(S.s, str)
+		ELSE Done := FALSE
+		END
+	END
 END String;
 
-BEGIN Done := FALSE
+BEGIN
+	Done := FALSE
 END In.
 
 (** Remarks:
@@ -156,5 +145,4 @@ To hide the three parameter passing styles, we can program Example.Calculate in 
 After each call to an In scan procedure, the In.Done flag is set to true if a parameter of that type was found in the parameters. If an unexpected parameter (say an integer instead of an string) was scanned, In.Done is is set to FALSE and scanning is immediately terminated. Calls to In will now have no effect until In.Open is called again.
 
 3. The parameter scanner ignores whitespace (characters SPACE 20X, TAB 9X, and CR 0DX).
-
 *)

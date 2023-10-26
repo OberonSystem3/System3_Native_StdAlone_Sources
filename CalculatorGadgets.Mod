@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE CalculatorGadgets;	(** by W.Ibl *)
+MODULE CalculatorGadgets;	(** portable *)	(** by W.Ibl *)
 (*
 	Aug '97	V1.0	first release
 	Oct '97	V1.1	several bugfixes
@@ -377,6 +376,24 @@ BEGIN
 	RETURN(E.expr.res = Calculator.Done);
 END AddOperator;
 
+PROCEDURE GetSuffix(VAR str(* in *), suf(* out *): ARRAY OF CHAR);
+	VAR i, j, l, dot: LONGINT;
+BEGIN
+	dot := -1; i := 0;
+	WHILE str[i] # 0X DO
+		IF str[i] = "." THEN dot := i END;
+		INC(i)
+	END;
+	j := 0;
+	IF dot > 0 THEN
+		l := LEN(suf)-1; i := dot+1;
+		WHILE (j < l) & (str[i] # 0X) DO
+			suf[j] := str[i]; INC(j); INC(i)
+		END
+	END;
+	suf[j] := 0X
+END GetSuffix;
+
 (* ** Engine Handler ** *)
 
 PROCEDURE EngineAttr(E: Engine; VAR M: Objects.AttrMsg);
@@ -396,7 +413,7 @@ BEGIN
 		ELSIF (M.name = "Memory") THEN
 			M.class:= Objects.Bool; M.b:= E.mem[0] # 0.0; M.res:= 0;
 		ELSIF Strings.Prefix(CalcPrefix,M.name) THEN
-			Strings.GetSuffix(M.name,val); M.res:= 0;
+			GetSuffix(M.name,val); M.res:= 0;
 			M.class:= Objects.Bool; M.b:= (val = E.tag);
 		END;
 	ELSIF (M.id = Objects.set) THEN
@@ -405,9 +422,9 @@ BEGIN
 		ELSIF (M.name = "Base") & (M.class = Objects.Int) THEN
 			E.op[0].base:= SHORT(M.i); M.res:= 0;
 		ELSIF Strings.Prefix(CalcPrefix,M.name) & (M.class = Objects.Bool) THEN
-			Strings.GetSuffix(M.name,val); M.res:= 0;
+			GetSuffix(M.name,val); M.res:= 0;
 			IF (M.b = TRUE) THEN
-				Strings.GetSuffix(M.name,E.tag);
+				GetSuffix(M.name,E.tag);
 				IF (Strings.Length(val) = 1) & AddDigit(E,val[0]) THEN
 					M.res:= 0;
 				ELSIF AddConstant(E,val) THEN
@@ -506,7 +523,7 @@ BEGIN
 		END;
 	ELSIF (M.id = Objects.set) & (M.name = "Field") & (M.class = Objects.String) THEN
 		COPY(M.s,B.tag);
-		IF Strings.CAPPrefix(CalcPrefix,M.s) THEN Strings.GetSuffix(M.s,B.tag); END;
+		IF Strings.CAPPrefix(CalcPrefix,M.s) THEN GetSuffix(M.s,B.tag); END;
 	END;
 	IF (M.res = -1) THEN BasicGadgets.ButtonHandler(B,M); END;
 END ButtonAttr;

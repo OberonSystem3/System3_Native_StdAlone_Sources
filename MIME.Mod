@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,8 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE MIME;
-	IMPORT (*Registry,*) Streams, TextStreams, Files, Dates, Strings, Fonts, Texts, Display, Display3,
+MODULE MIME; (** portable *)
+	IMPORT Streams, TextStreams, Files, Dates, Strings, Fonts, Texts, Display, Display3,
 		Objects, Attributes, Gadgets, BasicFigures, Out, Oberon;
 
 	CONST
@@ -100,7 +99,7 @@ MODULE MIME;
 					INC(bufLen, 1024); NEW(buf, bufLen);
 					COPY(h.fields^, buf^); h.fields := buf
 				END;
-				IF (ch = ":") & ~field THEN
+IF (ch = ":") & ~field THEN
 					end := FALSE; field := ~white; anyField := anyField OR field
 				ELSIF ch <= " " THEN
 					ch := " "; white := TRUE
@@ -113,8 +112,7 @@ MODULE MIME;
 						IF ch # Strings.LF THEN
 							eolc := Strings.CR
 						ELSE
-							Read();
-							eolc := Strings.LF
+							Read(); eolc := Strings.LF
 						END
 					END;
 					IF ch > " " THEN
@@ -145,15 +143,15 @@ MODULE MIME;
 			eol := FALSE
 		UNTIL end;
 		len := begLen; h.fields[bufPos] := 0X;
-		IF ~anyField THEN
-			h.fields[0] := 0X; h.fields[1] := 0X
-		END
+IF ~anyField THEN
+	h.fields[0] := 0X; h.fields[1] := 0X
+END
 	END ReadHeader;
 
-	PROCEDURE FindField*(h: Header; field: ARRAY OF CHAR): LONGINT;
-		VAR pos, len, i: LONGINT;
+	PROCEDURE FindFieldPos*(h: Header; field: ARRAY OF CHAR; VAR pos: LONGINT);
+		VAR len, i: LONGINT;
 	BEGIN
-		len := LEN(h.fields^); pos := 0;
+		len := LEN(h.fields^);
 		WHILE pos < len DO
 			i := 0;
 			WHILE (pos < len) & (CAP(field[i]) = CAP(h.fields[pos])) & (field[i] # 0X) DO
@@ -169,7 +167,7 @@ MODULE MIME;
 						INC(pos)
 					END
 				END;
-				RETURN pos
+				RETURN
 			ELSE
 				WHILE (pos < len) & (h.fields[pos] # 0X) DO
 					INC(pos)
@@ -177,7 +175,14 @@ MODULE MIME;
 			END;
 			INC(pos)
 		END;
-		RETURN -1
+		pos := -1
+	END FindFieldPos;
+
+	PROCEDURE FindField*(h: Header; field: ARRAY OF CHAR): LONGINT;
+		VAR pos: LONGINT;
+	BEGIN
+		pos := 0; FindFieldPos(h, field, pos);
+		RETURN pos
 	END FindField;
 
 	PROCEDURE NextValue*(h: Header; VAR pos: LONGINT);
@@ -198,6 +203,47 @@ MODULE MIME;
 		END
 	END NextValue;
 
+	PROCEDURE HexVal(ch: CHAR): LONGINT;
+	BEGIN
+		IF (ch >= "0") & (ch <= "9") THEN
+			RETURN ORD(ch)-ORD("0")
+		ELSIF (ch >= "A") & (ch <= "F") THEN
+			RETURN ORD(ch)-ORD("A")+10
+		ELSIF (ch >= "a") & (ch <= "f") THEN
+			RETURN ORD(ch)-ORD("a")+10
+		END
+	END HexVal;
+
+	PROCEDURE DecodeValue(VAR value: ARRAY OF CHAR);
+		VAR
+			i, j, l: LONGINT;
+			quoted: BOOLEAN;
+			ch: CHAR;
+	BEGIN
+		quoted := FALSE;
+		i := 0; j := 0; l := LEN(value);
+		ch := value[i];
+		WHILE ch # 0X DO
+			ch := Strings.ISOToOberon[ORD(ch)];
+			IF ch = "=" THEN
+				IF ~quoted & ((i+14) < l) & (value[i+1] = "?") & (value[i+12] = "?") & (value[i+14] = "?") THEN
+					quoted := TRUE; INC(i, 14)
+				ELSIF quoted & Strings.IsHexDigit(value[i+1]) & Strings.IsHexDigit(value[i+2]) THEN
+					value[j] := Strings.ISOToOberon[HexVal(value[i+1])*16+HexVal(value[i+2])]; INC(j);
+					INC(i, 2)
+				ELSE
+					value[j] := ch; INC(j)
+				END
+			ELSIF (ch = "?") & quoted & (value[i+1] = "=") THEN
+				quoted := FALSE; INC(i)
+			ELSE
+				value[j] := ch; INC(j)
+			END;
+			INC(i); ch := value[i]
+		END;
+		value[j] := 0X
+	END DecodeValue;
+
 	PROCEDURE ExtractValue*(h: Header; pos: LONGINT; VAR val: ARRAY OF CHAR);
 		VAR len, i, vlen: LONGINT;
 	BEGIN
@@ -216,7 +262,8 @@ MODULE MIME;
 		val[i] := 0X; DEC(i);
 		WHILE (i > 0) & (val[i] <= " ") DO
 			val[i] := 0X; DEC(i)
-		END
+		END;
+		DecodeValue(val)
 	END ExtractValue;
 
 	PROCEDURE FindParam*(h: Header; pos: LONGINT; param: ARRAY OF CHAR; VAR val: ARRAY OF CHAR);
@@ -233,7 +280,7 @@ MODULE MIME;
 		vlen := LEN(val)-1;	
 		WHILE (pos < len) & (h.fields[pos] # 0X) DO
 			i := 0;
-			WHILE (pos < len) & (CAP(param[i]) = CAP(h.fields[pos])) DO
+			WHILE (pos < len) & (param[i] # 0X) & (CAP(param[i]) = CAP(h.fields[pos])) DO
 				INC(i); INC(pos)
 			END;
 			IF param[i] = 0X THEN
@@ -299,31 +346,39 @@ MODULE MIME;
 	PROCEDURE StrToMonth(VAR str: ARRAY OF CHAR): LONGINT;
 	BEGIN
 		CASE CAP(str[0]) OF
-			"J": IF CAP(str[1]) = "A" THEN
-						RETURN 1
-					ELSIF CAP(str[2]) = "N" THEN
-						RETURN 6
-					ELSIF CAP(str[2]) = "L" THEN
-						RETURN 7
-					END
-			|"F": RETURN 2
-			|"M": IF CAP(str[2]) = "R" THEN
-						RETURN 3
-					ELSIF CAP(str[2]) = "Y" THEN
-						RETURN 5
-					END
-			|"A": IF CAP(str[1]) = "P" THEN
+			"A": IF (CAP(str[1]) = "P") OR (CAP(str[1]) = "V") THEN (* April, Aprile, Avril *)
 						RETURN 4
-					ELSIF CAP(str[1]) = "U" THEN
+					ELSE (* August, Agosto, Aout *)
 						RETURN 8
 					END
-			|"S": RETURN 9
-			|"O": RETURN 10
-			|"N": RETURN 11
-			|"D": RETURN 12
+			|"D": RETURN 12 (* December, Dezember, Dicembre, Decembre *)
+			|"F": RETURN 2 (* February, Febbbraio, Fevrier *)
+			|"G": IF CAP(str[1]) = "E" THEN (* Gennaiv *)
+						RETURN 1
+					ELSE (* Giugno *)
+						RETURN 6
+					END
+			|"J": IF CAP(str[1]) = "A" THEN (* January, Januar, Janvier *)
+						RETURN 1
+					ELSIF CAP(str[2]) = "L" THEN (* July, Juli, Juillet *)
+						RETURN 7
+					ELSE (* June, Juni, Juin *)
+						RETURN 6
+					END
+			|"L": RETURN 7 (* Luglio *)
+			|"M": IF CAP(str[2]) = "R" THEN (* March, März, Mars *)
+						RETURN 3
+					ELSIF CAP(str[2]) = "Z" THEN (* Mazzo *)
+						RETURN 3
+					ELSE (* May, Mai, Maggio *)
+						RETURN 5
+					END
+			|"N": RETURN 11(* November, Novembre *)
+			|"O": RETURN 10 (* October, Oktober, Ottobre, Octobre *)
+			|"S": RETURN 9 (* September, Seltombre, Septembre *)
 		ELSE
-			RETURN 0
-		END
+		END;
+		RETURN 0
 	END StrToMonth;
 
 	PROCEDURE GMTTime(h, m, s: LONGINT; zone: ARRAY OF CHAR; VAR time, date: LONGINT): BOOLEAN;
@@ -355,6 +410,8 @@ MODULE MIME;
 				dH := -8
 			ELSIF zone = "PDT" THEN
 				dH := -7
+			ELSIF zone = "MET" THEN
+				dH := +2
 			ELSIF (zone[1] <= " ") & (zone[0] >= "A") & (zone[0] <= "Y") & (zone[0] # "J") THEN (* military *)
 				IF zone[0] >= "N" THEN
 					dH := ORD(zone[0])-ORD("N")+1
@@ -365,11 +422,9 @@ MODULE MIME;
 				END
 			ELSIF zone = "PM" THEN
 				dH := +12
-			ELSIF zone = "" THEN (* local time *)
+			ELSE (* local time *)
 				dH := Dates.TimeDiff DIV 60;
 				dM := Dates.TimeDiff MOD 60
-			ELSE
-				RETURN FALSE
 			END
 		END;
 		h := h-dH; m := m-dM;
@@ -381,6 +436,12 @@ MODULE MIME;
 		time := h*1000H + m*40H + s;
 		RETURN TRUE
 	END GMTTime;
+
+	PROCEDURE GetClock*(VAR time, date: LONGINT);
+	BEGIN
+		Oberon.GetClock(time, date);
+		Dates.AddTime(time, date, -Dates.TimeDiff * 60)	(* convert to GMT *)
+	END GetClock;
 
 	PROCEDURE ExtractGMTDate*(h: Header; pos: LONGINT; VAR time, date: LONGINT);
 		VAR
@@ -412,7 +473,7 @@ MODULE MIME;
 		mo[i] := 0X; month := StrToMonth(mo);
 		IF (month >= 1) & (month <= 12) THEN
 			j := SHORT(pos); Strings.StrToIntPos(h.fields^, year, j);
-			IF year >= 1000 THEN
+			IF year >= 100 THEN
 				date := (year-1900)*200H + month*20H + day
 			ELSE
 				date := year*200H + month*20H + day
@@ -447,8 +508,7 @@ MODULE MIME;
 				RETURN
 			END
 		END;
-		(*Out.String("invalid date header"); Out.Ln();*)
-		Oberon.GetClock(time, date)
+		GetClock(time, date)
 	END ExtractGMTDate;
 
 	PROCEDURE *EnumMIME(key, value: ARRAY OF CHAR);
@@ -529,7 +589,7 @@ MODULE MIME;
 	END GetContentType;
 
 	PROCEDURE LoadTypes();
-	VAR S: Texts.Scanner;  key: ARRAY 64 OF CHAR;
+		VAR S: Texts.Scanner; key: ARRAY 64 OF CHAR;
 	BEGIN
 		contTypes := NIL;
 		Oberon.OpenScanner(S, "MIME");
@@ -579,17 +639,6 @@ MODULE MIME;
 		cont.pos := pos; cont.len := MAX(LONGINT)
 	END ExtractContentType;
 
-	PROCEDURE HexVal(ch: CHAR): LONGINT;
-	BEGIN
-		IF (ch >= "0") & (ch <= "9") THEN
-			RETURN ORD(ch)-ORD("0")
-		ELSIF (ch >= "A") & (ch <= "F") THEN
-			RETURN ORD(ch)-ORD("A")+10
-		ELSIF (ch >= "a") & (ch <= "f") THEN
-			RETURN ORD(ch)-ORD("a")+10
-		END
-	END HexVal;
-
 	PROCEDURE ReadText*(in: Streams.Stream; VAR W: Texts.Writer; cont: Content; mail: BOOLEAN);
 		VAR
 			buffer: ARRAY BufLen OF CHAR;
@@ -635,24 +684,22 @@ MODULE MIME;
 						IF i < rlen THEN
 							ch := buffer[i]; INC(i)
 						ELSE
-							Streams.Read(in, ch); INC(rlen)
+							Streams.Read(in, ch); INC(rlen); DEC(maxLen)
 						END;
 						IF i < rlen THEN
 							ch1 := buffer[i]
 						ELSE
-							Streams.Read(in, ch1); INC(rlen)
+							Streams.Read(in, ch1); INC(rlen); DEC(maxLen)
 						END;
 						IF Strings.IsHexDigit(ch) & Strings.IsHexDigit(ch1) THEN
 							ch := Strings.ISOToOberon[HexVal(ch)*16+HexVal(ch1)];
 							Texts.Write(W, ch); ch := 0X
+						ELSIF (ch1 = Strings.LF) OR (ch = Strings.LF) THEN
+							(* Texts.WriteLn(W); offs := 0 *)
 						ELSE
-							IF (ch1 = Strings.LF) OR (ch = Strings.LF) THEN
-								Texts.WriteLn(W); offs := 0
-							ELSE
-								Texts.Write(W, "=");
-								Texts.Write(W, ch); Texts.Write(W, ch1);
-								INC(offs, 2)
-							END
+							Texts.Write(W, "=");
+							Texts.Write(W, ch); Texts.Write(W, ch1);
+							INC(offs, 2); ch := ch1
 						END
 					END;
 					INC(offs)
@@ -699,7 +746,7 @@ MODULE MIME;
 	BEGIN
 		COPY(boundary, sPat);
 		sPatLen := Strings.Length(sPat);
-		CalcDispVec();  prev := 0X;
+		CalcDispVec(); prev := 0X;
 		IF sPatLen > 0 THEN
 			Files.Set(R, F, pos); prev := ch; Files.Read(R, ch);
 			INC(pos); l := Files.Length(F); i := 0;
@@ -752,7 +799,7 @@ MODULE MIME;
 		Gadgets.NameObj(f, name);
 		Texts.WriteObj(W, f); Texts.WriteLn(W)
 	END HorzRule;
-
+	
 	PROCEDURE DecodePart(F: Files.File; beg, end: LONGINT; T: Texts.Text; VAR W: Texts.Writer; VAR parts: Part; mail: BOOLEAN);
 		VAR
 			R: Files.Rider;
@@ -799,7 +846,7 @@ MODULE MIME;
 			IF pos > 0 THEN
 				ExtractValue(h, pos, val);
 				IF Strings.CAPPrefix("Base64", val) THEN
-					Texts.WriteLn(W); Texts.WriteString(W, "Base64.Decode ");
+					Texts.WriteString(W, "Base64.Decode ");
 					pos := FindField(h, "Content-Disposition");
 					FindParam(h, pos, "filename", val);
 					IF part.name = "" THEN
@@ -808,22 +855,16 @@ MODULE MIME;
 					Texts.WriteString(W, val); Texts.WriteString(W, " ~"); Texts.WriteLn(W);
 					Texts.Append(T, W.buf); cont.encoding := EncBase64
 				ELSIF cont.typ.typ = "text" THEN
-					pos := FindField(h, "Content-Transfer-Encoding");
 					TextEncoding(h, pos, cont)
-(*				ELSIF (cont.typ.typ = "message") & (cont.typ.subTyp ="rfc822") THEN
+				ELSIF Strings.CAPPrefix("Quoted", val) THEN
+					Texts.WriteString(W, "QuotedPrintable.DecodeFile ");
 					pos := FindField(h, "Content-Disposition");
 					FindParam(h, pos, "filename", val);
 					IF part.name = "" THEN
 						COPY(val, part.name)
 					END;
-					ReadHeader;
-					IF multipart THEN
-						find boundary
-						body to F
-						DecodeMultipartFile(F, recT, boundary, mail);
-						Texts.Save(recT, 0, recT.len, W.buf);
-						Texts.Insert(T, begPart, W.buf); Texts.WriteLn(W); RETURN
-					END	*)
+					Texts.WriteString(W, val); Texts.WriteString(W, " ~"); Texts.WriteLn(W);
+					Texts.Append(T, W.buf); cont.encoding := EncBin
 				ELSE
 					cont.encoding := EncBin
 				END
@@ -840,7 +881,7 @@ MODULE MIME;
 			Strings.Append(part.name, cont.typ.subTyp)
 		END;
 		Texts.Insert(T, begPart, W.buf); (*Texts.WriteLn(W);*)
-		cont.len := end-beg; ReadText(S, W, cont, mail); Texts.WriteLn(W)
+		cont.len := end-beg; ReadText(S, W, cont, mail); (*Texts.WriteLn(W)*)
 	END DecodePart;
 
 	PROCEDURE DecodeMultipartFile(F: Files.File; VAR T: Texts.Text; boundary: ARRAY OF CHAR; mail: BOOLEAN);
@@ -870,6 +911,7 @@ MODULE MIME;
 			next := parts.next; parts.next := last;
 			last := parts; parts := next
 		END;
+		Texts.WriteLn(W);
 		parts := last;
 		WHILE parts # NIL DO
 			Texts.WriteString(W, "[ ");

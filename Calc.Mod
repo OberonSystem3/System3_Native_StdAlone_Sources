@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Calc;	(* CAS 28.9.93 / tk adapted for System 3 1.6.95*)
+MODULE Calc;	(** portable *)	(* CAS 28.9.93 / tk adapted for System 3 1.6.95*)
 	IMPORT
-		MathL, Reals, Texts, Oberon;
+		MathL, Texts, Oberon;
 
 	CONST
 		Version = "Calc / cas 28.9.93";
@@ -151,7 +150,7 @@ MODULE Calc;	(* CAS 28.9.93 / tk adapted for System 3 1.6.95*)
 	END WrChar;
 
 	PROCEDURE WrReal (n: LONGREAL);
-		VAR x, y: LONGREAL;
+		VAR x: LONGREAL;
 	BEGIN
 		IF (MIN(LONGINT) <= n) & (n <= MAX(LONGINT)) THEN x := ABS(n - ENTIER(SHORT(n)));
 			IF x < Eps THEN WrInt(n); RETURN END
@@ -366,7 +365,7 @@ MODULE Calc;	(* CAS 28.9.93 / tk adapted for System 3 1.6.95*)
 	END Real;
 
 	PROCEDURE Char*;	(** expr **)
-		VAR n: LONGREAL; ch: CHAR;
+		VAR n: LONGREAL;
 	BEGIN Str("Calc.Char"); OpenScanner(S); Expr(n);
 		IF S.class # Texts.Inval THEN
 			IF (0 <= n) & (n < 256) THEN WrChar(n)

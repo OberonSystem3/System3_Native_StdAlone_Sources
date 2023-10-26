@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Spider;	(** written by Patrick Saladin   *)
+MODULE Spider;	(** portable *)	(** written by Patrick Saladin   *)
 (*
 	14.04.95	fixed bug  redraw of cards and mouse cursor
 	05.03.95	updated to Oberon System 3 V2.0
@@ -22,8 +21,7 @@ MODULE Spider;	(** written by Patrick Saladin   *)
 	06.10.94	release of a good beta (V1.0)
 *)
 
-	IMPORT
-	Files, Input, Display, Display3, Attributes, Effects, Objects, Gadgets, Oberon, Cards, Documents, Desktops, Out;
+IMPORT Files, Input, Display, Display3, Effects, Objects, Gadgets, Oberon, Cards, Documents, Desktops, Out;
 
 CONST
 	IconName = "Icons2.Spider";
@@ -141,7 +139,7 @@ BEGIN Cards.CopyStack(M, from, to);
 END CopyTalon;
 
 PROCEDURE TalonUndoMove(T: Cards.Stack; M: Cards.Move);
-VAR c: Cards.Card; S: Cards.Stack; i: INTEGER;
+VAR S: Cards.Stack; i: INTEGER;
 BEGIN
 	WITH M: DistribMove DO
 		FOR i:= COLUMN-1 TO 0 BY -1 DO
@@ -151,24 +149,8 @@ BEGIN
 	END
 END TalonUndoMove;
 
-PROCEDURE DrawTalon(T: Cards.Stack; M: Display3.Mask; x, y, w, h: INTEGER);
-BEGIN
-	WITH T: Talon DO
-		Oberon.RemoveMarks(x, y, w, h);
-		Display3.ReplConst(M, Cards.backC, x, y, w, h, Display.replace);
-		IF Cards.IsEmpty(T.tail) THEN
-			Display3.Rect3D(M, Display3.bottomC, Cards.topC, x, y+h-CardH, CardW, CardH, 1, Display.replace)
-		ELSE
-			T.tail.next.visible:= FALSE; Cards.DrawCard(M, T.tail.next, x, y+h, CardW, CardH, T.bgNr);
-		END;
-		IF Gadgets.selected IN T.state THEN
-			Display3.FillPattern(M, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
-		END
-	END
-END DrawTalon;
-
 PROCEDURE TrackTalon(T: Cards.Stack; VAR M: Oberon.InputMsg);
-VAR DM: DistribMove; c: Cards.Card; x, y, i: INTEGER; CD: CanDistrMsg; D: DistributeMsg;
+VAR DM: DistribMove; x, y, i: INTEGER; CD: CanDistrMsg; D: DistributeMsg;
 BEGIN
 	WITH T: Talon DO
 		x:= T.X+M.x; y:= T.Y+M.y;
@@ -583,5 +565,3 @@ BEGIN
 		columnMethods.undoMove:= ColumnUndoMove;
 		columnMethods.restoreStack:= DrawColumn; columnMethods.trackMouse:= TrackColumn; 
 END Spider.
-System.Free Spider* ~
-(Spider.NewDoc)

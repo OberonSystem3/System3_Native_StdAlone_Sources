@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE RembrandtDocs; 
+MODULE RembrandtDocs; 	(** portable *)
 (** Stellt ein Rembrandt-Frame als einen Dokumententyp dar *)
 
 	(*
@@ -31,8 +30,6 @@ CONST
 	dz = 3; maxzoom=16;
 	DocW = 384; DocH = 250;
 	Menu = "Desktops.Copy[Copy] RembrandtDocs.Inc[+] RembrandtDocs.Dec[-] Desktops.StoreDoc[Store]";
-
-PROCEDURE Min (i, j: LONGINT): INTEGER; BEGIN  IF i >= j THEN RETURN SHORT(j) ELSE RETURN SHORT(i) END END Min;
 
 (** Erhöht den Zoomfaktor *)
 PROCEDURE Inc*;
@@ -121,7 +118,7 @@ PROCEDURE Handler(D: Objects.Object; VAR M: Objects.ObjMsg);
 VAR P: Pictures.Picture; R: D3.Mask;
 
 	PROCEDURE PP(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END PP;
 
 BEGIN
@@ -192,16 +189,16 @@ VAR S: Texts.Scanner; x, y, pw, ph, r, g, b: INTEGER;
 		P: Pictures.Picture;
 BEGIN
 	NEW(P); Rembrandt.GetSelectedPict(P, x, y, pw, ph);
-	IF P=NIL THEN
+	IF P = NIL THEN
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 		Texts.Scan(S);
 		IF S.class = Texts.Int THEN pw:= ABS(SHORT(S.i)) ELSE pw:= 284 END;
 		Texts.Scan(S);
 		IF S.class = Texts.Int THEN ph:= ABS(SHORT(S.i)) ELSE ph:= 200 END;
 		NEW(P); Rembrandt0.AllocatePictureMem(P, pw, ph, Display.Depth(0));  (* tk *)
-		FOR x:=0 TO SHORT(ASH(1, Display.Depth(0))-1) DO Display.GetColor(x, r, g, b); Pictures.SetColor(P, x, r, g, b) END
+		FOR x := 0 TO SHORT(ASH(1, Display.Depth(0))-1) DO Display.GetColor(x, r, g, b); Pictures.SetColor(P, x, r, g, b) END
 	END;
-	IF P#NIL THEN
+	IF P # NIL THEN
 		NEW(doc); doc.Load:= Load; doc.Store:= Store; doc.handle:= Handler;
 		Objects.NewObj:= doc;
 		doc.name:="";
@@ -235,4 +232,5 @@ END MarkedFrame;
 
 END RembrandtDocs.
 
-Desktops.OpenDoc Clown.Pict (RembrandtDocs.NewDoc)
+System.Free RembrandtDocs ~
+Desktops.OpenDoc Cards.Pict (RembrandtDocs.NewDoc)

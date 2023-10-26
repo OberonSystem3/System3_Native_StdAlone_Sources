@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -36,7 +35,7 @@ VAR seed: LONGINT;									(* fuer Zufallszahlenberechnung *)
 		
 PROCEDURE SetColorRamp();
 (* Erstellt eine Farbrampe von RGB(r0, g0, b0) nach RGB(r1, g1, b1) mit BD.noc Farbabstufungen *)
-VAR S : Texts.Scanner;
+VAR
 		i : INTEGER;
 		dr, dg, db : REAL;
 BEGIN
@@ -308,7 +307,7 @@ END WraplConst;
 PROCEDURE Circle(P : Pictures.Picture; xm, ym, r, dc, fac: INTEGER; bres : BOOLEAN; dis: INTEGER);
 (* Zeichnet einen Kreis mit Mittelpunkt xm, ym Radius r, Farbe dc, Schritte fac *)
 VAR x, y  : INTEGER; i, step : REAL;
-      d,dx,dy, j, h: INTEGER;
+      d,dx,dy, h: INTEGER;
 BEGIN
 	IF ~bres THEN
 		step:= fac/r;
@@ -358,7 +357,7 @@ PROCEDURE Spirale(P: Pictures.Picture; r0, r1, a0, a1, xm, ym, col, b : INTEGER)
 	den Mittelpunkt (xm,ym) *)
 (* b=0: einheitliche Farbe *)
 (* b=1: Farbverlauf *)
-VAR i, j, x, y : INTEGER; r, dr, coldec, cols : REAL;
+VAR i, x, y : INTEGER; r, dr, coldec, cols : REAL;
 BEGIN
 	dr:= (r1-r0)/(a1-a0); r:=0;
 	IF b=1 THEN coldec:=col/(a1-a0) ELSE coldec:=0 END;
@@ -377,9 +376,9 @@ END Spirale;
 (** Backdrops *)
 PROCEDURE Fractal*();
 (* Generiert das Backdrop Fractal *)
-VAR x, y : INTEGER;
+VAR
 		endr, Inc, endi, Inr, dw, w, fr0, fi0, fr1, fi1 : REAL;
-		i, j, loops , max, f, k : LONGINT;
+		loops , max, f, k : LONGINT;
 		z, c : complex;
 		ret : ptr;		(* Rueckgabe der komplexen Zahl als Pointer *)
 		P : Pictures.Picture;
@@ -466,8 +465,8 @@ END Initnoise;
 
 PROCEDURE noise(x,y : REAL): REAL;
 (* Berechnet mittels linearer Interpolation eine Zufallswert aus dem bestehenden Feld *)
-VAR ix, iy, iz : LONGINT;
-		ox, oy, oz : REAL;
+VAR ix, iy: LONGINT;
+		ox, oy: REAL;
 		n : INTEGER;
 		n00, n10 : REAL;
 BEGIN
@@ -484,7 +483,7 @@ END noise;
 
 PROCEDURE Marble*();
 (* Generiert das Backdrop Marble *)
-VAR x,y,c, prim : INTEGER;
+VAR c, prim : INTEGER;
 		konst, fac, scale : REAL;
 		i,j : LONGINT;
 		P : Pictures.Picture;
@@ -532,7 +531,7 @@ BEGIN
 	Pictures.Update(P, 0,0, px, py);
 END Marble;
 
-PROCEDURE turbulence(P: Pictures.Picture; x,y: REAL): REAL;
+PROCEDURE turbulence(x,y: REAL): REAL;
 VAR mins, t,s : REAL;
 BEGIN
 	t:=0; s:=1; mins:= 1/px;
@@ -566,7 +565,7 @@ END Preview;
 (** Backdrops *)
 PROCEDURE Textils*();
 (* Generiert das Backdrop Textils *)
-VAR x, y, X, Y, col, j : INTEGER;
+VAR x, y, col, j : INTEGER;
 		t, m,n: REAL;
 		P : Pictures.Picture;
 		S: Texts.Scanner;
@@ -580,7 +579,7 @@ BEGIN
 	FOR y:= 0 TO py DO
 		FOR x:= 0 TO px DO
 			m:=x; n:=y; m:= m*maxnoise/px; n:= n*maxnoise/py;
-			 t:= turbulence(P, m,n); 
+			 t:= turbulence(m,n); 
 			j:= SHORT(ENTIER((t-0.05)*60) DIV col) MOD Rembrandt0.noc;
 			Pictures.Dot(P, j, x , y , Display.replace)
 		END;
@@ -593,7 +592,7 @@ END Textils;
 PROCEDURE Clouds*();
 (* Generiert das Backdrop Clouds *)
 CONST kor=24;
-VAR X, Y, col, array, update : INTEGER;
+VAR array, update : INTEGER;
 		j, loop  : LONGINT;
 		dir, i,  k : INTEGER;
 		P : Pictures.Picture;
@@ -609,7 +608,6 @@ BEGIN
 	IF array>49 THEN array:= 49 END;
 	Pictures.ReplConst(P, 1, 0,0, px, py, Display.replace);
 	Pictures.Update(P, 0,0, px, py);
-	col := 100 DIV (Rembrandt0.noc-1) +1;
 	(* Zentren initialisieren *)
 	FOR i:= 1 TO array DO
 		x[i]:= SHORT(Random() MOD px);
@@ -668,7 +666,7 @@ END Clouds;
 
 PROCEDURE Molecules*();
 (* Generiert das Backdrop Molecules *)
-VAR x, y, X, Y, r,t, size, dif, dis : INTEGER;
+VAR x, y, r,t, size, dif, dis : INTEGER;
 		frac, col : REAL;
 		P : Pictures.Picture;
 		S: Texts.Scanner;
@@ -740,7 +738,7 @@ END Threads;
 
 PROCEDURE Damage(P: Pictures.Picture; col, dx, dy, x,y,w,h: INTEGER);
 (* Generiert die Defekte zum Backdrop Bricks *)
-VAR n, fgd, bgd, he: INTEGER;
+VAR n, fgd, bgd: INTEGER;
 BEGIN
 	n:= SHORT(Random() MOD 20)+1;
 	fgd:= col-2; IF fgd<=0 THEN fgd:=1 END;
@@ -853,7 +851,7 @@ BEGIN
 	IF S.class = Texts.Int THEN nbr:= SHORT(S.i) ELSE nbr:= 10 END;
 	Texts.Scan(S);
 	IF S.class = Texts.Int THEN long:= SHORT(S.i) ELSE long:= 10000 END;
-	CreatePict(P);
+	CreatePict(P); num := 0;
 	FOR k:= 1 TO nbr DO
 		x:= SHORT(Random() MOD px);
 		y:= SHORT(Random() MOD py); 
@@ -885,7 +883,6 @@ PROCEDURE Coins*();
 VAR P : Pictures.Picture;
 		S: Texts.Scanner;
 		x, y, r, nbr, loop, j  : INTEGER;
-		frac , col: REAL;
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan(S);
@@ -941,7 +938,7 @@ END Bows;
 PROCEDURE Spirals*();
 (* Generiert das Backdrop Spir *)
 VAR P : Pictures.Picture;
-		col, i, j,  loop, x, y, a, b, rad, bool, diff: INTEGER;
+		col, i, j,  loop, x, y, rad, bool, diff: INTEGER;
 		rounds : REAL;
 BEGIN
 	loop:= Integer("spian");
@@ -998,7 +995,7 @@ PROCEDURE Trees*();
 (* Generiert das Backdrop Trees *)
 VAR P : Pictures.Picture;
 		S: Texts.Scanner;
-		col, i,  loop, x, y, a, b, rad, bool, dir, max, len, start: INTEGER;
+		i,  loop, x, y, max, len, start: INTEGER;
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan(S);

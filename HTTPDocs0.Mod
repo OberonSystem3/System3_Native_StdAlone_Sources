@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HTTPDocs0;
+MODULE HTTPDocs0;	(** portable *)
 	IMPORT Objects, Modules, Display, Input, Texts, HyperDocs, Strings, Oberon, Attributes, Links, Documents, Rembrandt,
 		TextGadgets, Gadgets, Desktops;
 
@@ -66,7 +65,7 @@ MODULE HTTPDocs0;
 		curNode*: HyperDocs.Node;
 		httpProxy*: Proxy;
 		requestDoc*: PROCEDURE (D: Documents.Document; proxy: Proxy; VAR key: LONGINT; method: ARRAY OF CHAR; main: BOOLEAN; E: Entry; query: Texts.Text);
-		
+
 	PROCEDURE StripLoc*(key: LONGINT): LONGINT;
 		VAR i: LONGINT;
 	BEGIN

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Info;	(* pmuller/dewe *)
+MODULE Info;	(** non-portable *)	(* pmuller/dewe *)
 
 IMPORT Kernel, Modules, Texts, TextFrames,
 		Oberon, SYSTEM, Fonts, Files, Out, Objects;
@@ -38,15 +37,13 @@ BEGIN
 	T := TextFrames.Text("");
 	M := Kernel.modules;
 	WHILE M # NIL DO
-		size := SIZE(LONGINT) * (LEN(M.varEntries)+LEN(M.entries)+LEN(M.ptrTab)+
-			LEN(M.tdescs)+LEN(M.imports)) + SIZE(Kernel.Cmd)*LEN(M.cmds) + 
-			LEN(M.data)+LEN(M.code);
-		IF (SYSTEM.VAL(LONGINT, M.refs) # 0) & (LEN(M.refs) # 0) THEN INC(size, LEN(M.refs)) END;
-		Texts.WriteString(W, M.name); Texts.WriteInt(W, size, 8);
-		Texts.WriteInt(W, M.refcnt, 4);   Texts.Write(W, " ");
-		Texts.WriteHex(W, SYSTEM.ADR(M.code[0]));  Texts.WriteString(W, "H ");
-		(*Texts.WriteHex(W, SYSTEM.ADR(M.varEntries[0]));  Texts.WriteString(W, "H ");*)
-		FOR i := 1 TO LEN(M.imports)-1 DO
+		SYSTEM.GET(SYSTEM.VAL(LONGINT, M.entries)-24, size);
+		Texts.WriteString(W, M.name);  Texts.Write(W, 9X);
+		Texts.WriteInt(W, size, 1);  Texts.Write(W, 9X);
+		Texts.WriteInt(W, M.refcnt, 1);  Texts.Write(W, 9X);
+		Texts.WriteHex(W, SYSTEM.ADR(M.code[0]));
+		Texts.WriteString(W, "H");  Texts.Write(W, 9X);
+		FOR i := 0 TO LEN(M.imports)-1 DO
 			N := M.imports[i];
 			Texts.Write(W, " ");  Texts.WriteString(W, N.name)
 		END;
@@ -57,6 +54,7 @@ BEGIN
 	Oberon.OpenText("Modules|System.Close System.Free Edit.Store", T, 384, 300)
 END ShowModules;
 
+(*
 PROCEDURE ShowRanges*;
 CONST Max = 100;  Cutoff = 32768;
 TYPE T = RECORD start, end: LONGINT END;
@@ -102,6 +100,7 @@ BEGIN
 	Texts.Append(text, W.buf);
 	Oberon.OpenText("Ranges", text, 384, 300)
 END ShowRanges;
+*)
 
 PROCEDURE ShowModuleNames*;
 VAR
@@ -493,6 +492,124 @@ BEGIN
 	END
 END ShowImports;
 
+(* ---------------------------------------------------------- *)	
+(* Prints the type descriptors of a module *)
+
+PROCEDURE GetMthName(adr: LONGINT);
+VAR
+	T: Texts.Text;  refpos, limit, bp, x: LONGINT;  
+	ch, ch0: CHAR;  
+	mod: Modules.Module;  
+	procstart, refstart: LONGINT;
+	stackorg: LONGINT;
+
+	PROCEDURE ReadNum (VAR pos: LONGINT; VAR i: LONGINT);
+		VAR n: LONGINT; s: SHORTINT; x: CHAR;
+	BEGIN
+		s := 0; n := 0; SYSTEM.GET(pos, x); INC(pos);
+		WHILE ORD(x) >= 128 DO INC(n, ASH(ORD(x) - 128, s)); INC(s, 7); SYSTEM.GET(pos, x); INC(pos) END;
+		i := n + ASH(ORD(x) MOD 64 - ORD(x) DIV 64 * 64, s)
+	END ReadNum;
+	
+BEGIN
+	mod := Kernel.GetMod(adr);
+	IF mod = NIL THEN Texts.WriteString(W, "<not found>")
+	ELSE
+		IF (SYSTEM.VAL(LONGINT, mod.refs) # 0) & (LEN(mod.refs) # 0) THEN
+			refstart := 0;  refpos := SYSTEM.ADR(mod.refs[0]);
+			limit := refpos + LEN(mod.refs);
+			LOOP
+				SYSTEM.GET(refpos, ch); INC(refpos);
+				IF refpos >= limit THEN EXIT END;
+				IF ch = 0F8X THEN (* start proc *)
+					ReadNum(refpos, procstart);
+					IF adr < SYSTEM.ADR(mod.code[0]) + procstart THEN EXIT END;
+					refstart := refpos;
+					REPEAT SYSTEM.GET(refpos, ch); INC(refpos) UNTIL ch = 0X; (*skip name*)
+				ELSIF ch < 0F8X THEN (* skip object *)
+					INC(refpos);	(* skip typeform *)
+					ReadNum(refpos, procstart);	(* skip offset *)
+					REPEAT SYSTEM.GET(refpos, ch); INC(refpos) UNTIL ch = 0X; (*skip name*)
+				END
+			END;
+			refpos := refstart;
+			IF refpos # 0 THEN
+				Texts.WriteString(W, mod.name);
+				Texts.Write(W, "."); SYSTEM.GET(refpos, ch); INC(refpos); ch0 := ch;
+				WHILE ch # 0X DO Texts.Write(W, ch); SYSTEM.GET(refpos, ch); INC(refpos) END
+			END;
+		ELSE Texts.WriteString(W, "<not found>")
+		END
+	END;  (* ELSE *)
+END GetMthName;
+
+PROCEDURE GetTDName(adr: LONGINT; VAR name: ARRAY OF CHAR);
+BEGIN
+	SYSTEM.GET(adr-4, adr); SYSTEM.MOVE(adr+16, SYSTEM.ADR(name), 16);
+END GetTDName;
+
+PROCEDURE DumpTD(adr: LONGINT);
+	VAR base, mth, tdsize, recsize: LONGINT; name: ARRAY 16 OF CHAR;
+BEGIN
+	SYSTEM.GET(adr-4, base);
+	SYSTEM.GET(base, tdsize);  SYSTEM.GET(adr, recsize);
+	
+	SYSTEM.MOVE(base+16, SYSTEM.ADR(name), 16);
+	Texts.Write(W, 9X); Texts.WriteString(W, name); Texts.WriteString(W, " ["); 
+	Texts.WriteHex(W, adr); Texts.WriteString(W, "H]"); Texts.WriteLn(W);
+	Texts.Write(W, 9X); Texts.WriteString(W, "tdsize: "); Texts.WriteInt(W, tdsize, 8); Texts.WriteLn(W);
+	Texts.Write(W, 9X); Texts.WriteString(W, "name:  "); Texts.WriteString(W, name); Texts.WriteLn(W);
+	INC(base, 52);
+	Texts.Write(W, 9X); Texts.WriteString(W, "methods:  "); Texts.WriteLn(W);
+	WHILE base <= adr-72 DO
+		SYSTEM.GET(base, mth);
+		Texts.Write(W, 9X); Texts.Write(W, 9X); Texts.WriteInt(W, (adr-72-base) DIV 4, 2); Texts.WriteString(W, ": [");
+		Texts.WriteHex(W, mth); Texts.WriteString(W, "H]  "); GetMthName(mth); Texts.WriteLn(W);
+		INC(base, 4);
+	END;
+	Texts.Write(W, 9X); Texts.WriteString(W, "tags:  "); Texts.WriteLn(W);
+	WHILE base <= adr-8 DO
+		SYSTEM.GET(base, mth);
+		IF mth # 0 THEN GetTDName(mth, name);
+			Texts.Write(W, 9X); Texts.Write(W, 9X); Texts.WriteInt(W, (adr-8-base) DIV 4, 2); Texts.WriteString(W, ": [");
+			Texts.WriteHex(W, mth); Texts.WriteString(W, "H]  "); Texts.WriteString(W, name); Texts.WriteLn(W);
+		END;
+		INC(base, 4);
+	END;
+	Texts.Write(W, 9X); Texts.WriteString(W, "recsize: "); Texts.WriteInt(W, recsize, 8); Texts.WriteLn(W);
+	Texts.Write(W, 9X); Texts.WriteString(W, "pointers:  "); Texts.WriteLn(W);
+	base := adr+4;
+	REPEAT
+		SYSTEM.GET(base, mth);
+		Texts.Write(W, 9X); Texts.Write(W, 9X); Texts.WriteHex(W, mth); Texts.WriteString(W, "H"); Texts.WriteLn(W);
+		INC(base, 4);
+	UNTIL mth < 0;
+	Texts.WriteLn(W); Texts.WriteLn(W)
+END DumpTD;
+
+PROCEDURE ShowTD*;	(** Info.ShowTD modulename *)
+	VAR text: Texts.Text; beg, end, time, i: LONGINT; s: Texts.Scanner;
+		m: Modules.Module;
+BEGIN
+	Texts.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);
+	Texts.Scan(s);
+	IF s.class = Texts.Char THEN
+		IF s.c = "^" THEN
+			Oberon.GetSelection(text, beg, end, time);
+			Texts.OpenScanner(s, text, beg); Texts.Scan(s)
+		END
+	END;
+	IF s.class = Texts.Name THEN
+		m := Modules.ThisMod(s.s);
+		IF m # NIL THEN
+			Texts.SetFont(W, Fonts.This("Courier10.Scn.Fnt"));
+			FOR i := 0 TO LEN(m.tdescs)-1 DO DumpTD(m.tdescs[i]) END;
+			NEW(text); Texts.Open(text, ""); Texts.Append(text, W.buf);
+			Oberon.OpenText("ShowTD", text, 384, 300)
+		END
+	END;
+END ShowTD;
+
 BEGIN
 	Texts.OpenWriter(W);
 END Info.
@@ -501,6 +618,6 @@ Info.ShowModules
 Info.DeRef
 
 Info.ShowRanges
-Info.ShowFiles
 Info.ShowImports ~
 Info.ShowLibraries ^
+Info.ShowTD ^

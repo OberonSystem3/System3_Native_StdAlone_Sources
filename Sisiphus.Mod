@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,17 +13,15 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 *)
+MODULE Sisiphus;	(** portable *) (* gri 18.3.91 / 30.1.92 / 27.4.92 / jt/jm 7.11.95*)
 
-(* pjm 08.07.96 - made man narrower for W32 and VGA drivers (31 pixels), only age with first msg *)
-
-	IMPORT SYSTEM, Objects, Input, Display, Oberon, Math, Viewers, Files, Gadgets, Display3, Effects, Printer, Printer3, Texts, Modules;
+	IMPORT
+		SYSTEM, Modules, Objects, Input, Display, Oberon, Math, Files, Gadgets, Display3, Printer;
 
 	CONST
-		ticks = Input.TimeUnit; (* Oberon.Time ticks per second *)
 		IStag = 753; (* icon stretch tag *)
 		left = 2; middle = 1; right = 0; (* mouse keys *)
-		HSide = 31; Side = 64; PDot = 3; (* dimensions *)
+		HSide = 31; Side = 64; (* dimensions *)
 		MaxN = 64; Sleep = 100; (* in ms *)
 
 	TYPE
@@ -103,7 +100,11 @@ MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 
 		Display3.CopyPattern(M, color, icn[1].addr, x + HSide, y, Display.paint)
 	END Draw;
 
-	PROCEDURE PrintIcn (M: Display3.Mask; VAR icn: Icon; x, y: INTEGER);
+	PROCEDURE P(x: INTEGER): INTEGER;
+	BEGIN RETURN SHORT((x*Display.Unit + Display.Unit DIV 2) DIV Printer.Unit)
+	END P;
+
+	PROCEDURE PrintIcn (VAR icn: Icon; x, y: INTEGER);
 		VAR i: INTEGER;
 
 		PROCEDURE PrintLine (x, y: INTEGER; line: SET);
@@ -112,7 +113,7 @@ MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 
 			WHILE i < HSide DO
 				IF i IN line THEN i0 := i; INC(i);
 					WHILE (i < HSide) & (i IN line) DO INC(i) END;
-					Printer.ReplConst(x + i0*PDot, y, (i-i0)*PDot, PDot)
+					Printer.ReplConst(x + P(i0), y, P(i-i0), P(1))
 				END;
 				INC(i)
 			END
@@ -120,8 +121,8 @@ MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 
 
 	BEGIN i := 0;
 		WHILE i < Side DO
-			PrintLine(x, y + i*PDot, icn[0].image[i+1]);
-			PrintLine(x + HSide*PDot, y + i*PDot, icn[1].image[i+1]);
+			PrintLine(x, y + P(i), icn[0].image[i+1]);
+			PrintLine(x + P(HSide), y + P(i), icn[1].image[i+1]);
 			INC(i)
 		END
 	END PrintIcn;
@@ -167,10 +168,10 @@ MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 
 		IF X0-X > X+W-X0 THEN dx := X0-X ELSE dx := X+W-X0 END;
 		IF Y0-Y > Y+H-Y0 THEN dy := Y0-Y ELSE dy := Y+H-Y0 END;
 		r := SHORT(ENTIER(Math.sqrt(dx*dx + dy*dy)));
-		WHILE r > 0 DO Circle(X0, Y0, r, Display3.white, Display.replace); DEC(r, d) END
+		WHILE r > 0 DO Circle(X0, Y0, r, Display3.black, Display.replace); DEC(r, d) END
 	END HotSpot;
 	
-	PROCEDURE SaveScreen (x0, y0: INTEGER; keys: SET; col: INTEGER;  VAR State: LONGINT);
+	PROCEDURE SaveScreen (x0, y0: INTEGER; keys: SET; col: INTEGER; VAR State: LONGINT);
 		VAR sum: SET; x, y, w, h: INTEGER; msg: Display.ControlMsg; wakeUp: LONGINT;
 	BEGIN
 		Oberon.RemoveMarks(x0, y0, 52, 52);
@@ -187,14 +188,14 @@ MODULE Sisiphus; (* gri 18.3.91 / 30.1.92 / 27.4.92 / jm 14.12.94 / pm 09.12.95 
 			msg.id := Display.suspend; Display.Broadcast(msg);
 			HotSpot(x, y, w, h, x0 + Side DIV 2, y0 + Side DIV 2);
 			REPEAT
-				Display.ReplConst(Display3.white, x0, y0, Side, Side, Display.replace);
+				Display.ReplConst(Display3.black, x0, y0, Side, Side, Display.replace);
 				INC(State); INC(x0, 10);
 				IF x0+Side > x+w THEN x0 := x; INC(y0, Side);
 					IF y0+Side > y+h THEN y0 := y END
 				END;
 				Draw(NIL, Fig[State MOD N], x0, y0, col);
-				wakeUp := Oberon.Time() + Sleep*ticks DIV 1000;
-				REPEAT UNTIL Oberon.Time() >= wakeUp
+				wakeUp := Oberon.Time() + Sleep*Input.TimeUnit DIV 1000;
+				REPEAT UNTIL Oberon.Time() - wakeUp >= 0
 			UNTIL Input.Available() > 0;
 			msg.id := Display.restore; Display.Broadcast(msg)
 		END
@@ -231,19 +232,14 @@ END RestoreFrame;
 	
 PROCEDURE Print(F: Frame; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask;
-
-	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
-	END P;
-
 BEGIN
 	Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
-	PrintIcn(R, Fig[F.age MOD N], M.x, M.y);
+	PrintIcn(Fig[F.age MOD N], M.x, M.y);
 END Print;
 
 PROCEDURE CopyFrame*(VAR M: Objects.CopyMsg; from, to: Frame);
 BEGIN
-	to.col := from.col;  to.age := from.age;
+	to.col := from.col; to.age := from.age;
 	Gadgets.CopyFrame(M, from, to);
 END CopyFrame;
 
@@ -272,7 +268,7 @@ BEGIN
 					ELSIF M IS Oberon.InputMsg THEN
 						WITH M: Oberon.InputMsg DO
 							IF (M.id = Oberon.track) & Gadgets.InActiveArea(F, M) & (M.keys = {1}) THEN
-								SaveScreen(x, y, M.keys, Display3.black (*F.col*), F.age); M.res := 0;
+								SaveScreen(x, y, M.keys, Display3.white, F.age); M.res := 0;
 							ELSE Gadgets.framehandle(F, M)
 							END
 						END
@@ -339,9 +335,9 @@ VAR msg: NotifyMsg;
 BEGIN
 	msg.x := 0;  msg.y := 0;
 	msg.F := NIL; Display.Broadcast(msg);
-	me.time := Oberon.Time() + Sleep*ticks DIV 1000
+	me.time := Oberon.Time() + Sleep*Input.TimeUnit DIV 1000
 END Step;
-
+	
 PROCEDURE *Cleanup;
 BEGIN
 	Oberon.Remove(Task)
@@ -349,10 +345,10 @@ END Cleanup;
 
 BEGIN
 	LoadFig("Sisiphus.Data");
-	NEW(Task); Task.safe := FALSE; Task.time := 0; Task.handle := Step; Oberon.Install(Task);
+	NEW(Task); Task.time := 0; Task.safe := FALSE; Task.handle := Step; Oberon.Install(Task);
 	Modules.InstallTermHandler(Cleanup)
 END Sisiphus.Insert
 
-System.Free Sisiphus ~	System.State Sisiphus ~
-Gadgets.Insert Sisiphus.New ~	Sisiphus.Sync	Synchronise all selected pictures
-Sissie.Text
+System.Free Sisiphus ~
+Gadgets.Insert Sisiphus.New ~
+

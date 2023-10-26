@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE WTSDraw;
+MODULE WTSDraw;	(** portable *)
 
 	IMPORT Texts, WTS, Panels, BasicFigures, TextFields, Display, Objects, Files, Fonts;
 
@@ -48,7 +47,7 @@ MODULE WTSDraw;
 	PROCEDURE ReadString(VAR R: Files.Rider; VAR s: ARRAY  OF CHAR);
 		VAR i: INTEGER; ch: CHAR;
 	BEGIN i := 0;
-		REPEAT Files.Read(R, ch); s[i] := ch; INC(i) UNTIL ch < 0DX; s[i-1] := 0X
+		REPEAT Files.Read(R, ch); s[i] := ch; INC(i) UNTIL (i = LEN(s)) OR (ch < 0DX); s[i-1] := 0X
 	END ReadString;
 
 	PROCEDURE RLine(col, x, y, w, h: INTEGER): Display.Frame;
@@ -197,5 +196,3 @@ BEGIN Texts.OpenWriter(W)
 END WTSDraw.
 
 WTS.Convert CLiArch.Text /sb ~
-
-Out.Open

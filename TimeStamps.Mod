@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,15 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE TimeStamps; (* EJZ 3.5.95 *)
-	(*
-		30.5.94 - fixed printing problem (* ps - 30.5.96, ejz - 12.6.96 *)
-	*)
-
+MODULE TimeStamps;	(** portable *) (* ejz *)
 	IMPORT Files, Strings, Display, Display3, Printer, Printer3, Fonts, Objects, Oberon, Gadgets;
-
-	CONST
-		DisplayUnit = LONG(10000);
 
 	TYPE
 		Frame* = POINTER TO FrameDesc;
@@ -30,7 +22,7 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 			font: Fonts.Font;
 			cap: ARRAY 64 OF CHAR;
 			col: INTEGER;
-			w: INTEGER	(* width of gadgets based on display metrics *)
+			w: INTEGER (* width of gadgets based on display metrics *)
 		END;
 		RevFrame* = POINTER TO RevFrameDesc;
 		RevFrameDesc* = RECORD (FrameDesc)
@@ -49,17 +41,17 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 	END Restore;
 
 	PROCEDURE P(x: LONGINT): INTEGER;
-	BEGIN RETURN SHORT((x * DisplayUnit + (Printer.Unit-1)) DIV Printer.Unit)
+	BEGIN RETURN SHORT((x * Display.Unit + (Printer.Unit-1)) DIV Printer.Unit)
 	END P;
 
 	PROCEDURE DR(x: LONGINT): REAL;
-	BEGIN RETURN (x * Printer.Unit) / DisplayUnit
+	BEGIN RETURN (x * Printer.Unit) / Display.Unit
 	END DR;
 
 	PROCEDURE Print(F: Frame; Q: Display3.Mask; x, y: INTEGER);
 		VAR w, h, dsr: INTEGER;
 	BEGIN
-		Printer3.StringSize(F.cap, F.font, w, h, dsr);	(* get dsr in printer metrics / ps - 30.5.96 *)
+		Printer3.StringSize(F.cap, F.font, w, h, dsr); (* get dsr in printer metrics / ps - 30.5.96 *)
 		Printer3.String(Q, F.col, x+(P(F.W)-P(F.w)) DIV 2, y + dsr, F.font, F.cap, Display.paint);
 		Printer3.ReplConst(Q, F.col, x, y, P(F.W), 1, Display.replace)
 	END Print;
@@ -93,8 +85,8 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 			END
 		END;
 		(* ps - 30.5.96 *)
-		Display3.StringSize(F.cap, F.font, w, h, dsr);	(* get width based on display metrics *)
-		Printer3.StringSize(F.cap, F.font, pw, ph, dsr);	(* get size based on printer  metrics *)
+		Display3.StringSize(F.cap, F.font, w, h, dsr); (* get width based on display metrics *)
+		Printer3.StringSize(F.cap, F.font, pw, ph, dsr); (* get size based on printer  metrics *)
 		wr := DR(pw); hr := DR(ph);
 		IF w < wr THEN w := SHORT(-ENTIER(-wr)) END; F.w := w;
 		IF h < hr THEN h := SHORT(-ENTIER(-hr)) END
@@ -103,20 +95,11 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 	PROCEDURE Modify(F: Frame; w, h: INTEGER);
 		VAR M: Display.ModifyMsg;
 	BEGIN
-		M.F := F;
-		M.res := -1;
-		M.id := Display.extend;
-		M.mode := Display.display;
-		M.x := 0;
-		M.y := 0;
-		M.X := F.X;
-		M.dX := 0;
-		M.Y := F.Y;
-		M.dY := 0;
-		M.W := w;
-		M.dW := w-F.W;
-		M.H := h;
-		M.dH := h-F.H;
+		M.F := F; M.res := -1;
+		M.id := Display.extend; M.mode := Display.display;
+		M.x := 0; M.y := 0;
+		M.X := F.X; M.dX := 0; M.Y := F.Y; M.dY := 0;
+		M.W := w; M.dW := w-F.W; M.H := h; M.dH := h-F.H;
 		Display.Broadcast(M)
 	END Modify;
 
@@ -125,33 +108,22 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 	BEGIN
 		IF M.id = Objects.get THEN
 			IF M.name = "Gen" THEN
-				M.class := Objects.String;
-				M.s := "TimeStamps.New";
-				M.res:= 0
+				M.class := Objects.String; M.s := "TimeStamps.New"; M.res:= 0
 			ELSIF M.name = "Color" THEN
-				M.class := Objects.Int;
-				M.i := F.col;
-				M.res := 0
+				M.class := Objects.Int; M.i := F.col; M.res := 0
 			ELSIF M.name = "Font" THEN
-				M.class := Objects.String;
-				COPY(F.font.name, M.s);
-				M.res:= 0
+				M.class := Objects.String; COPY(F.font.name, M.s); M.res:= 0
 			ELSIF M.name = "LineupHY" THEN
-				M.class := Objects.Int;
-				M.i := -F.font.minY;
-				M.res := 0
+				M.class := Objects.Int; M.i := -F.font.minY; M.res := 0
 			ELSE
 				Gadgets.framehandle(F, M)
 			END
 		ELSIF M.id = Objects.set THEN
 			IF (M.class = Objects.Int) & (M.name = "Color") THEN
-				F.col := SHORT(M.i);
-				M.res := 0
+				F.col := SHORT(M.i); M.res := 0
 			ELSIF (M.class = Objects.String) & (M.name = "Font") THEN
-				F.font := Fonts.This(M.s);
-				Caption(F, w, h, FALSE);
-				Modify(F, w, h);
-				M.res := 0
+				F.font := Fonts.This(M.s); Caption(F, w, h, FALSE);
+				Modify(F, w, h); M.res := 0
 			ELSE
 				Gadgets.framehandle(F, M)
 			END
@@ -172,10 +144,7 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 			IF M IS Display.FrameMsg THEN
 				WITH M: Display.FrameMsg DO
 					IF (M.F = NIL) OR (M.F = F) THEN
-						x := M.x + F.X;
-						y := M.y + F.Y;
-						w := F.W;
-						h := F.H;
+						x := M.x + F.X; y := M.y + F.Y; w := F.W; h := F.H;
 						IF M IS Display.DisplayMsg THEN
 							WITH M: Display.DisplayMsg DO
 								IF M.device = Display.screen THEN
@@ -224,10 +193,8 @@ MODULE TimeStamps; (* EJZ 3.5.95 *)
 						M.obj := F.dlink
 					ELSE
 						NEW(F1);
-						F.stamp := M.stamp;
-						F.dlink := F1;
-						Copy(M, F, F1);
-						M.obj := F1
+						F.stamp := M.stamp; F.dlink := F1;
+						Copy(M, F, F1); M.obj := F1
 					END
 				END
 			ELSE

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
+MODULE Styles;	(** portable *) (* RS, Wed, 9-Jun-1993 *)
 
 (* copy "by hand" -> obj.link*)
 (*other kind of feedback*)
@@ -44,7 +43,7 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 		scnW* = pageW DIV ScnUnit;
 		MinTabW = 3*mm;	MinTab = 8;
 
-		TAB = 09X; CR = 0DX;
+		TAB = 09X;
 		BoxH = 7; BoxW = 8; TabW = 5;
 		MinW = scnW DIV 6;
 		MaxTabs = 32;
@@ -200,11 +199,6 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 		x := s1; x := ((x * 100H + LONG(c2)) * 100H + LONG(c1)) * 100H + LONG(c0)
 	END ReadLong;
 
-	PROCEDURE WriteLong (VAR R: Files.Rider; x: LONGINT);
-	BEGIN Files.Write(R, CHR(x)); Files.Write(R, CHR(x DIV 100H));
-		Files.Write(R, CHR(x DIV 10000H)); Files.Write(R, CHR(x DIV 1000000H))
-	END WriteLong;
-
 	(*new*)
 
 	PROCEDURE IntToSet(n: LONGINT): SET;	(*[0..255]->[{}..{0..7}]*)
@@ -302,14 +296,8 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 		END
 	END DrawName;
 
-	PROCEDURE ClearBar(F: Frame; x, y, w: INTEGER);
-	BEGIN
-		INC(x, F.X); INC(y, F.Y); Oberon.FadeCursor(Oberon.Mouse);
-		Display.ReplConst(F.col, x, y , w, F.H, Display.replace);
-	END ClearBar;
-
 	PROCEDURE DrawBox(F: Frame; x, y, X, Y, W: INTEGER);
-	BEGIN Display.ReplConst(Display.FG, x+F.X + X, y+F.Y+Y, W, BoxH DIV 2, 2)
+	BEGIN Display.ReplConst(Display.FG, x+F.X + X, y+F.Y+Y, W, BoxH DIV 2, Display.invert)
 	END DrawBox;
 
 	PROCEDURE Wide(F: Frame): BOOLEAN;
@@ -330,7 +318,7 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 		INC(x, F.X); INC(y, F.Y); BoxW := 0;
 		Display.ReplConst(F.col, x, y , w, F.H, Display.replace);
 		IF F.H = BoxH THEN
-			IF break IN F.style.opts THEN Display.ReplConst(15, x+BoxW, y+ F.H DIV 2, w -2*BoxW, 1, Display.paint)
+			IF break IN F.style.opts THEN Display.ReplConst(Display.FG, x+BoxW, y+ F.H DIV 2, w -2*BoxW, 1, Display.replace)
 			ELSE Display.ReplPattern(Display.FG, dash, x+BoxW, y+ F.H DIV 2, w -2*BoxW, 1, Display.paint)
 			END;
 			DrawMode(F, F.style.opts, x, y, w); DrawName(F.style, x, y, w); DrawTabs(F, x-F.X, y-F.Y)
@@ -435,7 +423,7 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 
 (**)
 	PROCEDURE LocTab(style: Style; t, x: INTEGER): INTEGER;
-	VAR i, x0, x1: INTEGER;
+	VAR i, x0: INTEGER;
 	BEGIN
 		x0 := MinTab; i := 0;
 		IF i = t THEN INC(i) END;
@@ -507,10 +495,10 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 		ELSIF (x + F.W - X > BoxW) & (x + F.W - X <= F.W DIV 2) THEN x := x + F.W DIV 2
 		ELSE INCL(keysum, MR); RETURN	(*not hit: do nothing cf. Edit*)
 		END;
-		Display.ReplPattern(15, Display.grey1, x, y + BoxH DIV 2 + 1, F.W DIV 2-BoxW, BoxH DIV 2, 2);
+		Display.ReplPattern(Display.FG, Display.grey1, x, y + BoxH DIV 2 + 1, F.W DIV 2-BoxW, BoxH DIV 2, 2);
 		keysum := {};
 		REPEAT TrackMouse(x0, y0, Keys, keysum) UNTIL Keys = {};
-		Display.ReplPattern(15, Display.grey1, x, y + BoxH DIV 2 + 1, F.W DIV 2-BoxW, BoxH DIV 2, 2)
+		Display.ReplPattern(Display.FG, Display.grey1, x, y + BoxH DIV 2 + 1, F.W DIV 2-BoxW, BoxH DIV 2, 2)
 	END TrackMode;
 
 	PROCEDURE SelStyle*(VAR style: Style);
@@ -533,7 +521,6 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 	VAR
 		mode, keysum: SET;
 		leftX, W, tabX, tab, oldleftX, modif: INTEGER;
-		cx, cy, cw, ch: INTEGER;
 		style: Style;
 	BEGIN
 		Oberon.DrawCursor(Oberon.Mouse, Oberon.Arrow, X, Y);
@@ -850,19 +837,19 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 	PROCEDURE Init;
 		VAR obj: Objects.Object;
 		img: ARRAY 32 OF SET;
-		i: INTEGER;
+		i: LONGINT;
 	BEGIN
 		obj := NewStyle(); defStyle := obj(Style);
 		img[0] := {0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30}; (*055555555H*)
 		FOR i := 1 TO 31 DO
 			img[i] := img[0]
 		END;
-		dash := Display.NewPattern(32, 32, img);	(* could be height 1 *)
+		dash := Display.NewPattern(32, 32, img);
 		img[0] := {2,6,10,14,18,22,26,30}; (*044444444H*)
 		FOR i := 1 TO 31 DO
 			img[i] := img[0]
 		END;
-		dash2 := Display.NewPattern(32, 32, img)	(* could be height 1 *)
+		dash2 := Display.NewPattern(32, 32, img)
 (*
 		pat[0] := CHR(32); pat[1] := 1X;
 		pat[2] := 055X; pat[3] := 055X; pat[4] := 055X; pat[5] := 055X;
@@ -876,5 +863,5 @@ MODULE Styles; (* RS, Wed, 9-Jun-1993 *)
 BEGIN
 	Texts.OpenWriter(W); Init;
 	NEW(font); font.next := font; font.name[0] := 0X;
-	nfnt := Fonts.This("Oberon8.Scn.Fnt")
+	nfnt := Fonts.This("Default8.Scn.Fnt")
 END Styles.

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,14 +13,12 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE XYplane;
+MODULE XYplane;	(** portable *)
 (** virtual screen consiting of W x H pixels *)
 
 IMPORT Objects, Display, MenuViewers, Oberon, TextFrames, Input;
 
 CONST
-	W* = 640; H* = 768;	(** size of virtual screen in pixel *)
-	max = W*H DIV 32;
 	SetSize = 32;
 	closed = 0;  displayed = 2;
 	black = Display.FG; white = Display.BG;
@@ -33,7 +30,9 @@ TYPE
 
 VAR 
 	F: XYframe;  V: MenuViewers.Viewer;
-	bitmap: ARRAY max OF SET;
+	bitmap: POINTER TO ARRAY OF SET;
+	max: LONGINT;
+	W*, H*: INTEGER;	(** size of virtual screen in pixel *)
 
 PROCEDURE Modify(F: XYframe; VAR M: Display.ModifyMsg);
 VAR i, j: LONGINT; x, y: INTEGER;
@@ -52,7 +51,7 @@ BEGIN
 				END;
 				INC(x)
 			END;
-			INC(i, W DIV SetSize); INC(y)
+			i := i + (W DIV SetSize); INC(y)
 		END
 	ELSIF (M.id = Display.reduce) & (M.dY > 0) THEN
 		Display.CopyBlock(F.X, F.Y + M.dY, F.W, M.H, F.X, M.Y, Display.replace)
@@ -84,15 +83,14 @@ BEGIN
 END Clear;
 
 PROCEDURE Open*;
-VAR menuF: TextFrames.Frame;  
+VAR menuF: TextFrames.Frame; X, Y: INTEGER;
 BEGIN
 	IF V.state # displayed THEN
-		Oberon.OpenTrack(Oberon.Pointer.X, 0);
+		(* Oberon.OpenTrack(Oberon.Pointer.X, 0); *)
+		Oberon.AllocateUserViewer(Oberon.Pointer.X, X, Y);
 		menuF := TextFrames.NewMenu("XY Plane", "System.Close");
 		NEW(F);  F.handle := XYhandle;
-		V := MenuViewers.New(menuF, F, TextFrames.menuH, 
-												Oberon.Pointer.X, 
-												Oberon.DisplayHeight(Oberon.Pointer.X))
+		V := MenuViewers.New(menuF, F, TextFrames.menuH, X, Y)
 	END;
 	Clear
 END Open;
@@ -127,5 +125,10 @@ BEGIN ch := 0X;
 	RETURN ch
 END Key;
 
-BEGIN NEW(F);  F.H := 0;  NEW(V);  V.state := closed
+BEGIN
+	W := Display.Width; W := W + 32 - (W MOD 32);
+	H := Display.Height; H := H + 32 - (H MOD 32);
+	max := LONG(W)*LONG(H) DIV 32;
+	NEW(bitmap, max);
+	NEW(F);  F.H := 0;  NEW(V);  V.state := closed
 END XYplane.

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Sokoban; (* Copyright (C) 1995 by Emil J. Zeller *)
-	IMPORT Files, Objects, Input, Display, Pictures, Display3, Fonts, Effects, Strings, Gadgets, Texts, Oberon, TextGadgets, 
-		TextDocs, Documents, Desktops;
+MODULE Sokoban;	(** portable *) (* Copyright (C) 1995 by Emil J. Zeller *)
+	IMPORT Files, Objects, Input, Display, Pictures, Display3, Fonts, Effects, Strings, Gadgets, Texts, Oberon, TextGadgets, TextDocs, Documents, Desktops;
 	(* Sokoban for Oberon Version 1.0
 		Disclaimer
 			Permission to use, copy, modify and distribute this software and its documentation for any purpose is hereby granted
@@ -25,7 +23,6 @@ MODULE Sokoban; (* Copyright (C) 1995 by Emil J. Zeller *)
 
 	CONST
 		left = 2;
-		middle = 1;
 		MaxN = 32;
 		MaxM = 32;
 		Outside = 0;
@@ -42,7 +39,6 @@ MODULE Sokoban; (* Copyright (C) 1995 by Emil J. Zeller *)
 		Down = CHR(194);
 		Back = "b";
 		DocGen = "Sokoban.NewDoc";
-		CR = CHR(13);
 		DEL = CHR(127);
 		border = 1;
 		Levels = "Sokoban.Data";
@@ -232,12 +228,11 @@ MODULE Sokoban; (* Copyright (C) 1995 by Emil J. Zeller *)
 				Files.Set(R, file, offs);
 				Files.ReadInt(R, F.n);
 				Files.ReadInt(R, F.m);
-				FOR  i:= 1 TO F.n DO
+				FOR  i := 1 TO F.n DO
 					FOR j := 1 TO F.m DO
 						Files.Read(R, F.world[i, j]);
 						IF F.world[i, j] = Man THEN
-							F.mani := i;
-							F.manj := j
+							F.mani := i; F.manj := j
 						END
 					END
 				END;
@@ -991,9 +986,7 @@ MODULE Sokoban; (* Copyright (C) 1995 by Emil J. Zeller *)
 				WITH M: Objects.AttrMsg DO
 					IF M.id = Objects.get THEN
 						IF M.name = "Gen" THEN
-							M.class := Objects.String;
-							M.s := DocGen;
-							M.res := 0
+							M.class := Objects.String; M.s := DocGen; M.res := 0
 						ELSE
 							Documents.Handler(D, M)
 						END

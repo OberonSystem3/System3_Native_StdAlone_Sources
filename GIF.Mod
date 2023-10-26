@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
+MODULE GIF;	(** portable *) (* rm 1.9.1996, ejz 8.11.96 *)
 	IMPORT Files, Objects, Display, Pictures;
 	
 	CONST
@@ -36,13 +35,13 @@ MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
 			
 		LogicalScrDesc = RECORD
 			width, height: INTEGER;
-			colorResolution, pixelAspectRatio, GCTSize, BGindex: INTEGER;
-			GCTFlag, GCTSortFlag: BOOLEAN
+			GCTSize: INTEGER;
+			GCTFlag: BOOLEAN
 		END;
 		
 		ImageDesc = RECORD
 			left, top, width, height: INTEGER;
-			sequential, LCTFlag, LCTSortFlag: BOOLEAN;
+			sequential, LCTFlag: BOOLEAN;
 			LCTSize: INTEGER;
 			LCT: ColorTable
 		END;
@@ -62,7 +61,6 @@ MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
 	VAR
 		GifImage: Gif;
 		CB: CodeBook;
-		LastBlock: ARRAY 4096 OF INTEGER;
 	
 	PROCEDURE ComputeColors(VAR CT: ColorTable; colorConversion: BOOLEAN);
 		VAR
@@ -99,11 +97,11 @@ MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
 	BEGIN	
 		Files.ReadInt(R, LSD.width); Files.ReadInt(R, LSD.height);
 		Files.Read(R, ch); i := ORD(ch);
-		Files.Read(R, ch); LSD.BGindex := ORD(ch); (* Background Color Index into Global Color Table*)
-		Files.Read(R, ch); LSD.pixelAspectRatio := ORD(ch);
+		Files.Read(R, ch); (* Background Color Index into Global Color Table*)
+		Files.Read(R, ch);
 		LSD.GCTSize := SHORT(ASH(1, (i MOD 8)+1)); i := i DIV 8;
-		LSD.GCTSortFlag := ODD(i); i := i DIV 2;
-		LSD.colorResolution := SHORT((i MOD 8)+1); i := i DIV 8;
+		i := i DIV 2;
+		i := i DIV 8;
 		LSD.GCTFlag := i > 0
 	END GetLogicalScrDesc;
 
@@ -147,7 +145,7 @@ MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
 		Files.ReadInt(R, IDesc.width); Files.ReadInt(R, IDesc.height);
 		Files.Read(R, ch); i := ORD(ch);
 		IDesc.LCTSize := SHORT(ASH(1, (i MOD 8)+1)); i := i DIV 32;
-		IDesc.LCTSortFlag := ODD(i); i := i DIV 2;
+		i := i DIV 2;
 		IDesc.sequential := ~ODD(i); i := i DIV 2;
 		IDesc.LCTFlag := i > 0
 	END GetImageDesc;
@@ -157,7 +155,7 @@ MODULE GIF; (* rm 1.9.1996, ejz 8.11.96 *)
 	BEGIN
 		to := ASH(1, codeLen)-1;
 		FOR i := 0 TO to DO
-			CB[i].code := SHORT(i); CB[i].ref := dummy; LastBlock[i] := dummy
+			CB[i].code := SHORT(i); CB[i].ref := dummy
 		END;
 		CB[i].code := dummy; CB[i].ref := dummy; INC(i);
 		CB[i].code := dummy; CB[i].ref := dummy
@@ -217,7 +215,7 @@ PROCEDURE GetData(VAR r: Files.Rider; VAR Image: Gif; P: Pictures.Picture);
 	END ReadCode;
 	
 BEGIN
-	Files.Read(r, ch); codeLen:=ORD(ch);
+	Files.Read(r, ch); codeLen:=ORD(ch); bufpos := 0;
 	clearCode:=ASH(1, codeLen); endCode:=clearCode+1;	
 	(* Init Codebook *)
 	InitCodeBook(codeLen);
@@ -225,7 +223,7 @@ BEGIN
 	maxCode:=ASH(1, codeLen);	
 	(* Init Read *)
 	bufferSize:=0; buf:=0; bitsleft:=0; x:=0; y:=P.height-1; w:=P.width;
-	NEW(dots, w);	
+	NEW(dots, w); bufpos := 0;
 	(* go *)
 	REPEAT ReadCode(code) UNTIL code#clearCode;
 	IF code=endCode THEN RETURN END;
@@ -249,6 +247,7 @@ BEGIN
 				stack[0]:=page.code; page:=CB[oldcode]; stackpt:=1 
 			END;
 			WHILE page.ref#dummy DO
+				IF stackpt >= 1024 THEN stackpt := 1023 END;
 				stack[stackpt]:=page.code; page:=CB[page.ref]; INC(stackpt)
 			END;
 			Dot(page.code);
@@ -302,13 +301,16 @@ BEGIN
 				GifImage.IDesc.LCT.rgb[GifImage.Ext.transparencyIndex].r:=CHR(r);
 				GifImage.IDesc.LCT.rgb[GifImage.Ext.transparencyIndex].g:=CHR(g);
 				GifImage.IDesc.LCT.rgb[GifImage.Ext.transparencyIndex].b:=CHR(b)
-			END; i:=0;
-			WHILE i<256 DO  (* 256 because depth is 8 fixed *)
-				Pictures.SetColor(pict, i,
-					GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].r) ],
-					GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].g) ],
-					GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].b) ] );
-				INC(i)
+			END;
+			IF ~colorConversion THEN
+				i:=0;
+				WHILE i<256 DO  (* 256 because depth is 8 fixed *)
+					Pictures.SetColor(pict, i,
+						GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].r) ],
+						GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].g) ],
+						GifImage.IDesc.LCT.IcolTrans[ ORD(GifImage.IDesc.LCT.rgb[i].b) ] );
+					INC(i)
+				END
 			END;
 			GetData(R, GifImage, pict); Files.Read(R, ch); INC(idx); GifImage.Ext.transparency:=FALSE
 		ELSE RETURN

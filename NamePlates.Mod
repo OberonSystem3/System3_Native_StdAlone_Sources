@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE NamePlates;  (** jm 19.4.95 *)
+MODULE NamePlates;	(** portable *)  (** jm 19.4.95 *)
 
 (*
 	5.4.93 - object is not named anymore
@@ -27,14 +26,12 @@ MODULE NamePlates;  (** jm 19.4.95 *)
 *)
 
 IMPORT
-	Objects, Input, Display, Fonts, Texts, Display3, Oberon, Gadgets, Effects, Printer, Printer3, Files,  
+	Objects, Input, Display, Fonts, Texts, Display3, Oberon, Gadgets, Effects, Printer, Printer3, Files, 
 	Documents, Viewers, Desktops, FileDir;
 	
 CONST
  	(* name plates *)
  	VersionNo = 1; MaxLen = 128; CarHeight = 14; CarWidth = 2; Xoffset = 10;
- 	
- 	DisplayUnit = LONG(10000);
  	
 TYPE
 	NamePlate* = POINTER TO NamePlateDesc;
@@ -46,17 +43,12 @@ TYPE
 		start: INTEGER;
 	END;
 	
-	UpdateMsg = RECORD (Display.FrameMsg)
-		obj: Objects.Object
-	END;
-	
 VAR
 	W: Texts.Writer;
 	invTF: INTEGER; (* focus & selection color for text fields *)
-	invCP: INTEGER; (* focus color for captions *)
 
 PROCEDURE Update(obj: Objects.Object);
-VAR M: UpdateMsg;
+VAR M: Desktops.UpdateNameMsg;
 BEGIN M.obj := obj; M.F := NIL; Display.Broadcast(M)
 END Update;
 
@@ -161,7 +153,8 @@ BEGIN
 		F.obj(Documents.Document).name[j] := 0X
 	ELSE
 		COPY(F.val, F.obj(Documents.Document).name)
-	END
+	END;
+	Update(F.obj)
 END PlateToDoc;
 
 (* ----- NamePlates ----- *)
@@ -209,15 +202,15 @@ BEGIN
 END FindModel;
 
 PROCEDURE UpdateNamePlate(F: NamePlate);
-VAR obj: Objects.Object; i: LONGINT; x: LONGREAL; res: BOOLEAN;
+VAR obj: Objects.Object;
 BEGIN
 	obj := F.obj;
 	IF obj # NIL THEN
 		IF obj IS Documents.Document THEN
-			PlateToDoc(F); Update(obj);
+			PlateToDoc(F); Update(obj)
 		END
 	ELSE Gadgets.Update(F)
-	END;
+	END
 END UpdateNamePlate;
 
 PROCEDURE^ LocatePos(F: NamePlate; pos: INTEGER; VAR x, y: INTEGER);
@@ -251,7 +244,23 @@ BEGIN
 			END;
 			F.selbeg := -1; UpdateNamePlate(F)
 		END
-	ELSIF ((20X <= ch) & (ch < 86X) OR (ch = " ")) & (Length(F.val) < MaxLen-1) THEN
+	ELSIF ch = 0A8X THEN (* home *)
+		IF F.carpos > 0 THEN
+			F.carpos := 0; F.start := 0;
+			F.selbeg := -1; UpdateNamePlate(F)
+		END
+	ELSIF ch = 0A9X THEN (* end *)
+		IF F.val[F.carpos] # 0X THEN
+			WHILE F.val[F.carpos] # 0X DO
+				INC(F.carpos)
+			END;
+			LocatePos(F, F.carpos, x, y);
+			WHILE (x >= F.W - 3) & (F.val[F.start] # 0X) DO
+				INC(F.start); LocatePos(F, F.carpos, x, y);
+			END;
+			F.selbeg := -1; UpdateNamePlate(F)
+		END
+	ELSIF ((ch >= " ") OR (ch = 09X)) & (Length(F.val) < MaxLen-1) THEN
 		InsertChar(F.val, F.carpos, ch);
 		INC(F.carpos);
 		LocatePos(F, F.carpos, x, y);
@@ -263,7 +272,7 @@ BEGIN
 	END
 END ConsumeChar;
 
-PROCEDURE LocateChar(F: NamePlate; x, y, mx, my: INTEGER; VAR pos: INTEGER);
+PROCEDURE LocateChar(F: NamePlate; x, mx: INTEGER; VAR pos: INTEGER);
 VAR p: INTEGER; r: Objects.Object; X: INTEGER;
 BEGIN
 	p := F.start; X := x + Xoffset;
@@ -309,7 +318,7 @@ BEGIN
 	LOOP
 		Input.Mouse(keys, mx, my); keysum := keysum + keys;
 		IF keys = {} THEN EXIT; END;
-		LocateChar(F, x, y, mx, my, pos);
+		LocateChar(F, x, mx, pos);
 		IF pos # F.carpos THEN
 			Oberon.FadeCursor(Oberon.Mouse);
 			FlipCaret(DR, F, x, y); F.carpos := pos; LocatePos(F, F.carpos, F.carx, F.cary); FlipCaret(DR, F, x, y);
@@ -357,7 +366,7 @@ BEGIN
 	Input.Mouse(keys, mx, my);
 	IF keys = {} THEN RETURN END;
 	keysum := keys; len := Length(F.val);
-	LocateChar(F, x, y, mx, my, spos);
+	LocateChar(F, x, mx, spos);
 	IF spos >= len THEN DEC(spos) END;
 	IF (F.selbeg >= 0) & (F.selbeg = spos) & (F.selend = F.selbeg + 1) THEN
 		RemoveSelection(R, F, x, y);
@@ -370,7 +379,7 @@ BEGIN
 	LOOP
 		Input.Mouse(keys, mx, my); keysum := keysum + keys;
 		IF keys = {} THEN EXIT; END;
-		LocateChar(F, x, y, mx, my, pos);
+		LocateChar(F, x, mx, pos);
 		IF pos >= len THEN DEC(pos) END;
 		IF (pos >= spos) & (pos # epos) THEN
 			Oberon.FadeCursor(Oberon.Mouse);
@@ -496,7 +505,7 @@ BEGIN
 END Dot;
 
 PROCEDURE RestoreNamePlate(R: Display3.Mask; F: NamePlate; x, y, w, h: INTEGER; dlink: Objects.Object);
-VAR p, X, Y, cx, cy, cw, ch, col: INTEGER; r, obj: Objects.Object;
+VAR p, X, Y, cx, cy, cw, ch, col: INTEGER; r: Objects.Object;
 BEGIN
 	col := Display3.textbackC;
 	FindModel(F, dlink);
@@ -511,7 +520,6 @@ BEGIN
 	p := F.start; X := x + Xoffset; Y := y + Yoffset(F);
 	cx := R.X; cy := R.Y; cw := R.W; ch := R.H;
 	Display3.AdjustMask(R, x+1, y+1, w-2, h-2);
-	obj := F.obj;
 	WHILE F.val[p] # 0X DO
 		Fonts.Default.GetObj(Fonts.Default, ORD(F.val[p]), r);
 		WITH r: Fonts.Char DO
@@ -542,7 +550,7 @@ PROCEDURE PrintNamePlate(F: NamePlate; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; x, y, w, h: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * DisplayUnit DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -580,7 +588,7 @@ BEGIN
 					Gadgets.framehandle(F, M);
 					A.res := -1; A.id := Objects.get; A.name := "Cmd"; Gadgets.framehandle(F, A);
 					IF (A.res = 0) & (A.s = "") THEN
-						A.res := -1; A.id := Objects.set; A.name := "Cmd"; A.class := Objects.String; A.s := "Out.Echo '#Value'";
+						A.res := -1; A.id := Objects.set; A.name := "Cmd"; A.class := Objects.String; A.s := "Attributes.Echo '#Value '";
 						Gadgets.framehandle(F, A);
 					END
 				ELSIF M.id = Objects.store THEN
@@ -634,14 +642,14 @@ BEGIN
 						ELSIF M.id = Oberon.mark THEN Oberon.DrawCursor(Oberon.Pointer, Oberon.Star, M.X, M.Y);
 						END;
 					END
-				ELSIF M IS UpdateMsg THEN
-					WITH M: UpdateMsg  DO
+				ELSIF M IS Desktops.UpdateNameMsg THEN
+					WITH M: Desktops.UpdateNameMsg  DO
 						IF (M.obj = F.obj) THEN
 							IF (M.stamp # F.stamp) THEN
 								F.stamp := M.stamp;
 								IF F.obj IS Documents.Document THEN
 									DocToPlate(F)
-								END;
+								END
 							END;
 							F.selbeg := -1;
 							Gadgets.MakeMask(F, x, y, M.dlink, R);
@@ -680,37 +688,38 @@ BEGIN
 				ELSIF M IS Oberon.InputMsg THEN
 					WITH M: Oberon.InputMsg DO
 						IF (M.id = Oberon.track) & (Gadgets.InActiveArea(F, M) OR (2 IN M.keys)) THEN
-							IF 2 IN M.keys THEN
-								Oberon.Defocus;
+							IF (2 IN M.keys) &
+								((M.X-x) >= Xoffset) & ((F.W-M.X+x) >= Xoffset) & ((M.Y-y) >= Yoffset(F)) & ((F.H-M.Y+y) >= Yoffset(F)) THEN
+								Oberon.Defocus();
 								Gadgets.MakeMask(F, x, y, M.dlink, R);
 								TrackCaret(R, F, x, y); M.res := 0;
 							ELSIF 0 IN M.keys THEN
 								Gadgets.MakeMask(F, x, y, M.dlink, R);
 								TrackSelection(R, F, x, y); M.res := 0;
 							ELSE Gadgets.framehandle(F, M)
-							END;
+							END
 						ELSIF (M.id = Oberon.consume) & (F.carpos >= 0) THEN
 							ConsumeChar(F, M.ch); M.res := 0;
 						ELSIF ~(Gadgets.selected IN F.state) THEN
-							Gadgets.framehandle(F, M);
-						END; 
-					END;
+							Gadgets.framehandle(F, M)
+						END
+					END
 				ELSE
 					Gadgets.framehandle(F, M);
-				END;
-			END;
+				END
+			END
 		ELSE
 			Gadgets.framehandle(F, M);
-		END;
-	END;
+		END
+	END
 END NamePlateHandler;
 
 PROCEDURE InitNamePlate*(F: NamePlate);
 VAR M: Objects.AttrMsg;
 BEGIN F.handle := NamePlateHandler; F.carpos := -1; COPY("", F.val); F.W := 100; F.H := 20;
 	F.selbeg := -1;
-	M.res := -1; M.id := Objects.set; M.name := "Cmd"; M.class := Objects.String; M.s := "Out.Echo '#Value'";
-	Gadgets.framehandle(F, M);
+	M.res := -1; M.id := Objects.set; M.name := "Cmd"; M.class := Objects.String; M.s := "Attributes.Echo '#Value '";
+	Gadgets.framehandle(F, M)
 END InitNamePlate;
 
 PROCEDURE NewNamePlate*;
@@ -719,5 +728,5 @@ BEGIN
 	NEW(B); InitNamePlate(B); Objects.NewObj := B
 END NewNamePlate;
 
-BEGIN Texts.OpenWriter(W); invTF := 15 - 14; invCP := Display3.white;
+BEGIN Texts.OpenWriter(W); invTF := 15 - 14
 END NamePlates.

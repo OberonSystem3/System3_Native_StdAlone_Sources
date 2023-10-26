@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Strings; (* ejz,   *)
+MODULE Strings;	(** portable *) (* ejz,   *)
 
 (** Strings is a utility module that provides procedures to manipulate strings.
 		Note: All strings MUST be 0X terminated. *)
@@ -648,16 +647,17 @@ END StrToReal;
 
 (** Convert a string to a set *)
 	PROCEDURE StrToSet* (str: ARRAY OF CHAR; VAR set: SET);
-	VAR i, j, d, d1: INTEGER; ch: CHAR; dot: BOOLEAN;
+	VAR i, d, d1: INTEGER; ch: CHAR; dot: BOOLEAN;
 	BEGIN
 		set := {}; dot := FALSE;
 		i := 0; ch := str[i];
 		WHILE (ch # 0X) & (ch # "}") DO
-			WHILE (ch < "0") OR (ch > "9") DO INC(i); ch := str[i] END;
+			WHILE (ch # 0X) & ((ch < "0") OR (ch > "9")) DO INC(i); ch := str[i] END;
 			d := 0; WHILE (ch >= "0") & (ch <= "9") DO d := d*10 + ORD(ch) - 30H; INC(i); ch := str[i] END;
 			IF d <= MAX(SET) THEN INCL(set, d) END;
 			IF dot THEN
-				WHILE d1 < d DO INCL(set, d1); INC(d1) END;
+				d1 := 0;
+				WHILE (d1 <= MAX(SET)) & (d1 < d) DO INCL(set, d1); INC(d1) END;
 				dot := FALSE
 			END;
 			WHILE ch = " " DO INC(i); ch := str[i] END;
@@ -670,13 +670,13 @@ END StrToReal;
 	VAR i, j, k: INTEGER; noFirst: BOOLEAN;
 	BEGIN
 		str[0] := "{"; i := 0; k := 1; noFirst := FALSE;
-		WHILE i < MAX(SET) DO
+		WHILE i <= MAX(SET) DO
 			IF i IN set THEN
 				IF noFirst THEN str[k] := ","; INC(k) ELSE noFirst := TRUE END;
 				IF i >= 10 THEN str[k] := CHR(i DIV 10 + 30H); INC(k) END;
 				str[k] := CHR(i MOD 10 + 30H); INC(k);
 				j := i; INC(i);
-				WHILE i IN set DO INC(i) END;
+				WHILE (i <= MAX(SET)) & (i IN set) DO INC(i) END;
 				IF i-2 > j THEN
 					str[k] := "."; str[k+1] := "."; INC(k, 2); j := i - 1;
 					IF j >= 10 THEN str[k] := CHR(j DIV 10 + 30H); INC(k) END;
@@ -736,7 +736,7 @@ END StrToReal;
 					str[i] := CHR(x MOD 10 + ORD("0")); INC(i)
 				END
 			ELSIF CAP(form[j]) = "Y" THEN	(* Year *)
-				INC(j,2); x := date DIV 512 MOD 128;
+				INC(j,2); x := date DIV 512;
 				IF CAP(form[j]) = "Y" THEN
 					INC(j, 2); INC(x, 1900);
 					str[i] := CHR(x DIV 1000 + ORD("0")); str[i + 1] := CHR(x DIV 100 MOD 10 + ORD("0"));
@@ -839,7 +839,7 @@ END StrToReal;
 		WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
 		StrToIntPos(str, m, i);
 		WHILE (str[i] # 0X) & ((str[i] < "0") OR (str[i] > "9")) DO INC(i) END;
-		StrToIntPos(str, y, i);
+		StrToIntPos(str, y, i); y := y-1900;
 		date := (y*16 + m)*32 + d
 	END StrToDate;
 
@@ -880,33 +880,25 @@ END StrToReal;
 			ISOToOberon[i] := CHR(i); OberonToISO[i] := CHR(i)
 		END;
 		ISOToOberon[8] := CHR(127);
-(* 128 .. 159 ? *)
+		ISOToOberon[146] := CHR(39);
 		ISOToOberon[160] := CHR(32);
-(* 161 ? *)
 		ISOToOberon[162] := CHR(99);
-(* 163 .. 165 ? *)
 		ISOToOberon[166] := CHR(124);
-(* 167 ? *)
 		ISOToOberon[168] := CHR(34);
 		ISOToOberon[169] := CHR(99);
 		ISOToOberon[170] := CHR(97);
 		ISOToOberon[171] := CHR(60);
-(* 172 ? *)
 		ISOToOberon[173] := CHR(45);
 		ISOToOberon[174] := CHR(114);
 		ISOToOberon[175] := CHR(45);
 		ISOToOberon[176] := CHR(111);
-(* 177 ? *)
 		ISOToOberon[178] := CHR(50);
 		ISOToOberon[179] := CHR(51);
 		ISOToOberon[180] := CHR(39);
-(* 181 .. 182 ? *)
 		ISOToOberon[183] := CHR(46);
-(* 184 ? *)
 		ISOToOberon[185] := CHR(49);
 		ISOToOberon[186] := CHR(48);
 		ISOToOberon[187] := CHR(62);
-(* 188 .. 191 ? *)
 		ISOToOberon[192] := CHR(65);
 		ISOToOberon[193] := CHR(65);
 		ISOToOberon[194] := CHR(65);

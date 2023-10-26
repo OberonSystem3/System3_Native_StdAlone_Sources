@@ -1,22 +1,21 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract.  The full text can be downloaded from
 
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
+	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;type=A"
 
 Under the license terms stated it is in particular (a) prohibited to modify
 the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Desktops; (** jm 1.2.95 *)
+MODULE Desktops; (** portable *)	(**  , jm 1.2.95 *)
 
-(** Implementation of the Oberon Desktop, with Viewers for displaying documents in the tiled and overlapping windowing systems of Oberon.
+(**Implementation of the Oberon Desktop, with Viewers for displaying documents in the tiled and overlapping windowing systems of Oberon.
  *)
 (*
 	25.3.94 - Added support for Documents.LocateMsg
@@ -55,14 +54,12 @@ MODULE Desktops; (** jm 1.2.95 *)
 
 IMPORT
 	Input, Objects, Display, Viewers, Oberon, Gadgets, Attributes, Files, Documents, Texts, Display3, Views, 
-	Printer, Printer3, Modules, Effects, Fonts, Pictures;
+	Printer, Printer3, Effects, Fonts, Pictures, Strings;
 
 CONST
 	leftBorder = 0; frameColor = 12;
 	extend = Display.extend; reduce = Display.reduce;
-	menuColor = 13;
-	MenuButtonW = 39; MenuButtonSW = 36;
-	NamePlateW = 110; NamePlateSW = 75;
+	AvoidLostViewer = TRUE;
 
 TYPE
 	(** Viewer for displaying documents in a desktop. *)
@@ -90,11 +87,13 @@ TYPE
 
 VAR
 	menuH*: INTEGER;	(** Default menubar heigth of DocGadget and DocViewer *)
+	menuC*: INTEGER;	(** Default menubar panel color *)
+	menuButtonW*: INTEGER;	(** Default menu button width *)
+	namePlateW*: INTEGER;	(** Default nameplate width *)
 	recDocWidth*: INTEGER;	(** recommended minimal document width *)
 	W: Texts.Writer;
-	PanelHandler: Objects.Handler;
 	recall: Display.Frame;
-	
+
 PROCEDURE ^NewMenu*(menubar: ARRAY OF CHAR): Display.Frame;
 
 (* ===================== Own Viewer code ================ *)
@@ -128,7 +127,7 @@ END HasMenu;
     Main.handle(Main, M); V1.dsc.next := M.obj(Display.Frame) 
   END CopyDocViewer;
 
-  PROCEDURE ModifyFrame (V: DocViewer; F: Display.Frame; id, dY, Y, H: INTEGER);
+  PROCEDURE ModifyFrame(V: DocViewer; F: Display.Frame; id, Y, H: INTEGER);
     VAR M: Display.ModifyMsg;
   BEGIN
     M.F := F; M.id := id; M.dlink := V; V.dlink := NIL;
@@ -162,9 +161,9 @@ END HasMenu;
     M.x := 0; M.y := 0;
     Menu.handle(Menu, M); Main.handle(Main, M);
     IF V.H > V.menuH + 1 THEN
-      ModifyFrame(V, Menu, extend, 0, V.Y + V.H - V.menuH, V.menuH);
-      ModifyFrame(V, Main, extend, 0, V.Y, V.H - V.menuH)
-    ELSE ModifyFrame(V, Menu, extend, 0, V.Y, V.H)
+      ModifyFrame(V, Menu, extend, V.Y + V.H - V.menuH, V.menuH);
+      ModifyFrame(V, Main, extend, V.Y, V.H - V.menuH)
+    ELSE ModifyFrame(V, Menu, extend, V.Y, V.H)
     END
   END Restore;
 
@@ -175,20 +174,20 @@ END HasMenu;
     IF id = extend THEN
       Oberon.RemoveMarks(V.X, Y, V.W, V.Y - Y);
       IF H > V.menuH + 1 THEN
-        ModifyFrame(V, Menu, extend, 0, Y + H - V.menuH, V.menuH);
-        ModifyFrame(V, Main, extend, 0, Y , H - V.menuH)
+        ModifyFrame(V, Menu, extend, Y + H - V.menuH, V.menuH);
+        ModifyFrame(V, Main, extend, Y , H - V.menuH)
       ELSE 
-      	ModifyFrame(V, Menu, extend, 0, Y, H);
-      	ModifyFrame(V, Main, extend, 0, Y + H - V.menuH, 0)
+      	ModifyFrame(V, Menu, extend, Y, H);
+      	ModifyFrame(V, Main, extend, Y + H - V.menuH, 0)
       END
     ELSIF id = reduce THEN
       Oberon.RemoveMarks(V.X, Y, V.W, Y - V.Y);
       IF H > V.menuH + 1 THEN
-        ModifyFrame(V, Main, reduce, 0, Y, H - V.menuH);
-        ModifyFrame(V, Menu, reduce, 0, Y + H - V.menuH, V.menuH)
+        ModifyFrame(V, Main, reduce, Y, H - V.menuH);
+        ModifyFrame(V, Menu, reduce, Y + H - V.menuH, V.menuH)
       ELSE
-        ModifyFrame(V, Main, reduce, 0, Y + H - V.menuH, 0);
-        ModifyFrame(V, Menu, reduce, 0, Y, H)
+        ModifyFrame(V, Main, reduce, Y + H - V.menuH, 0);
+        ModifyFrame(V, Menu, reduce, Y, H)
       END;
     END
   END ModifyDocViewer;
@@ -235,32 +234,35 @@ END HasMenu;
           Viewers.Change(V, V.Y + V.H + dY);
           Oberon.RemoveMarks(V.X, V.Y, V.W, V.H);
           IF V.H > V.menuH + 1 THEN
-            ModifyFrame(V, Menu, extend, dY, V.Y + V.H - V.menuH, V.menuH);
-            ModifyFrame(V, Main, extend, dY, V.Y, V.H - V.menuH)
+            ModifyFrame(V, Menu, extend, V.Y + V.H - V.menuH, V.menuH);
+            ModifyFrame(V, Main, extend, V.Y, V.H - V.menuH)
           ELSE (*V.H > 1*)
-            ModifyFrame(V, Menu, extend, dY, V.Y, V.H);
-            ModifyFrame(V, Main, extend, dY, V.Y + V.H - V.menuH, 0)
+            ModifyFrame(V, Menu, extend, V.Y, V.H);
+            ModifyFrame(V, Main, extend, V.Y + V.H - V.menuH, 0)
           END
         ELSIF Y < Y0 THEN (*reduce*) dY := Y0 - Y;
           IF V.H >= V.menuH + 2 THEN
             IF V.H < V.menuH + 2 + dY THEN dY := V.H - V.menuH - 2 END;
             Oberon.RemoveMarks(V.X, V.Y, V.W, V.H);
             H := V.H - dY;
-            ModifyFrame(V, Main, reduce, dY, V.Y, H - V.menuH);
-            ModifyFrame(V, Menu, reduce, dY, V.Y + H - V.menuH, V.menuH);
+            ModifyFrame(V, Main, reduce, V.Y, H - V.menuH);
+            ModifyFrame(V, Menu, reduce, V.Y + H - V.menuH, V.menuH);
             Viewers.Change(V, V.Y + H)
           END
         END
       END
-    END
+    END;
+    IF AvoidLostViewer & (V.Y+V.H < 20) THEN
+		Viewers.Change(V, 20); Restore(V)
+	END
   END Change;
 
   PROCEDURE Suspend (V: DocViewer);
     VAR Menu, Main: Display.Frame;
   BEGIN
     Menu := V.dsc; Main := V.dsc.next;
-    ModifyFrame(V, Main, reduce, 0, V.Y + V.H - V.menuH, 0);
-    ModifyFrame(V, Menu, reduce, 0, V.Y + V.H (* ps - 1 *), 0)
+    ModifyFrame(V, Main, reduce, V.Y + V.H - V.menuH, 0);
+    ModifyFrame(V, Menu, reduce, V.Y + V.H (* ps - 1 *), 0)
   END Suspend;
   
 PROCEDURE DocViewerNeutralize(F: DocViewer);
@@ -307,22 +309,18 @@ END DocViewerHandleSelect;
       IF M IS Oberon.InputMsg THEN
         WITH M: Oberon.InputMsg DO
           IF M.id = Oberon.track THEN
-            IF M.Y < V.Y + 1 THEN Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y)
-            ELSIF (M.Y > V.Y + V.H - 5) & (Menu IS Dummy) & (2 IN M.keys) THEN Change(V, M.X, M.Y, M.keys)
+            IF (M.Y > V.Y + V.H - 5) & (Menu IS Dummy) & (2 IN M.keys) THEN Change(V, M.X, M.Y, M.keys)
             ELSIF M.Y < V.Y + V.H - V.menuH THEN Main.handle(Main, M);
             	IF (M.res < 0) & (M.keys = {0}) & Effects.InBorder(M.X, M.Y, V.X, V.Y, V.W, V.H - V.menuH) THEN
             		DocViewerHandleSelect(V, M)
             	END
-            ELSIF M.Y < V.Y + V.H - V.menuH DIV (* 3 * 2 *) 4 * 3 THEN Menu.handle(Menu, M)
             ELSIF M.Y < V.Y + V.H - 1 THEN
-              IF 2 IN M.keys THEN Change(V, M.X, M.Y, M.keys)
-              ELSE Menu.handle(Menu, M)
-              END
-            (*ELSE Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y)*)
+              Menu.handle(Menu, M);
+              IF (M.res < 0) & (2 IN M.keys) THEN Change(V, M.X, M.Y, M.keys) END
             END;
-            IF M.res < 0 THEN Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y) END;
+            IF M.res < 0 THEN Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y) END
           ELSE Menu.handle(Menu, M); Main.handle(Main, M);
-          END;
+          END
         END
       ELSIF M IS Oberon.ControlMsg THEN
         WITH M: Oberon.ControlMsg DO
@@ -390,9 +388,9 @@ END DocViewerHandleSelect;
       END
     END
   END DocViewerHandle;
-  
-  (** Create and open a new DocViewer. Analogue to  old-fashioned MenuViewers.New. X, Y indicate the openining position. *)
-  PROCEDURE NewDocViewer* (Menu, Main: Display.Frame; menuH, X, Y: INTEGER): DocViewer; 
+
+  (** Create and open a new DocViewer. Analogue to  old-fashioned MenuViewers.New. X, Y indicate the opening position. *)
+  PROCEDURE NewDocViewer*(Menu, Main: Display.Frame; menuH, X, Y: INTEGER): DocViewer; 
     VAR V: DocViewer;
   BEGIN NEW(V);
     IF Menu = NIL THEN menuH := 0; Menu := NewDummy() END;
@@ -501,9 +499,8 @@ BEGIN
 		A.id := Display.extend; A.F := main; A.mode := Display.state;
 		A.X := leftBorder; A.Y := -M.H + 1; A.W := M.W - leftBorder; A.H := M.H - border;
 		A.dX := A.X - main.X; A.dY := A.Y - main.Y; A.dW := A.W - main.W; A.dH := A.H - main.H;
-		A.x := 0; A.y := 0;
-		A.res := -1; A.dlink := NIL; Objects.Stamp(A);
-		main.handle(main, A)
+		A.dlink := M.dlink; A.res := -1; Objects.Stamp(A);
+		ToMain(F, M.x + F.X, M.y + F.Y, A)
 	END;
 	
 	IF menu # NIL THEN
@@ -511,26 +508,26 @@ BEGIN
 		A.id := Display.extend; A.F := menu; A.mode := Display.state;
 		A.X := leftBorder; A.Y := -border + 1; A.W := M.W - leftBorder; A.H := border;
 		A.dX := A.X - menu.X; A.dY := A.Y - menu.Y; A.dW := A.W - menu.W; A.dH := A.H - menu.H;
-		A.x := 0; A.y := 0;
-		A.res := -1; A.dlink := NIL; Objects.Stamp(A);
-		menu.handle(menu, A)
+		A.dlink := M.dlink; A.res := -1; Objects.Stamp(A);
+		ToMenu(F, M.x + F.X, M.y + F.Y, A)
 	END;
-	Gadgets.framehandle(F, M);
+	Gadgets.framehandle(F, M)
 END AdjustDocGadget;
 
 (* -- docviewer main frame changed; have to adjust docviewer size *)
 PROCEDURE AdjustChildDocGadget(F: DocGadget; VAR M: Display.ModifyMsg);
 VAR menu: Gadgets.Frame; A: Display.ModifyMsg;
 BEGIN
-	IF M.stamp # F.stamp THEN F.stamp := M.stamp;
-		menu := Menu(F);
-		
+	IF M.stamp # F.stamp THEN
+		F.stamp := M.stamp; menu := Menu(F);
+
 		A.id := Display.extend; A.F := F; A.mode := M.mode;
 		A.W := leftBorder + M.W; A.H := M.H;
 		IF menu # NIL THEN INC(A.H, menu.H) END;
-		
+		A.dW := A.W - F.W; A.dH := A.H - F.H;
+
 		A.X := F.X + M.dX; A.Y := F.Y + M.dY;
-		A.dX := A.X - F.X; A.dY := A.Y - F.Y; A.dW := A.W - F.W; A.dH := A.H - F.H;
+		A.dX := A.X - F.X; A.dY := A.Y - F.Y;
 		Display.Broadcast(A)
 	END
 END AdjustChildDocGadget;
@@ -597,7 +594,7 @@ PROCEDURE PrintDocGadget(F: DocGadget; VAR M: Display.DisplayMsg);
 VAR menu, main: Display.Frame; b, x, y, w, h: INTEGER; PM: Display.DisplayMsg; R: Display3.Mask;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -684,8 +681,8 @@ BEGIN
 		END;
 		obj := NewMenu(title)
 	END;
-	F.Y := F.Y + F.H - main.H;
-	Init(F, obj(Gadgets.Frame), main, TRUE)
+	(* F.Y := F.Y + F.H - main.H - menuH; *)
+	Init(F, obj(Gadgets.Frame), main, FALSE)
 END LoadDocGadget;
 
 PROCEDURE DocGadgetAttr(F: DocGadget; VAR M: Objects.AttrMsg);
@@ -999,73 +996,14 @@ END Init;
 
 (* ===================== Menu bar =================================*)
 
-PROCEDURE MenuAdjust(F: Gadgets.Frame; VAR M: Display.ModifyMsg);
-VAR D: Display.DisplayMsg; R: Display3.Mask; U: Display3.OverlapMsg;
-BEGIN
-	IF (F.X # M.X) OR (F.Y # M.Y) OR (F.W # M.W) OR (F.H # M.H) THEN (* first adjust *)
-		F.X := M.X; F.Y := M.Y; F.W := M.W; F.H := M.H; 
-		NEW(R); Display3.Open(R);
-		Display3.Add(R, 0, -M.H+1, M.W, M.H);
-		U.F := F; U.M := R; U.x := 0; U.y := 0; U.res := -1; Objects.Stamp(U); F.handle(F, U);
-	END;
-	IF (M.mode = Display.display) & (F.H > 0) & (F.W > 0) THEN
-		D.x := M.x; D.y := M.y; D.F := F; D.device := Display.screen; D.id := Display.full;
-		D.dlink := M.dlink; D.res := -1; Objects.Stamp(D);
-		F.handle(F, D);
-	END
-END MenuAdjust;
-
-PROCEDURE *MenuHandler(F: Objects.Object; VAR M: Objects.ObjMsg);
-VAR I: Objects.AttrMsg; f: Display.Frame; A: Objects.AttrMsg;
-BEGIN
-	IF M IS Objects.AttrMsg THEN
-		WITH M: Objects.AttrMsg DO
-			IF (M.id = Objects.get) & (M.name = "Name") THEN
-				f := F(Display.Frame).dsc;
-				WHILE f # NIL DO
-					I.id := Objects.get; I.name := "Gen"; I.class := Objects.Inval; I.s := ""; I.res := -1;
-					f.handle(f, I);
-					IF I.s = "NamePlates.NewNamePlate" THEN
-						A.id := Objects.get; A.name := "Value"; A.s[0] := 0X; A.res := -1; f.handle(f, A);
-						COPY(A.s, M.s);
-					END;
-					f := f.next
-				END
-			ELSIF (M.id = Objects.set) & (M.name = "Name") THEN
-				f := F(Display.Frame).dsc;
-				WHILE f # NIL DO
-					I.id := Objects.get; I.name := "Gen"; I.class := Objects.Inval; I.s := ""; I.res := -1;
-					f.handle(f, I);
-					IF I.s = "NamePlates.NewNamePlate" THEN
-						A.id := Objects.set; A.name := "Value"; A.res := -1; A.class := M.class; COPY(M.s, A.s); f.handle(f, A);
-					END;
-					f := f.next
-				END
-			ELSE PanelHandler(F, M)
-			END
-		END
-	ELSIF M IS Display.ModifyMsg THEN 
-		WITH M: Display.ModifyMsg DO
-			IF M.F = F THEN MenuAdjust(F(Gadgets.Frame), M)
-			ELSE PanelHandler(F, M)
-			END
-		END
-	ELSIF M IS Objects.CopyMsg THEN
-		PanelHandler(F, M);
-		M(Objects.CopyMsg).obj.handle := MenuHandler;
-	ELSE PanelHandler(F, M) 
-	END
-END MenuHandler;
-
 PROCEDURE newMenu(name, menubar: ARRAY OF CHAR): Display.Frame;
-VAR obj, list: Objects.Object; P, f: Gadgets.Frame; i, j, k, X, p: INTEGER; cmd, title: ARRAY 64 OF CHAR;
-	C: Display.ConsumeMsg;
+VAR obj, list: Objects.Object; P, f: Gadgets.Frame; X, p: INTEGER; cmd, title: ARRAY 64 OF CHAR;
+	C: Display.ConsumeMsg; i: LONGINT;
 	
 	PROCEDURE Button(caption, command: ARRAY OF CHAR);
 	BEGIN
 		obj := Gadgets.CreateObject("BasicGadgets.NewButton"); f := obj(Gadgets.Frame);
-		f.X := X; f.Y := p; f.H := menuH - 2*p; 
-		IF Display.Width <= 800 THEN f.W := MenuButtonSW ELSE f.W := MenuButtonW END;
+		f.X := X; f.Y := p; f.H := menuH - 2*p; f.W := menuButtonW;
 		f.slink := list; list := f;
 		
 		Attributes.SetString(f, "Caption", caption);
@@ -1073,7 +1011,46 @@ VAR obj, list: Objects.Object; P, f: Gadgets.Frame; i, j, k, X, p: INTEGER; cmd,
 		Attributes.SetBool(f, "Popout", TRUE);
 		INC(X, f.W);
 	END Button;
-	
+
+	PROCEDURE GetString(VAR s: ARRAY OF CHAR);
+	VAR term: CHAR;  j: LONGINT;
+	BEGIN
+		WHILE menubar[i] = " " DO INC(i) END;
+		IF menubar[i] = "'" THEN
+			INC(i);  term := "'"
+		ELSIF menubar[i] = "[" THEN
+			INC(i);  term := "]"
+		ELSE
+			term := 0X
+		END;
+		j := 0;
+		IF term = 0X THEN
+			WHILE (menubar[i] # 0X) & (menubar[i] # " ") & (menubar[i] # "[") & (menubar[i] # "'") DO
+				s[j] := menubar[i];  INC(i);  INC(j)
+			END
+		ELSE
+			WHILE (menubar[i] # 0X) & (menubar[i] # term) DO
+				s[j] := menubar[i];  INC(i);  INC(j)
+			END;
+			IF menubar[i] = term THEN INC(i) END
+		END;
+		s[j] := 0X;
+		WHILE menubar[i] = " " DO INC(i) END
+	END GetString;
+
+	PROCEDURE GenTitle(VAR cmd, title: ARRAY OF CHAR);
+	VAR j, k: LONGINT;
+	BEGIN
+		j := 0; WHILE (cmd[j] # ".") & (cmd[j] # 0X) & (cmd[j] # " ") DO INC(j) END;
+		IF cmd[j] = "." THEN
+			k := 0; INC(j);
+			WHILE (cmd[j] # 0X) & (cmd[j] # " ") DO title[k] := cmd[j]; INC(k); INC(j) END;
+			title[k] := 0X
+		ELSE
+			COPY(cmd, title)
+		END
+	END GenTitle;
+
 BEGIN
 	p := 1; list := NIL; X := 0;
 	obj := Gadgets.CreateObject("Panels.NewPanel"); P := obj(Gadgets.Frame);
@@ -1082,8 +1059,7 @@ BEGIN
 	
 	(* name plate *)
 	obj := Gadgets.CreateObject("NamePlates.NewNamePlate"); f := obj(Gadgets.Frame);
-	f.X := X; f.Y := 0; f.H := menuH;
-	IF Display.Width <= 800 THEN f.W := NamePlateSW ELSE f.W := NamePlateW END;
+	f.X := X; f.Y := 0; f.H := menuH; f.W := namePlateW;
 	INC(X, f.W);
 	f.slink := list; list := f;
 	IF name # "" THEN Attributes.SetString(f, "Value", name) END;
@@ -1094,34 +1070,20 @@ BEGIN
 
 	i := 0;
 	WHILE menubar[i] # 0X DO
-		j := 0; 
-		WHILE (menubar[i] # 0X) & (menubar[i] # " ") & (menubar[i] # "[") DO 
-			cmd[j] := menubar[i]; INC(i); INC(j)
-		END;
-		cmd[j] := 0X;
-		(* ps - 7. 6. 96 *)
+		GetString(cmd);
 		IF menubar[i] = "[" THEN
-			INC(i); j := 0;
-			WHILE (menubar[i] # 0X) & (menubar[i] # " ") & (menubar[i] # "]") DO title[j] := menubar[i]; INC(i); INC(j) END;
-			title[j] := 0X
+			GetString(title)
 		ELSE
-			j := 0; WHILE (cmd[j] # ".") & (cmd[j] # 0X) DO INC(j) END;
-			IF cmd[j] = "." THEN
-				k := 0; INC(j); WHILE cmd[j] # 0X DO title[k] := cmd[j]; INC(k); INC(j) END;
-				title[k] := 0X
-			ELSE
-				COPY(cmd, title)
-			END
+			GenTitle(cmd, title)
 		END;
-		Button(title, cmd);
-		WHILE (menubar[i] # 0X) & ((menubar[i] = " ") OR (menubar[i] = "]")) DO INC(i) END
+		Button(title, cmd)
 	END;
-	
+
 	C.id := Display.drop; C.obj := list; C.x := 0; C.y := 0; C.F := P; C.u := 0; C.v := -P.H + 1; C.res := -1; C.dlink := NIL;
 	P.handle(P, C);
 	
 	Attributes.SetBool(P, "Locked", TRUE);
-	Attributes.SetInt(P, "Color", menuColor);
+	Attributes.SetInt(P, "Color", menuC);
 	Attributes.SetInt(P, "Border", 0);
 (*
 	P.handle := MenuHandler;
@@ -1131,16 +1093,18 @@ END newMenu;
 
 (** Create a new menubar from the menu string. Menu strings are sequences of names. The caption
 of a menu button can be set by following the name by the caption text in square brackets, for example
-"MyDoc.Do[Do] MyDoc.Undo[Undo]" etc. *)
+"MyDoc.Do[Do] MyDoc.Undo[Undo]" etc. The complete syntax is: { cmd [ title ] } . cmd = name | string . string = "'" chars "'" . title = "[" chars "]" . *)
 PROCEDURE NewMenu*(menubar: ARRAY OF CHAR): Display.Frame;
 BEGIN RETURN newMenu("", menubar)
 END NewMenu;
 
+(*
 (** Only for compatibility with older, non-document based applications. *)
 PROCEDURE NewMenuFrame*(title, menubar: ARRAY OF CHAR): Display.Frame;
 BEGIN (* RETURN newMenu(title, menubar, 2, 0) OLD*)
 	RETURN newMenu(title, menubar)
 END NewMenuFrame;
+*)
 
 PROCEDURE ViewerDoc(V: DocViewer): Documents.Document;
 VAR main: Display.Frame; d: Documents.Document; obj: Objects.Object;
@@ -1171,17 +1135,19 @@ END DocGadgetDoc;
 
 (** Document gadget enclosing the current context. *)
 PROCEDURE CurDoc*(context: Objects.Object): Documents.Document;
-VAR doc: Documents.Document; obj: Objects.Object;
+VAR doc: Documents.Document; obj, old: Objects.Object;
 BEGIN
 	doc := NIL;
 	IF (Oberon.Par.frame = Oberon.Par.vwr.dsc) & (Oberon.Par.vwr IS DocViewer) THEN (* in menu of DocViewer *)
 		doc := ViewerDoc(Oberon.Par.vwr(DocViewer));
 	ELSE
-		obj := context;
-		WHILE (obj # NIL) & ~(obj IS Documents.Document) & ~(obj IS DocGadget) DO obj := obj.dlink END;
+		obj := context; old := NIL;
+		WHILE (obj # NIL) & (obj # old) & ~(obj IS Documents.Document) & ~(obj IS DocGadget) DO
+			old := obj; obj := obj.dlink
+		END;
 		IF obj # NIL THEN
 			IF obj IS Documents.Document THEN doc := obj(Documents.Document)
-			ELSE doc := DocGadgetDoc(obj(DocGadget));
+			ELSIF obj IS DocGadget THEN doc := DocGadgetDoc(obj(DocGadget));
 			END
 		END
 	END;
@@ -1270,7 +1236,9 @@ VAR list: Display.Frame; X, Y: INTEGER;C: Display.ConsumeMsg;
 	VAR obj: Objects.Object; f: Display.Frame;
 	BEGIN
 		obj := Gadgets.CreateObject("Navigators.NewNavigator"); f := obj(Gadgets.Frame);
-		Y := -Display.Height + X + obj(Gadgets.Frame).H DIV 2;
+		f.H := 31; f.W := 36;
+		DEC(Y, f.H + 4);
+		(*Y := -Display.Height + X + obj(Gadgets.Frame).H DIV 2;*)
 		f.X := X; f.Y := Y;
 		f.slink := list; list := f;
 	END Navigator;
@@ -1280,6 +1248,7 @@ BEGIN
 	
 	Title;
 	INC(X,10);
+	Navigator;
 	Button("Close", "Desktops.Close");
 	Button("Grow", "Desktops.Grow");
 	Button("Copy", "System.Copy");
@@ -1287,7 +1256,6 @@ BEGIN
 	
 	Finder;
 	DEC(X,10);
-	Navigator;
 
 	C.id := Display.drop; C.obj := list; C.x := 0; C.y := 0; C.F := F; C.u := 10; C.v := -(ABS(Y) + 5); C.res := -1; C.dlink := NIL;
 	F.handle(F, C);
@@ -1310,7 +1278,7 @@ VAR S: Attributes.Scanner; F: Gadgets.Frame; B: Objects.BindMsg; X, Y: INTEGER;
 			Files.ReadString(R, s);
 			Files.ReadInt(R, x); Files.ReadInt(R, y); Files.ReadInt(R, w); Files.ReadInt(R, h);
 		END;
-		RETURN (s = "PanelDocs.NewDoc") & (w >= 2048) & (h = 2048)
+		RETURN (s = "PanelDocs.NewDoc") & (w > Display.Width) & (h > Display.Height)
 	END IsDesktop;
 	
 BEGIN
@@ -1322,7 +1290,7 @@ BEGIN
 		IF f = NIL THEN
 			obj := Gadgets.CreateObject("PanelDocs.NewDoc");
 			doc := obj(Documents.Document);
-			doc.W := 4096; doc.H := 2048;
+			doc.W := 2*Display.Width; doc.H := 2*Display.Height;
 			
 			obj := Gadgets.CreateObject("Panels.NewPanel");
 			F := obj(Gadgets.Frame);
@@ -1354,7 +1322,7 @@ BEGIN
 			doc := obj(Documents.Document);
 			COPY(S.s, doc.name);
 			doc.Load(doc);
-			doc.W := 4096; doc.H := 2048;
+			(*doc.W := 2*Display.Width; doc.H := 2*Display.Height;*)
 			Documents.Init(doc, doc.dsc(Gadgets.Frame));
 			INCL(doc.state, 30); (* allow document consumption *)
 			v := Views.ViewOf(doc);
@@ -1374,7 +1342,7 @@ END Open;
 PROCEDURE SyncPlate(doc: Documents.Document);
 	VAR M: Oberon.CaretMsg;
 BEGIN
-	M.id := Oberon.get; M.car := NIL; M.res := -1;
+	M.id := Oberon.get; M.F := NIL; M.car := NIL; M.res := -1;
 	Objects.Stamp(M); Display.Broadcast(M);
 	IF (M.car # NIL) & (M.car IS Gadgets.Frame) & (M.car(Gadgets.Frame).obj = doc) THEN
 		Oberon.Defocus()
@@ -1551,7 +1519,7 @@ END CreateMenu;
 (** Open a document in the viewer system or in the desktop, depending on the context and the marker. *)
 PROCEDURE ShowDoc*(D: Documents.Document);
 VAR C: Display.ConsumeMsg; open, menu: Display.Frame; X, Y: INTEGER; v: Viewers.Viewer; V: DocViewer;
-	A: Objects.AttrMsg; DF: DocGadget; CM: Display.ControlMsg; M: Display.ModifyMsg;
+	A: Objects.AttrMsg; DF: DocGadget; CM: Display.ControlMsg;
 	viewerSystem, adaptive: BOOLEAN;
 BEGIN
 	IF Oberon.Pointer.on THEN (* placement hint *)
@@ -1574,13 +1542,6 @@ BEGIN
 	(* post: ~viewerSystem & (V # NIL) *)
 	
 	IF ~viewerSystem THEN (* in the desktop *)
-		IF D.W < recDocWidth THEN	(* set to recDocWidth default width *)
-			M.id := Display.extend; M.mode := Display.state;  M.x := 0;  M.y := 0;
-			M.X := D.X; M.Y := D.Y; M.W := recDocWidth; M.H := D.H;
-			M.dX := 0; M.dY := 0; M.dW := M.W - D.W; M.dH := 0;
-			M.F := D; M.res := -1; M.dlink := NIL; Objects.Stamp(M);
-			D.handle(D, M)
-		END;
 		NewDocGadget; DF := Objects.NewObj(DocGadget);
 		menu := CreateMenu(D, TRUE, FALSE);
 		
@@ -1610,11 +1571,12 @@ BEGIN
 		END;
 		
 		IF ~adaptive THEN
-			open := Views.ViewOf(D); open.W := D.W; open.H := D.H
+			open := Views.ViewOf(D); open.W := D.W; open.H := D.H;
+			(*Attributes.SetBool(open, "Locked", TRUE)*)
 		ELSE open := D
 		END;
 		menu := CreateMenu(D, FALSE, X >= Display.Width DIV 8 * 5);
-		V := NewDocViewer(menu, open, menu.H,  X, Y);
+		V := NewDocViewer(menu, open, menu.H,  X, Y)
 	END
 END ShowDoc;
 
@@ -1638,7 +1600,7 @@ BEGIN
 			END
 		ELSE
 			V := obj(DocViewer);
-			IF HasMenu(V) THEN menu := CreateMenu(D, FALSE, V.X >= Display.Width DIV 8 * 5);
+			IF HasMenu(V) THEN menu := CreateMenu(D, FALSE, V.X >= Display.Width DIV 8 * 5)
 			ELSE menu := NewDummy()
 			END;
 			AM.id := Objects.get; AM.name := "Adaptive"; AM.class := Objects.Inval; AM.b := FALSE; AM.res := -1; D.handle(D, AM);
@@ -1697,43 +1659,6 @@ BEGIN
 	END
 END Option;
 
-PROCEDURE Call(cmd: ARRAY OF CHAR);
-VAR MName, PName: ARRAY 64 OF CHAR; Mod: Modules.Module; Cmd: Modules.Command;
-
-	PROCEDURE SplitName;
-	VAR i, j: INTEGER;
-	BEGIN i := 0;
-		WHILE (cmd[i] # 0X) & (cmd[i] # ".") DO MName[i] := cmd[i]; INC(i) END;
-		MName[i] := 0X; INC(i); j := 0;
-		WHILE cmd[i] # 0X DO PName[j] := cmd[i]; INC(i); INC(j) END;
-		PName[j] := 0X
-	END SplitName;
-	
-BEGIN
-	SplitName;
-	IF (MName # "") & (PName # "") THEN
-		Mod := Modules.ThisMod(MName);
-		IF Modules.res = 0 THEN
-			Cmd := Modules.ThisCommand(Mod, PName);
-			IF Modules.res = 0 THEN Cmd
-			ELSE Texts.WriteString(W, "[Command not found: "); Texts.WriteString(W, PName); Texts.Write(W, "]");
-				Texts.Append(Oberon.Log, W.buf)
-			END
-		ELSE
-			Texts.Write(W, "[");
-			IF Modules.resMsg # "" THEN
-				Texts.WriteString(W, Modules.resMsg)
-			ELSE
-				Texts.WriteString(W, "Module not found: "); Texts.WriteString(W, MName)
-			END;
-			Texts.Write(W, "]");
-			Texts.Append(Oberon.Log, W.buf)
-		END
-	ELSE Texts.WriteString(W, "[Illegal document type: "); Texts.WriteString(W, cmd); Texts.Write(W, "]");
-		Texts.Append(Oberon.Log, W.buf)
-	END
-END Call;
-
 PROCEDURE LoadDoc(VAR name: ARRAY OF CHAR): Documents.Document;
 VAR S: Attributes.Scanner; type, alias: ARRAY 64 OF CHAR; d: Documents.Document;
 BEGIN
@@ -1745,7 +1670,7 @@ BEGIN
 		Option(S, type, FALSE);
 		Gadgets.GetAlias(type, alias); IF alias # "" THEN COPY(alias, type) END;
 		IF type # "" THEN
-			Call(type);
+			Gadgets.Execute(type, Gadgets.executorObj, Gadgets.context, NIL, NIL);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Documents.Document) THEN
 				d := Objects.NewObj(Documents.Document); d.name[0] := 0X; d.Load(d);
 				COPY(d.name, name);
@@ -1756,15 +1681,15 @@ BEGIN
 		Option(S, type, TRUE);
 		Gadgets.GetAlias(type, alias); IF alias # "" THEN COPY(alias, type) END;
 		IF type # "" THEN
-			Call(type);
+			Gadgets.Execute(type, Gadgets.executorObj, Gadgets.context, NIL, NIL);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Documents.Document) THEN
 				d := Objects.NewObj(Documents.Document); COPY(name, d.name); d.Load(d)
 			END
 		ELSE
 			d := Documents.Open(name);
-			IF ((d = NIL) OR (d.dsc = NIL)) & (Modules.resMsg # "") THEN
-				Texts.Write(W, "[");  Texts.WriteString(W, Modules.resMsg);  Texts.Write(W, "]");
-				Texts.Append(Oberon.Log, W.buf)
+			IF (d = NIL) OR (d.dsc = NIL) THEN
+				Texts.WriteString(W, Documents.errMsg);
+				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 			END
 		END
 	END;
@@ -1782,11 +1707,7 @@ PROCEDURE OpenDoc*;
 VAR name: ARRAY 128 OF CHAR; d: Documents.Document;
 BEGIN
 	d := LoadDoc(name);	
-	IF (d # NIL) THEN ShowDoc(d); 
-	ELSE
-		Texts.Write(W, " "); Texts.Write(W, 22X); Texts.WriteString(W, name); Texts.Write(W, 22X);
-		Texts.WriteString(W, " loading failed");
-		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+	IF (d # NIL) THEN ShowDoc(d)
 	END;
 	Objects.NewObj := NIL;
 END OpenDoc;
@@ -1796,11 +1717,7 @@ PROCEDURE InsertDoc*;
 VAR name: ARRAY 128 OF CHAR; d: Documents.Document;
 BEGIN
 	d := LoadDoc(name);	
-	IF (d # NIL) THEN Gadgets.Integrate(d); 
-	ELSE
-		Texts.Write(W, " "); Texts.Write(W, 22X); Texts.WriteString(W, name); Texts.Write(W, 22X);
-		Texts.WriteString(W, " loading failed");
-		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+	IF (d # NIL) THEN Gadgets.Integrate(d)
 	END;
 	Objects.NewObj := NIL;
 END InsertDoc;
@@ -1810,11 +1727,7 @@ PROCEDURE ReplaceDoc*;
 VAR name: ARRAY 128 OF CHAR; d: Documents.Document;
 BEGIN
 	d := LoadDoc(name);	
-	IF (d # NIL) THEN ReplaceCurrentDoc(d); 
-	ELSE
-		Texts.Write(W, " "); Texts.Write(W, 22X); Texts.WriteString(W, name); Texts.Write(W, 22X);
-		Texts.WriteString(W, " loading failed");
-		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+	IF (d # NIL) THEN ReplaceCurrentDoc(d)
 	END;
 	Objects.NewObj := NIL;
 END ReplaceDoc;
@@ -1928,16 +1841,18 @@ Prints a document.
 *)
 PROCEDURE PrintDoc*;
 VAR S: Attributes.Scanner; M: Display.SelectMsg; obj: Objects.Object;
-	D: Documents.Document; printer, options: ARRAY 64 OF CHAR;
+	D: Documents.Document; printer, options: ARRAY 64+LEN(D.name) OF CHAR;
 
 	PROCEDURE PrinterErr;
 	VAR err: ARRAY 32 OF CHAR;
 	BEGIN
 		IF Printer.res # 0 THEN
-			IF Printer.res = 1 THEN err := " no connection"
+			IF Printer.res = 1 THEN err := " no such printer"
 			ELSIF Printer.res = 2 THEN err := " no link"
 			ELSIF Printer.res = 3 THEN err := " printer not ready"
-			ELSIF Printer.res = 4 THEN err := " no permission" END;
+			ELSIF Printer.res = 4 THEN err := " no permission"
+			ELSE err := " unknown error"
+			END;
 			Texts.WriteString(W, err); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);	
 		END
 	END PrinterErr;
@@ -1971,23 +1886,27 @@ VAR S: Attributes.Scanner; M: Display.SelectMsg; obj: Objects.Object;
 		ELSE Texts.WriteString(W, " [no selection]"); Texts.Append(Oberon.Log, W.buf)
 		END
 	END PrintSelectedDocViewers;
-	
+
 	PROCEDURE OpenPrinter(name, options: ARRAY OF CHAR);
-	VAR retries: INTEGER;
+		VAR S: Texts.Scanner;
 	BEGIN
-		retries := 1;
-		Printer.Open(name, options);
-		WHILE (Printer.res > 0) & (Printer.res <4 ) & (retries > 0) DO
-			Texts.Write(W, "-"); Texts.Append(Oberon.Log, W.buf);
-			Printer.Open(name, options); DEC(retries)
-		END
+		IF name = "Default" THEN
+			Oberon.OpenScanner(S, "Printer.DefaultName");
+			IF ~(S.class IN {Texts.Name, Texts.String}) THEN COPY(name, S.s) END
+		ELSE
+			COPY(name, S.s)
+		END;
+		Strings.AppendCh(options, Oberon.OptionChar);
+		Strings.Append(options, D.name);
+		Texts.WriteString(W, S.s); Texts.Write(W, " "); Texts.Append(Oberon.Log, W.buf);
+		Printer.Open(S.s, options)
 	END OpenPrinter;
 	
 BEGIN
 	Texts.WriteString(W, "Desktops.PrintDoc "); Texts.Append(Oberon.Log, W.buf);
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Attributes.Scan(S);
-	IF (S.class = Attributes.Name) OR (S.class = Attributes.String) THEN (* printer name *)
+	IF S.class IN {Attributes.Name, Attributes.String} THEN (* printer name *)
 		COPY(S.s, printer); Attributes.Scan(S);
 		IF (S.class = Attributes.Char) & (S.c = Oberon.OptionChar) THEN
 			Attributes.Scan(S);
@@ -1997,40 +1916,79 @@ BEGIN
 			Attributes.Scan(S)
 		ELSE options := ""
 		END;
-		Texts.WriteString(W, printer); Texts.Write(W, " "); Texts.Append(Oberon.Log, W.buf);
 		IF (S.class = Attributes.Char) & (S.c = "*") THEN
 			D := Documents.MarkedDoc();
 			IF D # NIL THEN
 				OpenPrinter(printer, options);
-				IF Printer.res = 0 THEN printDoc(D); Printer.Close
-				ELSE PrinterErr
-				END
+				IF Printer.res = 0 THEN
+					printDoc(D); Printer.Close
+				END;
+				IF Printer.res # 0 THEN PrinterErr END
 			END
 		ELSIF (S.class = Attributes.Char) & (S.c = "@") THEN (* Selection *)
 			OpenPrinter(printer, options);
-			IF Printer.res = 0 THEN PrintSelectedDocViewers; Printer.Close
-			ELSE PrinterErr
-			END
-		ELSE
+			IF Printer.res = 0 THEN
+				PrintSelectedDocViewers; Printer.Close
+			END;
+			IF Printer.res # 0 THEN PrinterErr END
+		ELSIF S.class = Attributes.Name THEN
 			Printer.res := 0;
 			WHILE (S.class = Attributes.Name) & (Printer.res = 0) DO
 				D := Documents.Open(S.s);
-				IF D # NIL THEN
+				IF (D # NIL) & (D.dsc # NIL) THEN
 					OpenPrinter(printer, options);
-					IF Printer.res = 0 THEN printDoc(D); Printer.Close ELSE PrinterErr END;
+					IF Printer.res = 0 THEN
+						printDoc(D); Printer.Close
+					END;
+					IF Printer.res # 0 THEN PrinterErr END
 				ELSE
-					Texts.Write(W, 22X); Texts.WriteString(W, S.s); Texts.Write(W, 22X); Texts.WriteString(W, " loading failed");
+					Texts.WriteString(W, Documents.errMsg);
 					Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
 				END;
 				Attributes.Scan(S)
+			END
+		ELSE
+			D := CurDoc(Gadgets.context);
+			IF D # NIL THEN
+				OpenPrinter(printer, options);
+				IF Printer.res = 0 THEN
+					printDoc(D); Printer.Close
+				END;
+				IF Printer.res # 0 THEN PrinterErr END
 			END
 		END;
 	ELSE Texts.WriteString(W, " unknown printer"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 	END
 END PrintDoc;
 
-BEGIN menuH := 20; Texts.OpenWriter(W);
-	recDocWidth := NamePlateW + 3*MenuButtonW
+(** Desktops.MenuCmd docgadget cmd *)
+PROCEDURE MenuCmd*;
+	VAR
+		S: Attributes.Scanner;
+		obj: Objects.Object;
+BEGIN
+	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
+	Attributes.Scan(S);
+	IF S.class IN {Attributes.Name, Attributes.String} THEN
+		obj := Gadgets.FindObj(Gadgets.context, S.s);
+		IF (obj # NIL) & (obj IS Documents.Document) THEN
+			Attributes.Scan(S);
+			IF S.class IN {Attributes.Name, Attributes.String} THEN
+				Gadgets.Execute(S.s, Gadgets.executorObj, obj, NIL, NIL)
+			END
+		END
+	END
+END MenuCmd;
+
+BEGIN
+	Texts.OpenWriter(W);
+	menuH := 20; menuC := 13;
+	IF Display.Width <= 800 THEN
+		menuButtonW := 36;  namePlateW := 75
+	ELSE
+		menuButtonW := 39;  namePlateW := 110
+	END;
+	recDocWidth := namePlateW + 3*menuButtonW
 END Desktops.
 
 (** Remarks:

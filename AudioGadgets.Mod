@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE AudioGadgets; (* EJZ,   *)
+MODULE AudioGadgets;	(** portable *) (* EJZ,   *)
 	IMPORT Files, Objects, Input, Display, Fonts, Texts, Display3, Oberon, Strings, Effects, Gadgets, BasicGadgets;
 
 	CONST
@@ -657,7 +656,7 @@ MODULE AudioGadgets; (* EJZ,   *)
 			ELSIF M IS Objects.LinkMsg THEN
 				WITH M: Objects.LinkMsg DO
 					IF M.id = Objects.get THEN
-						IF (M.name = "Value") OR (M.name = "Model") THEN
+						IF M.name = "Model" THEN
 							M.obj := F.obj;
 							M.res := 0
 						ELSIF M.name = "Tracks" THEN
@@ -667,7 +666,7 @@ MODULE AudioGadgets; (* EJZ,   *)
 							Gadgets.framehandle(F, M)
 						END
 					ELSIF M.id = Objects.set THEN
-						IF (M.name = "Value") OR (M.name = "Model") THEN
+						IF M.name = "Model" THEN
 							F.obj := M.obj;
 							IF UpdateValue(F, TRUE) THEN
 								M.res := 0
@@ -682,7 +681,6 @@ MODULE AudioGadgets; (* EJZ,   *)
 						END
 					ELSIF M.id = Objects.enum THEN
 						Gadgets.framehandle(F, M);
-						M.Enum("Value");
 						M.Enum("Tracks");
 						M.res := 0
 					END
@@ -728,7 +726,7 @@ MODULE AudioGadgets; (* EJZ,   *)
 		Texts.Scan(S);
 		IF S.class IN {Texts.Name, Texts.String} THEN
 			L.id := Objects.set;
-			L.name := "Value";
+			L.name := "Model";
 			L.obj := Gadgets.CreateObject(S.s);
 			IF L.obj # NIL THEN
 				F.handle(F, L)
@@ -805,5 +803,3 @@ MODULE AudioGadgets; (* EJZ,   *)
 	END NewSeekButton;
 
 END AudioGadgets.
-
-System.Free AudioGadgets ~

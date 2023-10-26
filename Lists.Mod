@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Lists; (* jm 18.4.95 *)
+MODULE Lists;	(** portable *) (* jm 18.4.95 *)
 
 (** Implementation of scrollable lists.
 *)
@@ -29,8 +28,8 @@ MODULE Lists; (* jm 18.4.95 *)
 	15.5.95 - changed scrolling behaviour back
 	9.5.95 - changed copy over, now works even when focus ist alredy set (ps - 9.5.96)
 *)
-IMPORT Files, Fonts, Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Input, Texts, Attributes,
-	FileDir, Floppy := Diskette;
+IMPORT Files, Fonts, Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Input, Texts, Attributes, FileDir,
+	Floppy := Diskette;
 	
 CONST
 	barw = 18;
@@ -281,7 +280,7 @@ END TrackSlider;
 (* --------------------- CHOOSER ------------------- *)
 
 PROCEDURE Updatebar(F: List; H: INTEGER);
-VAR old, space: LONGINT;
+VAR space: LONGINT;
 BEGIN
 	space := H DIV (Fonts.Default.height + 2);
 	IF F.noitems <= space THEN
@@ -661,7 +660,7 @@ END SelectItem;
 
 PROCEDURE TimeOk(): BOOLEAN;
 BEGIN
-	IF Oberon.Time() <= mayscroll THEN RETURN FALSE
+	IF Oberon.Time() - mayscroll <= 0 THEN RETURN FALSE
 	ELSE mayscroll := Oberon.Time() + waittime; RETURN TRUE
 	END
 END TimeOk;
@@ -889,7 +888,7 @@ END Search;
 
 PROCEDURE ListHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
 VAR x, y, w, h: INTEGER; F0: List; R: Display3.Mask; redraw: BOOLEAN; T: Texts.Text;
-	ver: LONGINT; l, new: Item;
+	ver, noitems: LONGINT; l, new: Item;
 BEGIN
 	WITH F: List DO
 		IF M IS Display.FrameMsg THEN
@@ -961,28 +960,40 @@ BEGIN
 		ELSIF M IS Objects.FileMsg THEN
 			WITH M: Objects.FileMsg DO
 				IF M.id = Objects.store THEN (* store private data here *)
-					Files.WriteNum(M.R, 3);
+					Files.WriteNum(M.R, 4);
 					Files.WriteString(M.R, F.cmd);
+					(* paranoia count *)
+					l := F.items; F.noitems := 0;
+					WHILE l # NIL DO l := l.next; INC(F.noitems) END;
+					Files.WriteNum(M.R, F.noitems);
+
 					l := F.items;
 					WHILE l # NIL DO Files.WriteString(M.R, l.s); l := l.next END;
-					Files.WriteString(M.R, "");
 					Files.WriteBool(M.R, F.scrollbar);
 					Files.WriteBool(M.R, F.sorted);
 					Gadgets.framehandle(F, M)
 				ELSIF M.id = Objects.load THEN (* load private data here *)
 					Files.ReadNum(M.R, ver);
-					IF (ver = 1) OR (ver = 2) OR (ver = 3) THEN
+					IF (1 <= ver) & (ver <= 4) THEN
 						Files.ReadString(M.R, F.cmd);
-						l := NIL; NEW(new);
-						Files.ReadString(M.R, new.s); F.noitems := 0;
-						WHILE new.s # "" DO
-							IF l = NIL THEN F.items := new ELSE l.next := new; new.prev := l; END; l := new;
-							INC(F.noitems);
-							NEW(new); 
-							Files.ReadString(M.R, new.s);
+						F.noitems := 0; l := NIL;
+						IF ver < 4 THEN
+							NEW(new); Files.ReadString(M.R, new.s);
+							WHILE new.s # "" DO
+								IF l = NIL THEN F.items := new ELSE l.next := new; new.prev := l; END;
+								INC(F.noitems); l := new; 
+								NEW(new); Files.ReadString(M.R, new.s)
+							END
+						ELSE
+							Files.ReadNum(M.R, noitems);
+							WHILE F.noitems < noitems DO
+								NEW(new); Files.ReadString(M.R, new.s);
+								IF l = NIL THEN F.items := new ELSE l.next := new; new.prev := l; END;
+								INC(F.noitems); l := new
+							END
 						END;
 						IF ver >= 2 THEN Files.ReadBool(M.R, F.scrollbar) ELSE F.scrollbar := FALSE END;
-						IF ver = 3 THEN Files.ReadBool(M.R, F.sorted) END
+						IF ver >= 3 THEN Files.ReadBool(M.R, F.sorted) END
 					ELSE HALT(99)
 					END;
 					Gadgets.framehandle(F, M);
@@ -1077,44 +1088,6 @@ BEGIN
 	Texts.Append(text,W.buf);
 END GetDir;
 
-(* Windows version
-PROCEDURE ListFiles(path, name: ARRAY OF CHAR; time, date, size: LONGINT; isdir: BOOLEAN);
-BEGIN
-	IF ~isdir THEN
-		Texts.WriteString(W, name); Texts.WriteLn(W)
-	END
-END ListFiles;
-
-PROCEDURE GetDir(mask: ARRAY OF CHAR; text: Texts.Text);
-VAR path, filename: ARRAY 128 OF CHAR;
-
-	PROCEDURE Split(mask: ARRAY OF CHAR; VAR path, filename: ARRAY OF CHAR);
-	VAR pos, i: INTEGER;
-	BEGIN
-		pos := 0; i := 0;
-		WHILE mask[i] # 0X DO
-			IF FileDir.SpecialChar(mask[i]) THEN pos := i+1 END;
-			INC(i)
-		END;
-		COPY(mask, path);
-		IF pos = 0 THEN (* no path *) path[0] := 0X;
-		ELSIF (pos = 1) OR (pos = 3) & (mask[1] = ":") THEN (* keep trailing \ *) path[pos] := 0X
-		ELSE (* cut last \ *) path[pos-1] := 0X;
-		END;
-		i := 0;
-		WHILE mask[pos] # 0X DO filename[i] := mask[pos]; INC(pos); INC(i) END;
-		filename[i] := 0X;
-	END Split;
-	
-BEGIN
-	Split(mask, path, filename);
-	IF path # "" THEN FileDir.EnumerateFiles(path, filename, FALSE, ListFiles)
-	ELSE FileDir.EnumerateFiles("", filename, FALSE, ListFiles)
-	END;
-	Texts.Append(text,W.buf)
-END GetDir;
-*)
-
 PROCEDURE Copy(source : ARRAY OF CHAR; VAR dest : ARRAY OF CHAR);
 	VAR i,j : INTEGER;
 BEGIN
@@ -1195,6 +1168,17 @@ BEGIN
 	Texts.Append(text,W.buf);
 END GetDiskette;
 
+(* Windows version
+PROCEDURE GetDiskette(mask: ARRAY OF CHAR; text: Texts.Text);
+	VAR  i : INTEGER; 
+BEGIN
+	i := 0;
+	WHILE (mask[i] > " ") & (mask[i] # "/") DO pat[i] := mask[i]; INC(i);  END;
+	pat[i] := 0X;
+	Texts.Append(text,W.buf);
+END GetDiskette;
+*)
+
 (** Same as Directory, except the files on Diskette are searched. This command is not functional on all platforms. *)
 PROCEDURE Diskette*; (* "mask" "objname" *)
 VAR S: Attributes.Scanner; mask: ARRAY 32 OF CHAR; o: Objects.Object;
@@ -1263,7 +1247,7 @@ BEGIN
 END Library;
 
 PROCEDURE Init;
-VAR s: Texts.Scanner;
+	VAR s: Texts.Scanner;
 BEGIN
 	Oberon.OpenScanner(s, "Gadgets.ListScrollDelay");
 	IF (s.class = Texts.Int) & (s.i > 0) THEN waittime := s.i
@@ -1273,7 +1257,8 @@ BEGIN
 END Init;
 
 BEGIN
-	Texts.OpenWriter(W);  Init
+	Texts.OpenWriter(W);
+	Init()
 END Lists.
 
 (** Remarks:

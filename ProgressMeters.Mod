@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,11 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE ProgressMeters; (* ejz,   *)
+MODULE ProgressMeters;	(** portable *) (* ejz,   *)
 	IMPORT Files, Objects, Display, Printer, Fonts, Display3, Printer3, Strings, Gadgets;
 
 	CONST
 		CurVer = 0;
-		DisplayUnit = LONG(10000);
 
 	TYPE
 		Frame* = POINTER TO FrameDesc;
@@ -178,10 +176,10 @@ MODULE ProgressMeters; (* ejz,   *)
 			horz: BOOLEAN;
 		PROCEDURE P(x: INTEGER): INTEGER;
 		BEGIN
-			RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+			RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 		END P;
 		PROCEDURE D(x: INTEGER): INTEGER;
-		BEGIN RETURN SHORT((LONG(x) * Printer.Unit + (DisplayUnit DIV 2)) DIV DisplayUnit)
+		BEGIN RETURN SHORT((LONG(x) * Printer.Unit + (Display.Unit DIV 2)) DIV Display.Unit)
 		END D;
 
 	BEGIN
@@ -435,8 +433,7 @@ MODULE ProgressMeters; (* ejz,   *)
 				WITH M: Objects.LinkMsg DO
 					IF M.id = Objects.get THEN
 						IF (M.name = "Value") OR (M.name = "Model") THEN
-							M.obj := F.obj;
-							M.res := 0
+							M.obj := F.obj; M.res := 0
 						ELSE
 							Gadgets.framehandle(F, M)
 						END
@@ -450,9 +447,7 @@ MODULE ProgressMeters; (* ejz,   *)
 							Gadgets.framehandle(F, M)
 						END
 					ELSIF M.id = Objects.enum THEN
-						Gadgets.framehandle(F, M);
-						M.Enum("Value");
-						M.res := 0
+						Gadgets.framehandle(F, M); M.Enum("Value"); M.res := 0
 					END
 				END
 			ELSIF M IS Objects.FileMsg THEN

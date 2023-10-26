@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE XBM;
+MODULE XBM;	(** portable *)
 	IMPORT Files, Objects, Display, Display3, Pictures;
 
 (** Load an xbm-image from rider R. *)
@@ -186,7 +185,7 @@ MODULE XBM;
 		WITH obj: Pictures.Picture DO
 			IF M IS Objects.AttrMsg THEN
 				WITH M: Objects.AttrMsg DO 
-					IF (M.id = Objects.get) & (M.name = "Gen") THEN 
+					IF (M.id = Objects.get) & (M.name = "Gen") THEN
 						M.class := Objects.String; M.s := "Pictures.NewPicture"; M.res:=0 
 					END;
 				END;
@@ -209,7 +208,7 @@ MODULE XBM;
 	BEGIN
 		Objects.NewObj.handle := Handle
 	END InitPicture;
-	
+
 (** Called from Pictures.Open to try and load an XBMP picture. The picture descriptor is pre-allocated by Pictures in
 Objects.NewObj. InitPicture overwrites the handler of the picture with a new handler that will load the XBM picture
 when a FileMsg is received (variant load). *)

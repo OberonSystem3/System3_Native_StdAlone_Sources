@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Rectangles;  (*NW 25.2.90 / 1.2.92 / JG 14.6.94 ported to System 3 / EOS 12.5.95 release 2.0*)
+MODULE Rectangles;	(** portable *)  (*NW 25.2.90 / 1.2.92 / JG 14.6.94 ported to System 3 / EOS 12.5.95 release 2.0*)
 	IMPORT Display, Files, Input, Printer, Texts, Oberon, Graphics, GraphicFrames;
 
 	TYPE
@@ -38,7 +37,7 @@ MODULE Rectangles;  (*NW 25.2.90 / 1.2.92 / JG 14.6.94 ported to System 3 / EOS 
 		dst(Rectangle).lw := src(Rectangle).lw; dst(Rectangle).vers := src(Rectangle).vers
 	END Copy;
 
-	PROCEDURE mark(f: GraphicFrames.Frame; col, x, y: INTEGER);
+	PROCEDURE mark(col, x, y: INTEGER);
 	BEGIN Display.ReplConst(col, x-4, y, 4, 4, 0)
 	END mark;
 
@@ -66,15 +65,15 @@ MODULE Rectangles;  (*NW 25.2.90 / 1.2.92 / JG 14.6.94 ported to System 3 / EOS 
 					  Display.ReplPattern(col, Display.grey0, x, y, w, h, 1)
                     END;
 					draw(col);
-					IF obj.selected THEN mark(f, Display.FG, x+w-lw, y+lw) END ;
+					IF obj.selected THEN mark(Display.FG, x+w-lw, y+lw) END ;
 					(*
 					IF obj(Rectangle).vers # 0 THEN
 					  Display.ReplPattern(col, Display.grey0, x, y, w, h, 1)
                     END
                     *)
-				ELSIF M.mode = 1 THEN mark(f, Display.FG, x+w-lw, y+lw)
-				ELSIF M.mode = 2 THEN mark(f, Display.BG, x+w-lw, y+lw)
-				ELSIF obj(Rectangle).vers = 0 THEN draw(f.col); mark(f, f.col, x+w-lw, y+lw)
+				ELSIF M.mode = 1 THEN mark(Display.FG, x+w-lw, y+lw)
+				ELSIF M.mode = 2 THEN mark(Display.BG, x+w-lw, y+lw)
+				ELSIF obj(Rectangle).vers = 0 THEN draw(f.col); mark(f.col, x+w-lw, y+lw)
 				ELSE Display.ReplConst(f.col, x, y, w, h, 0)
 				END;
 				Display.ResetClip
@@ -96,12 +95,12 @@ MODULE Rectangles;  (*NW 25.2.90 / 1.2.92 / JG 14.6.94 ported to System 3 / EOS 
 			WITH M: GraphicFrames.CtrlMsg DO
 				WITH obj: Rectangle DO
 					M.res := 1; x0 := obj.x + obj.w + M.f.x; y0 := obj.y + M.f.y;
-					mark(M.f, Display.FG, x0 - obj.lw, y0 + obj.lw);
+					mark(Display.FG, x0 - obj.lw, y0 + obj.lw);
 					REPEAT Input.Mouse(k, x1, y1);
 						DEC(x1, (x1-M.f.x) MOD 4); DEC(y1, (y1-M.f.y) MOD 4);
 						Oberon.DrawCursor(Oberon.Mouse, Oberon.Arrow, x1, y1)
 					UNTIL k = {};
-					mark(M.f, Display.BG, x0 - obj.lw, y0 + obj.lw);
+					mark(Display.BG, x0 - obj.lw, y0 + obj.lw);
 					IF (x0 - obj.w < x1) & (y1 < y0+ obj.h) THEN
 						GraphicFrames.EraseObj(M.f, obj);
 						dx := x1 - x0; dy := y1 - y0;

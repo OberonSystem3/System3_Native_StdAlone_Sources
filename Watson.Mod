@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,10 +13,10 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Watson;	(** PS/tk   *)
+MODULE Watson;	(** portable *)	(** PS/tk   *)
 
 	IMPORT
-		Files, Objects, Fonts, Display, Texts, Oberon, Gadgets, TextGadgets0, TextGadgets, 
+		Files, Modules, Objects, Fonts, Display, Texts, Oberon, Gadgets, TextGadgets0, TextGadgets, 
 		Documents, TextDocs, Desktops, Watson0, Compress;
 
 	CONST
@@ -40,7 +39,7 @@ MODULE Watson;	(** PS/tk   *)
 		*)
 
 		(* file name extensions *)
-		defFileExt = ".Def"; symFileExt = ".Sym"; objFileExt = ".Obj"; tutFileExt = ".Book"; tutDelimiter = " ";
+		defFileExt = ".Def"; tutFileExt = ".Book"; tutDelimiter = " ";
 		
 		(* title extension of document *)
 		titleExt = ".Def";
@@ -77,14 +76,14 @@ MODULE Watson;	(** PS/tk   *)
 		errNum = 11; errComment = 12;
 
 		(* symbol values *)
-		times = 0; plus = 1; minus = 2; eql = 3; arrow = 4; period = 5;
-		comma = 6; colon = 7; rparen = 8; rbrak = 9; of = 10; 
-		to = 11; lparen = 12; lbrak = 13; lbrace = 14; becomes = 15;
-		number = 16; string = 17; ident = 18; assert = 19; semicolon = 20; 
-		end = 21; if = 22; case = 23; while = 24; for = 25; loop = 26; with = 27;
-		array = 28; record = 29; pointer = 30; begin = 31; code = 32;
-		const = 33; type = 34; var = 35; proc = 36; import = 37; module = 38;
-		eot = 39; none = 99;
+		times = 0; and = 1; plus = 2; minus = 3; eql = 4; arrow = 5; 
+		period = 6; comma = 7; colon = 8; rparen = 9; rbrak = 10; of = 11; 
+		to = 12; lparen = 13; lbrak = 14; lbrace = 15; becomes = 16; number = 17; 
+		string = 18; ident = 19; assert = 20; semicolon = 21; end = 22; if = 23; 
+		case = 24; while = 25; for = 26; loop = 27; with = 28; array = 29; 
+		record = 30; pointer = 31; begin = 32; code = 33; const = 34; type = 35; 
+		var = 36; proc = 37; import = 38; module = 39; eot = 40; 
+		none = 99;
 		
 		(* visibility of objects *)
 		internal = 0; external = 1; externalR = 2;
@@ -277,11 +276,11 @@ MODULE Watson;	(** PS/tk   *)
 			h.cmd[i]:= " "; INC(i);
 			j:= 0; WHILE mod[j] # 0X DO h.cmd[i]:= mod[j]; INC(j); INC(i) END;
 			REPEAT DEC(i) UNTIL h.cmd[i] = ".";
-			h.cmd[i]:= "."; INC(i);
+			INC(i);
 			IF obj # "" THEN
 				j:= 0; WHILE obj[j] # 0X DO h.cmd[i]:= obj[j]; INC(j); INC(i) END
 			ELSE
-				h.cmd[i] := "M"; h.cmd[i] := "o"; h.cmd[i] := "d"; INC(i, 3)
+				h.cmd[i] := "M"; INC(i); h.cmd[i] := "o"; INC(i); h.cmd[i] := "d"; INC(i)
 			END;
 			h.cmd[i]:= 0X
 		END
@@ -743,6 +742,7 @@ MODULE Watson;	(** PS/tk   *)
 				| "*" : s :=  times
 				| "-" : s:= minus
 				| "+" : s:= plus
+				| "&": s:= and
 				| "," : s:= comma
 				| ":" : IF ch = "=" THEN GetCh; s:= becomes ELSE s:= colon END
 				| "=" : s:= eql
@@ -852,7 +852,13 @@ MODULE Watson;	(** PS/tk   *)
 		IF sym = lbrace THEN follow:= {rbrak, of} ELSE follow:= {comma, rbrak, of} END;
 		LOOP
 			WHILE ~(sym IN follow)  & (sym < ident) DO Sym END;
-			IF sym = ident THEN Copy(beg, begPos); Char(" "); qualident(beg) ELSE EXIT END
+			IF sym = ident THEN
+				Copy(beg, begPos); (*Char(" ");*) qualident(beg);
+				IF sym = lparen THEN
+					WHILE (sym # rparen) & (sym # eot) DO Sym() END
+				END
+			ELSE EXIT
+			END
 		END;	(* LOOP *)
 		Copy(beg, begPos)
 	END ConstExpression;
@@ -863,13 +869,13 @@ MODULE Watson;	(** PS/tk   *)
 		WHILE sym = ident DO newL:= newL OR newLine;
 			Sym; CheckMark(vis);
 			IF vis > internal THEN
-				IF first THEN first:= FALSE; Keywords(cmnt, "CONST", needsLn & (recLevel <=0), TRUE); newL:= TRUE END;
+				IF first THEN first:= FALSE; Keywords(cmnt, "CONST", needsLn & (recLevel <= 0), TRUE); newL:= TRUE END;
 				IF newL THEN newL:= FALSE; Ln; Indent(2 + recLevel) ELSE Char(" ") END;
-				Identifier(id); Str(" = ");
+				Identifier(id); Str(" =");
 				IF (sym = eql) OR (sym = becomes) THEN Sym; ConstExpression ELSE err(errConst) END;
 				Char(";");
 			ELSE
-				InsertIdent(id, const, obj); obj.beg:= Pos()+1;
+				InsertIdent(id, const, obj); obj.beg:= Pos()(*+1*);
 				REPEAT Sym UNTIL sym >= semicolon;
 				obj.end:= begPos
 			END;
@@ -893,7 +899,7 @@ MODULE Watson;	(** PS/tk   *)
 	BEGIN
 		Keywords(cmnts.next, "RECORD", FALSE, FALSE); Sym; CheckSysFlags;
 		IF sym = lparen THEN Sym;	(* base type *)
-			Str("( ");
+			Str(" ( ");
 			IF sym = ident THEN qualident(endPos) ELSE err(errTypeDef) END;
 			Str(" ) ");
 			WHILE sym < ident DO Sym END
@@ -1026,7 +1032,8 @@ MODULE Watson;	(** PS/tk   *)
 	BEGIN
 		IF sym = ident THEN Sym;
 			IF sym = period THEN Sym; IF sym = ident THEN Sym END END
-		ELSIF sym = record THEN (* lev:= 1;
+		ELSIF sym = record THEN
+			(* lev:= 1;
 			LOOP Sym;
 				IF sym = record THEN INC(lev)
 				ELSIF sym = end THEN DEC(lev)
@@ -1101,10 +1108,10 @@ MODULE Watson;	(** PS/tk   *)
 				CheckSym(comma)
 			END;	(* LOOP idents *)
 			CheckSym(colon);
-			IF isVis THEN Str(": "); ShowType; Char(";")
+			IF isVis THEN Str(": "); ShowType; IF (sym = semicolon) THEN Char(";") END
 			ELSE SkipType
 			END;
-			IF (sym = 20) OR (recLevel = 0) THEN CheckSym(semicolon) END
+			IF (sym = semicolon) OR (recLevel = 0) THEN CheckSym(semicolon) END
 		END	(* WHILE *)
 	END VarDef;
 
@@ -1113,13 +1120,14 @@ MODULE Watson;	(** PS/tk   *)
 	PROCEDURE ProcedureDeclaration;
 		(* parses and writes/skips one procedure declaration. *)
 		CONST LProc = 0; XProc = 1; IProc = 2; CProc = 3;
-		VAR procId, self, typId: Name; vis, mode: SHORTINT; fwd, varPar: BOOLEAN;
-	BEGIN fwd:= FALSE; mode:= LProc;
+		VAR procId, self, typId: Name; vis, mode: SHORTINT; fwd, init, varPar: BOOLEAN;
+	BEGIN fwd:= FALSE; init:= FALSE; mode:= LProc;
 		IF (sym # ident) & (sym # string) & (sym # lparen) THEN
 			IF sym = times THEN	(* not needed anymore *)
 			ELSIF sym = arrow THEN fwd:= TRUE
 			ELSIF sym = minus THEN mode:= CProc
 			ELSIF sym = plus THEN mode:= IProc
+			ELSIF sym = and THEN init := TRUE
 			ELSE err(errProc)
 			END;	(* IF *)
 			Sym;
@@ -1139,7 +1147,7 @@ MODULE Watson;	(** PS/tk   *)
 					Identifier(procId);
 					IF sym = lparen THEN Sym; FormalParameters END;
 					Char(";")
-				ELSIF (vis = internal) & (sym = lparen) THEN Sym; SkipFormalParameters
+				ELSIF (vis = internal) & (sym = lparen) THEN (*Sym;*) SkipFormalParameters
 				END;
 				CheckSym(semicolon);
 				IF ~fwd THEN Block(procId, vis # internal) END;
@@ -1152,15 +1160,16 @@ MODULE Watson;	(** PS/tk   *)
 			IF (level > 0) & (mode # LProc) THEN err(errProc); vis:= internal END;
 			INC(level);
 			IF (vis # internal) & (mode IN {XProc, CProc}) THEN
-				Ln; Indent(1+recLevel);
-				Str("PROCEDURE "); Identifier(procId);
+				Ln; Indent(1+recLevel*2);
+				Str("PROCEDURE "); 
+				IF init THEN Str("& ") END;
+				Identifier(procId);
 				IF sym = lparen THEN Sym; FormalParameters END;
 				Char(";");
 			ELSE	(* skip parameters *)
 				IF sym = lparen THEN SkipFormalParameters END
 			END;	(* IF *)
-			(*
-			IF mode = CProc THEN
+			(*IF mode = CProc THEN
 				WHILE (sym # semicolon) & (sym < proc) DO Sym END;
 			ELS*)
 			IF  ~fwd THEN CheckSym(semicolon);
@@ -1203,12 +1212,15 @@ MODULE Watson;	(** PS/tk   *)
 	BEGIN
 		nl := FALSE;
 		LOOP
-			IF sym = const THEN nl := TRUE; ConstDef END;
-			IF sym = type THEN  nl := TRUE; TypeDef END;
-			IF (sym = var) OR ((sym = ident) & (blockId = "")) THEN nl := TRUE; VarDef END;
+			IF sym = const THEN (*nl := TRUE;*) ConstDef END;
+			IF sym = type THEN (* nl := TRUE;*) TypeDef END;
+			IF (sym = var) OR ((sym = ident) & (blockId = "")) THEN (*nl := TRUE;*) VarDef END;
 			IF sym = proc THEN
 				IF level = 0 THEN
-					IF nl THEN IF NeedsLn() THEN Ln END; nl := FALSE END;
+					IF nl THEN
+						IF NeedsLn() THEN Ln END;
+						nl := FALSE
+					END;
 					len:= W.buf.len
 				END;
 				Sym; ProcedureDeclaration;
@@ -1388,7 +1400,7 @@ MODULE Watson;	(** PS/tk   *)
 		BEGIN
 			CASE ch OF
 				CR: Ln; l:= 0
-				| TAB: Char(" ")	(* << jm *)
+				| TAB: Char(" ")
 				| "<": Str("&lt;")
 				| "&": Str("&amp;")
 				| "\": GetChar(R, ch); Char(ch)
@@ -1498,7 +1510,7 @@ MODULE Watson;	(** PS/tk   *)
 		Str("</TITLE>"); Ln;
 		Str("</HEAD>"); Ln;
 		Str("<BODY>"); Ln;
-		Str("<PRE>"); Ln; (* << jm *)
+		Str("<PRE>"); Ln;
 		
 		(* begin of parsing definition file *)
 		Texts.OpenReader(R, in, 0); GetChar(R, ch);
@@ -1544,7 +1556,7 @@ MODULE Watson;	(** PS/tk   *)
 
 		(* write end of html document *)
 		Ln;
-		Str("</PRE>"); Ln; 	(* << jm *)
+		Str("</PRE>"); Ln;
 		Str("</BODY>"); Ln;
 		Str("</HTML>"); Ln;
 		Texts.Append(out, W.buf)
@@ -1676,11 +1688,11 @@ MODULE Watson;	(** PS/tk   *)
 		END OpenMod;
 		
 		PROCEDURE OpenSym(mod: ARRAY OF CHAR);	(* tries to open the sym file *)
-		BEGIN Append(mod, symFileExt); F:= Files.Old(mod)
+		BEGIN Append(mod, Modules.extension); F:= Files.Old(mod)
 		END OpenSym;
 		
 		PROCEDURE OpenObj(mod: ARRAY OF CHAR);	(* tries to open the obj file *)
-		BEGIN Append(mod, objFileExt); F:= Files.Old(mod)
+		BEGIN Append(mod, Modules.extension); F:= Files.Old(mod)
 		END OpenObj;
 
 	BEGIN

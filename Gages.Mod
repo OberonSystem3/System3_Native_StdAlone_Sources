@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,14 +13,13 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Gages; (* kr/ jm 21.12.94 *)
+MODULE Gages;	(** portable *) (* kr/ jm 21.12.94 *)
 
 IMPORT
-	Modules, Input, Display, Effects, Objects, Gadgets, Oberon, Files, BasicGadgets, Fonts, Kernel, Display3, 
-	Printer, Printer3, Attributes, Strings ; 
+	Modules, Input, Display, Objects, Gadgets, Oberon, BasicGadgets, Fonts, Kernel, Display3, Printer, Printer3, Strings ; 
 
 CONST
-	ModName = "Gages"; Max = 128;
+	Max = 128;
 
 TYPE
 	Frame* = POINTER TO FrameDesc;
@@ -35,7 +33,6 @@ TYPE
 VAR
 	Mem, Load, Lap: BasicGadgets.Integer;
 	task : Oberon.Task;
-	inthandle : Objects.Handler;
 	time, lastmem: LONGINT;
 	maxLoad, loadtime,load, laptime: LONGINT; 
 
@@ -94,29 +91,31 @@ BEGIN
 END HandleLap;
 
 PROCEDURE *TaskHandle(me : Oberon.Task);
-VAR M: Gadgets.UpdateMsg; tm : LONGINT; s: ARRAY 64 OF CHAR;
+VAR M: Gadgets.UpdateMsg; tm : LONGINT;
 BEGIN
 	INC(load); tm := Oberon.Time();
 	IF tm - laptime > Input.TimeUnit DIV 2 THEN			
 		Lap.val := (tm - laptime) * 1000 DIV Input.TimeUnit;
-		Gadgets.Update(Lap);
+		Gadgets.Update(Lap)
 	END;
 	laptime := tm;
 	IF tm - loadtime > Input.TimeUnit THEN  
-		IF tm - loadtime > Input.TimeUnit*3 DIV 2 THEN load  := 0;
-		ELSE load := load * Input.TimeUnit DIV (tm - loadtime);
+		IF tm - loadtime > Input.TimeUnit*3 DIV 2 THEN load  := 0
+		ELSE load := load * Input.TimeUnit DIV (tm - loadtime)
 		END;
 		IF load > maxLoad THEN maxLoad := load END;
 		load := load * 100 DIV maxLoad; Load.val := (Load.val * 4 + (100 - load)) DIV 5;
 		load := 0; loadtime := tm; M.F := NIL;
 		M.obj :=Load; Display.Broadcast(M)
 	END; 
-	IF Oberon.Time() - time > Input.TimeUnit DIV 10 THEN time := Oberon.Time();
+	IF tm - time > Input.TimeUnit DIV 10 THEN time := tm;
 		IF (Kernel.Used() # lastmem) THEN 
 			Mem.val := Kernel.Used(); M.F := NIL;
 			M.obj := Mem; Display.Broadcast(M);
 			lastmem := Kernel.Used()
 		END
+	ELSE
+		me.time := tm + Input.TimeUnit DIV 10
 	END
 END TaskHandle;
 
@@ -170,7 +169,7 @@ PROCEDURE PrintFrame(F: Frame; VAR M: Display.DisplayMsg);
 VAR i, j, x, y, w, h, p: INTEGER; s: ARRAY 12 OF CHAR; Q: Display3.Mask;
 
 	PROCEDURE P (X: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(LONG(10000)*X DIV Printer.Unit)
+	BEGIN RETURN SHORT(Display.Unit*X DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -272,6 +271,10 @@ END Gages.
 System.Free Gages  ~
 Gadgets.Insert Gages.NewFrame Gages.NewMem ~
 Gadgets.Insert TextFields.NewTextField Gages.NewLap ~
-Gadgets.Insert Gages.NewFrame Gages.NewLoad ~
+Gadgets.Insert Gages.NewFrame ~Gages.NewLoad ~
+
+Gadgets.Change Gages.NewFrame ~
+Gadgets.SetAttr Max 1024
+Gadgets.SetAttr Min -1024
 
 Gadgets.Change Gages.NewFrame ~

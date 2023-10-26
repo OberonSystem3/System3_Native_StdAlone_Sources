@@ -1,4 +1,19 @@
-MODULE Asteroids;	(* by W. Ibl *)
+(* OBERON System 3, Release 2.3.
+
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
+
+This module may be used under the conditions of the general Oberon 
+System 3 license contract. The full text can be downloaded from
+
+	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
+
+Under the license terms stated it is in particular (a) prohibited to modify
+the interface of this module in any way that disagrees with the style
+or content of the system and (b) requested to provide all conversions
+of the source code to another platform with the name OBERON. *)
+
+MODULE Asteroids;	(** portable *)	(* by W. Ibl *)
 (*
 	Aug '96	V 1.0	first release
 	Sep '96	V1.1	added ship placement
@@ -9,7 +24,7 @@ MODULE Asteroids;	(* by W. Ibl *)
 	Okt '97	V1.5	added pause button
 *)
 IMPORT Attributes,Desktops,Display,Display3,Documents,Effects,Files,Fonts,
-			  Gadgets,Strings,Kernel,Math,Oberon,Objects,Out,Panels,
+			  Gadgets,Strings,Modules,Math,Oberon,Objects,Out,Panels,
 			  RandomNumbers;
 CONST
 	(* Program version *)
@@ -764,7 +779,7 @@ END DrawShip;
 PROCEDURE MoveMass(obj: Mass);
 	(* calculate new position of shape vertices using velocities for x, y and rot *)
 VAR
-	i,x,y,w1,h1,w2,h2: INTEGER;
+	i,w1,h1,w2,h2: INTEGER;
 	shp: Shape;
 BEGIN
 	w1:= 0; h1:= 0; w2:= 0; h2:= 0; shp:= obj.shape;
@@ -1217,7 +1232,6 @@ VAR
 	sh: Ship;
 	en: Enemy;
 	de: Detonation;
-	ibl: Objects.Name;
 
 	PROCEDURE Connect(VAR root,obj: SpaceObj; new: SpaceObj);
 		(* get the pointer by stepping thru' *)
@@ -1753,7 +1767,7 @@ BEGIN
 
 	b:= Display3.black; w:= Display3.white; timer:= NIL;
 
-	Kernel.InstallTermHandler(StopTimers);
+	Modules.InstallTermHandler(StopTimers);
 
 END Asteroids.
 

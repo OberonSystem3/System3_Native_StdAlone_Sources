@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,23 +13,29 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE FDInstall;	(* pjm 19.03.96 *)
+MODULE FDInstall;	(** non-portable *)	(* pjm *)
 
-IMPORT In, Out, Texts, Oberon, SYSTEM, Files, Diskette, MemFiles, MemDisk;
+IMPORT In, Out, Texts, Oberon, SYSTEM, Files, Diskette, VirtFiles, VirtDisk, CompressUtil, CRC32;
 
 CONST
 	BS = 512;
 	SS = 2048;
-	BPS = SS DIV BS;
 	BootFileName = "OBL.Bin";
+	
+	CompressBufSize = 32*BS;	(* {multiple of BS} *)
+	CompressID = 0FEEDC0DEH;
 
 VAR
 	W: Texts.Writer;
-	verify, write: BOOLEAN;
+	verify: BOOLEAN;
 	virtual: Files.File;
+	compressRider: Files.Rider;
+	compressBuf: POINTER TO ARRAY CompressBufSize OF CHAR;
+	compressPos: LONGINT;
+	compressSec: INTEGER;
 
 PROCEDURE -Equal4(adr0, adr1, len: LONGINT): BOOLEAN;
-CODE
+CODE {SYSTEM.i386}
 	POP ECX
 	POP EDI
 	POP ESI
@@ -45,7 +50,7 @@ VAR
 	error: ARRAY 32 OF CHAR;
 	verbuf: ARRAY Size*BS OF CHAR;
 	n: INTEGER;
-	pos, len, i: LONGINT;
+	pos, len: LONGINT;
 	r: Files.Rider;
 BEGIN
 	IF virtual = NIL THEN
@@ -90,14 +95,14 @@ END GetSectors;
 
 (* ScanParams - Scan { env "=" strval {"+" strval} } ch, and add to tab *)
 
-PROCEDURE ScanParams(VAR s: Texts.Scanner;  VAR tab: ARRAY OF LONGINT;  size: INTEGER;  VAR i: INTEGER);
+PROCEDURE ScanParams(VAR s: Texts.Scanner;  VAR a: ARRAY OF LONGINT;  tsize: INTEGER;  VAR i: INTEGER);
 VAR
 	error, name: ARRAY 32 OF CHAR;
-	val: ARRAY 80 OF CHAR;
-	i0, i1: LONGINT;
+	val: ARRAY 256 OF CHAR;
+	bi0, bi1: LONGINT;
 	j, k: INTEGER;
 BEGIN
-	Texts.Scan(s);  i0 := SYSTEM.ADR(tab[i])+8;  i1 := i0;
+	Texts.Scan(s);  bi0 := SYSTEM.ADR(a[i])+8;  bi1 := bi0;
 	WHILE s.class = Texts.Name DO
 		COPY(s.s, name);
 		Texts.Scan(s);	(* "=" *)
@@ -119,17 +124,17 @@ BEGIN
 			Texts.Scan(s)
 		END;
 		k := 0;  WHILE name[k] # 0X DO INC(k) END;	(* k = length of name *)
-		IF i1+k+j+3 >= SYSTEM.ADR(tab[size-1]) THEN error := "Table full";  HALT(99) END;
-		j := 0;  WHILE name[j] # 0X DO SYSTEM.PUT(i1, name[j]); INC(i1); INC(j) END;
-		SYSTEM.PUT(i1, 0X);  INC(i1);
-		j := 0;  WHILE val[j] # 0X DO SYSTEM.PUT(i1, val[j]); INC(i1); INC(j) END;
-		SYSTEM.PUT(i1, 0X);  INC(i1);
+		IF bi1+k+j+3 >= SYSTEM.ADR(a[tsize-1]) THEN error := "Table overflow";  HALT(99) END;
+		j := 0;  WHILE name[j] # 0X DO SYSTEM.PUT(bi1, name[j]); INC(bi1); INC(j) END;
+		SYSTEM.PUT(bi1, 0X);  INC(bi1);
+		j := 0;  WHILE val[j] # 0X DO SYSTEM.PUT(bi1, val[j]); INC(bi1); INC(j) END;
+		SYSTEM.PUT(bi1, 0X);  INC(bi1)
 	END;
-	IF i1 # i0 THEN	(* some env strings were added *)
-		SYSTEM.PUT(i1, 0X);  INC(i1);	(* end of env *)
-		WHILE (i1-i0) MOD 4 # 0 DO SYSTEM.PUT(i1, 0X);  INC(i1) END;
-		tab[i] := 8 (* patch *);  INC(i);  tab[i] := 8+(i1-i0);
-		INC(i, SHORT(1+(i1-i0) DIV 4))
+	IF bi1 # bi0 THEN	(* some config strings were added *)
+		SYSTEM.PUT(bi1, 0X);  INC(bi1);	(* end of config *)
+		WHILE (bi1-bi0) MOD 4 # 0 DO SYSTEM.PUT(bi1, 0X);  INC(bi1) END;
+		a[i] := 8 (* patch *);  INC(i);  a[i] := 8+(bi1-bi0);
+		INC(i, SHORT(1+(bi1-bi0) DIV 4))
 	END;
 		(* check syntax *)
 	IF s.class # Texts.Char THEN error := "syntax error"; HALT(99) END
@@ -137,22 +142,21 @@ END ScanParams;
 
 PROCEDURE Copy(from, to: ARRAY OF CHAR);
 	VAR error: ARRAY 32 OF CHAR;
-		f: Files.File; g: MemFiles.File; Rf: Files.Rider; Rg: MemFiles.Rider; ch: CHAR;
+		f: Files.File; g: VirtFiles.File; Rf: Files.Rider; Rg: VirtFiles.Rider; ch: CHAR;
 BEGIN
-	Texts.WriteString(W, from); Texts.WriteString(W, " => "); 
-	Texts.WriteString(W, to);  Texts.WriteString(W, " copying"); 
+	Texts.WriteString(W, from);
+	IF to # from THEN
+		Texts.WriteString(W, " => ");  Texts.WriteString(W, to)
+	END;
 	Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf);
 	f := Files.Old(from);
 	IF (f = NIL) THEN
 		error := "File not found";  HALT(99)
 	END;
-	IF (MemDisk.Available()*SS-10*1024 < Files.Length(f)) THEN
-		error := "RAM disk full";  HALT(99)
-	END;
-	g := MemFiles.New(to);
-	Files.Set(Rf, f, 0); MemFiles.Set(Rg, g, 0); Files.Read(Rf, ch);
-	WHILE ~Rf.eof DO MemFiles.Write(Rg, ch); Files.Read(Rf, ch) END;
-	MemFiles.Register(g)
+	g := VirtFiles.New(to);
+	Files.Set(Rf, f, 0); VirtFiles.Set(Rg, g, 0); Files.Read(Rf, ch);
+	WHILE ~Rf.eof DO VirtFiles.Write(Rg, ch); Files.Read(Rf, ch) END;
+	VirtFiles.Register(g)
 END Copy;
 
 PROCEDURE CopyFile(name: ARRAY OF CHAR; VAR S: Texts.Scanner);
@@ -167,10 +171,65 @@ BEGIN Texts.Scan(S);
 	END
 END CopyFile;
 
-PROCEDURE CreateBootFloppy*;	(* [flag] corename { env "=" strval } "\" [ size {file [=> file]} ] "~" *)
+PROCEDURE CompressRead(VAR ch: CHAR;  VAR eof: BOOLEAN);
+BEGIN
+	Files.Read(compressRider, ch);
+	eof := compressRider.eof
+END CompressRead;
+
+PROCEDURE CompressWrite(ch: CHAR);
+BEGIN
+	compressBuf[compressPos] := ch;  INC(compressPos);
+	IF compressPos = CompressBufSize THEN
+		PutSectors(compressSec, CompressBufSize DIV BS, compressBuf^, 0);
+		INC(compressSec, CompressBufSize DIV BS);
+		compressPos := 0
+	END
+END CompressWrite;
+
+PROCEDURE CompressClose;
+BEGIN
+	IF compressPos # 0 THEN
+		WHILE compressPos MOD BS # 0 DO	(* fill last block with 0X *)
+			compressBuf[compressPos] := 0X;  INC(compressPos)
+		END;
+		PutSectors(compressSec, SHORT(compressPos DIV BS), compressBuf^, 0);
+		INC(compressSec, SHORT(compressPos DIV BS))
+	END
+END CompressClose;
+
+PROCEDURE CopySectors(f: Files.File;  start: INTEGER;  VAR blocksStored: INTEGER);
+VAR crc: SET;  size: LONGINT;
+BEGIN
+	IF compressBuf = NIL THEN NEW(compressBuf) END;
+	ASSERT(CompressBufSize MOD BS = 0);
+	Files.Set(compressRider, f, 0);
+		(* compress the file *)
+	compressPos := 12;  compressSec := start;
+	CompressUtil.Compress(CompressRead, CompressWrite);
+	CompressClose;
+	blocksStored := compressSec-start;
+		(* compute the CRC *)
+	Files.Set(compressRider, f, 0);  crc := CRC32.CRCInit;
+	LOOP
+		Files.ReadBytes(compressRider, compressBuf^, CompressBufSize);
+		size := CompressBufSize-compressRider.res;
+		IF size = 0 THEN EXIT END;
+		crc := CRC32.CRC32(crc, compressBuf^, size)
+	END;
+		(* patch the header *)
+	GetSectors(start, 1, compressBuf^, 0);
+	SYSTEM.PUT(SYSTEM.ADR(compressBuf[0]), CompressID);	(* id *)
+	SYSTEM.PUT(SYSTEM.ADR(compressBuf[4]), Files.Length(f));	(* uncompressed size in bytes *)
+	SYSTEM.PUT(SYSTEM.ADR(compressBuf[8]), crc);	(* CRC of uncompressed data *)
+	PutSectors(start, 1, compressBuf^, 0);
+		(* clean up *)
+	Files.Set(compressRider, NIL, 0);  compressBuf := NIL
+END CopySectors;
+
+PROCEDURE CreateBootFloppy*;	(* [flag] corename { env "=" strval } "\" [ size ] {file [=> file]} ] "~" *)
 CONST Size = 4*BS;
 VAR
-	error: ARRAY 32 OF CHAR;
 	tsize, rsize0, rsize1, i, j, dsize: INTEGER;
 	b: ARRAY Size OF CHAR;
 	f: Files.File;  r: Files.Rider;
@@ -179,26 +238,26 @@ VAR
 	sum: LONGINT;
 	flag: LONGINT;
 BEGIN
-	Diskette.drive := 0;  i := 0;  MemDisk.Init(0);
+	Diskette.drive := 0;  i := 0;
 	Texts.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(s);
 	IF s.class = Texts.Int THEN flag := s.i;  Texts.Scan(s)
-	ELSE flag := 0
+	ELSE flag := 31
 	END;
-	IF s.class # Texts.Name THEN error := "corename expected"; HALT(99) END;
+	IF s.class # Texts.Name THEN Out.String("corename expected");  Out.Ln;  RETURN END;
 	f := Files.Old(BootFileName);  Files.Set(r, f, 0);
 	IF (f # NIL) & (Files.Length(f) <= Size) THEN
 		Files.ReadBytes(r, b, Files.Length(f));
-		IF r.res # 0 THEN error := "Read error";  HALT(99) END;
+		IF r.res # 0 THEN Out.String("Read error");  Out.Ln;  RETURN END;
 			(* get parameters from boot loader *)
 		SYSTEM.GET(SYSTEM.ADR(b[0EH]), rsize0);  tsize := ORD(b[10H]);
-		IF (rsize0-tsize)*BS # Files.Length(f) THEN error := "OBL inconsistent";  HALT(99) END;
+		IF (rsize0-tsize)*BS # Files.Length(f) THEN Out.String("OBL inconsistent");  Out.Ln;  RETURN END;
 		tsize := tsize*BS DIV 4;
 			(* write the core image *)
 		Texts.WriteString(W, "Writing inner core");  Texts.WriteLn(W);
 		Texts.Append(Oberon.Log, W.buf);
 		f := Files.Old(s.s);  Files.Set(r, f, 0);	(* open core file *)
-		IF f = NIL THEN error := "core file not found"; HALT(99) END;
-		rsize1 := rsize0;  sum := 0;
+		IF f = NIL THEN Out.String("core file not found");  Out.Ln;  RETURN END;
+		rsize1 := rsize0;  sum := 0;  dsize := 0;
 		LOOP
 			Files.ReadBytes(r, b, Size);
 			IF r.res = Size THEN EXIT END;
@@ -207,29 +266,33 @@ BEGIN
 			REPEAT DEC(j); sum := (sum + ORD(b[j])) MOD 100H UNTIL j = 0
 		END;
 		sum := (-sum) MOD 100H;
-		IF rsize1 = rsize0 THEN error := "empty core file"; HALT(99) END;
+		IF rsize1 = rsize0 THEN Out.String("empty core file");  Out.Ln;  RETURN END;
 		ScanParams(s, tab, tsize, i);
-		IF s.c # Oberon.OptionChar THEN error := "\ expected"; HALT(99) END;
+		IF s.c # Oberon.OptionChar THEN Out.String("\ expected");  Out.Ln;  RETURN END;
 		Texts.Scan(s);
-		IF s.class = Texts.Int THEN	(* disk files specified *)
-			MemFiles.Init(SHORT(s.i));  Texts.Scan(s);
+		IF s.class = Texts.Int THEN Texts.Scan(s) END;	(* ignore size (old syntax) *)
+		IF s.class = Texts.Name THEN	(* at least one file specified *)
+			VirtFiles.Init;
 			WHILE s.class = Texts.Name DO CopyFile(s.s, s) END;
-			dsize := SHORT(MemDisk.Used());
-			Texts.WriteString(W, "Writing ");
-			Texts.WriteInt(W, dsize DIV (SS DIV 1024), 1);  Texts.WriteString(W, "k ramdisk contents");
-			Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf);
-			PutSectors(rsize1, dsize*BPS, MemDisk.disk^, 0);
-			MemDisk.Init(0)
+			ASSERT(Files.Length(VirtDisk.disk) MOD SS = 0);
+			Texts.WriteString(W, "Compressing ");
+			Texts.WriteInt(W, Files.Length(VirtDisk.disk) DIV 1024, 1);
+			Texts.WriteString(W, "k ramdisk");  Texts.Append(Oberon.Log, W.buf);
+			CopySectors(VirtDisk.disk, rsize1, dsize);
+			Texts.WriteString(W, " to ");  Texts.WriteInt(W, LONG(dsize)*BS DIV 1024, 1);
+			Texts.Write(W, "k");  Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf);
+			VirtDisk.disk := NIL
 		END;
-		IF s.c # "~" THEN error := "~ expected"; HALT(99) END;
+		IF s.c # "~" THEN Out.String("~ expected");  Out.Ln;  RETURN END;
 			(* set parameters in boot loader for 1.44Mb floppy *)
 		f := Files.Old(BootFileName);  Files.Set(r, f, 0);
 		Files.ReadBytes(r, b, Files.Length(f));
-		IF r.res # 0 THEN error := "Read error";  HALT(99) END;
-		SYSTEM.PUT(SYSTEM.ADR(b[13H]), SYSTEM.VAL(INTEGER, rsize1+dsize*BPS));	(* total sectors *)
+		IF r.res # 0 THEN Out.String("Read error");  Out.Ln;  RETURN END;
+		SYSTEM.PUT(SYSTEM.ADR(b[13H]), SYSTEM.VAL(INTEGER, rsize1+dsize));	(* total sectors *)
 		SYSTEM.PUT(SYSTEM.ADR(b[18H]), SYSTEM.VAL(INTEGER, 18));	(* sectors/track *)
 		SYSTEM.PUT(SYSTEM.ADR(b[1AH]), SYSTEM.VAL(INTEGER, 2));	(* heads *)
-		SYSTEM.PUT(SYSTEM.ADR(b[1CH]), SYSTEM.VAL(LONGINT, 1));	(* next sector *)
+		SYSTEM.PUT(SYSTEM.ADR(b[1CH]), SYSTEM.VAL(LONGINT, 0));	(* boot sector *)
 		SYSTEM.PUT(SYSTEM.ADR(b[24H]), 0X);	(* drive 0 *)
 		SYSTEM.PUT(SYSTEM.ADR(b[0EH]), rsize1);	(* new reserved size *)
 		b[10] := CHR(flag);
@@ -240,9 +303,9 @@ BEGIN
 			(* finish the table *)
 		tab[i] := 7 (* frag. kernel *);  INC(i);  tab[i] := 28;  INC(i);
 		tab[i] := 1000H;  INC(i);  tab[i] := 1 + ASH(sum, 16);  INC(i);
-		tab[i] := 1000H;  INC(i);  tab[i] := rsize0;  INC(i);
+		tab[i] := 1000H;  INC(i);  tab[i] := 0 (* relative to fs start *);  INC(i);
 		tab[i] := rsize1-rsize0;  INC(i);
-		IF i >= tsize-1 THEN error := "Table overflow"; HALT(99) END;
+		IF i >= tsize-1 THEN Out.String("Table overflow");  Out.Ln; RETURN END;
 		WHILE i # tsize DO tab[i] := -1; INC(i) END;
 		tsize := tsize*4 DIV BS;	(* number of blocks in table *)
 		PutSectors(rsize0-tsize, tsize, tab, 0);
@@ -261,12 +324,12 @@ BEGIN
 		f := Files.Old(s.s);
 		IF f # NIL THEN
 			Files.Set(r, f, 0);  pos := 0;  Out.String("Copying... ");
-			i := 0;  pr := 0;  size := Files.Length(f);
+			i := 0;  pr := 10;  size := Files.Length(f);
 			LOOP
 				pc := i*100 DIV size;
-				IF pc - pr >= 10 THEN
-					Out.Int(pc, 1);  Out.String("% ");
-					pr := pc
+				WHILE pc > pr DO
+					Out.Int(pr, 1);  Out.String("% ");
+					INC(pr, 10)
 				END;
 				Files.ReadBytes(r, buf, Size);
 				num := SHORT((Size-r.res+BS-1) DIV BS);
@@ -275,7 +338,7 @@ BEGIN
 				PutSectors(pos, num, buf, 0);
 				INC(pos, num)
 			END;
-			Out.Int(pos, 5);  Out.String(" sectors");
+			Out.String("100% ");  Out.Int(pos, 1);  Out.String(" blocks");
 			Out.Ln
 		END
 	END
@@ -292,12 +355,12 @@ BEGIN
 			Texts.Scan(s);
 			IF s.class = Texts.Int THEN num := SHORT(s.i) ELSE num := 2880 END;
 			Files.Set(r, f, 0);  pos := 0;  Out.String("Copying... ");
-			pr := 0;  size := num;
+			pr := 10;  size := num;
 			WHILE num > 0 DO
 				pc := LONG(pos)*100 DIV size;
-				IF pc - pr >= 10 THEN
-					Out.Int(pc, 1);  Out.String("% ");
-					pr := pc
+				WHILE pc > pr DO
+					Out.Int(pr, 1);  Out.String("% ");
+					INC(pr, 10)
 				END;
 				IF num > Size DIV BS THEN n := Size DIV BS ELSE n := num END;
 				GetSectors(pos, n, buf, 0);
@@ -305,16 +368,14 @@ BEGIN
 				INC(pos, n);  DEC(num, n)
 			END;
 			Files.Register(f);
-			Out.Int(pos, 5);  Out.String(" sectors");  Out.Ln
+			Out.String(" 100% ");  Out.Int(pos, 1);  Out.String(" sectors");  Out.Ln
 		END
 	END
 END DisketteToFile;
 
 PROCEDURE CreateInstallFloppy*;	(* label { file [=> file]} ~ *)
 CONST
-	BufSize = BS*16;
-	N = 16384;
-	End = 0C0X;  Esc = 0DBX;  EscEnd = 0DCX;  EscEsc = 0DDX;
+	FileBufSize = 1024;
 TYPE
 	List = POINTER TO Rec;
 	Rec = RECORD
@@ -322,18 +383,9 @@ TYPE
 		src, dst: ARRAY 32 OF CHAR
 	END;
 VAR
-	notfound: ARRAY 32 OF CHAR;
-	label: ARRAY 32 OF CHAR;
-	s: Texts.Scanner;
-	ok: BOOLEAN;
-	ch: CHAR;
-	bytesin, bytesout, stuffed: LONGINT;
-	list, n: List;
-	r: Files.Rider;
-	out: ARRAY BufSize OF CHAR;
-	outpos, outblock: INTEGER;
-	table: ARRAY N OF CHAR;	(* hash table for compression *)
-	hash, bit, byte: LONGINT;
+	notfound, label: ARRAY 32 OF CHAR;  s: Texts.Scanner;  ok: BOOLEAN;
+	list, n: List;  r, w: Files.Rider;  start: INTEGER;  crc: SET;  len: LONGINT;
+	buf: ARRAY FileBufSize OF CHAR;
 
 	PROCEDURE Insert(n: List);
 	VAR error, duplicate: ARRAY 32 OF CHAR;  p: List;  
@@ -349,79 +401,28 @@ VAR
 	END Insert;
 	
 	PROCEDURE Open;
-	VAR i: LONGINT;
+	VAR i: LONGINT;  out: ARRAY BS OF CHAR;
 	BEGIN
 			(* check if boot disk & init buffer *)
 		GetSectors(0, 1, out, 0);
 		i := 0;  SYSTEM.GET(SYSTEM.ADR(out[510]), SYSTEM.VAL(INTEGER, i));
 		out[0] := "x"; out[1] := "x"; out[2] := "x";  out[9] := 0X;
 		IF (i = 0AA55H) & (out = "xxxOBERON") THEN	(* valid boot block *)
-			outblock := 0;
-			SYSTEM.GET(SYSTEM.ADR(out[13H]), outblock)	(* total sectors *)
+			SYSTEM.GET(SYSTEM.ADR(out[13H]), compressSec)	(* total sectors *)
 		ELSE HALT(99)
 		END;
-		outpos := 0;  bytesin := 0;  bytesout := 0;  stuffed := 0;
-			(* init compression *)
-		i := 0; REPEAT table[i] := 0X; INC(i) UNTIL i = N;
-		hash := 0; bit := 0; byte := 0
+		IF compressBuf = NIL THEN NEW(compressBuf) END;
+		compressPos := 0;  start := compressSec
 	END Open;
 	
-	PROCEDURE Put0(ch: CHAR);	(* write character to output *)
-	BEGIN
-		IF outpos = BufSize THEN
-			IF write THEN PutSectors(outblock, BufSize DIV BS, out, 0) END;
-			INC(outblock, BufSize DIV BS);  outpos := 0
-		END;
-		out[outpos] := ch;  INC(outpos);  INC(bytesout)
-	END Put0;
-
-	PROCEDURE Put(ch: CHAR);	(* write character to output with compression *)
-	BEGIN
-		IF table[hash] = ch THEN	(* 0 bit for correct prediction *)
-			INC(bit); IF bit = 8 THEN Put0(CHR(byte)); byte := 0; bit := 0 END
-		ELSE	(* Incorrect prediction -> 1'xxxx'xxxx bits where x = ch[0..7] *)
-			table[hash] := ch; INC(byte, ASH(1, bit)); INC(bit);
-			IF bit = 8 THEN Put0(CHR(byte)); Put0(ch);  byte := 0; bit := 0
-			ELSE Put0(CHR(byte+ASH(ORD(ch), bit) MOD 256)); byte := ASH(ORD(ch), bit) DIV 256
-			END
-		END;
-		hash := (16*hash+ORD(ch)) MOD N	(* hash value *)
-	END Put;
-	
-	PROCEDURE Write(ch: CHAR);	(* write character to output, with SLIP byte stuffing & compression *)
-	BEGIN
-		INC(bytesin);
-		IF ch = End THEN Put(Esc);  Put(EscEnd);  INC(stuffed)
-		ELSIF ch = Esc THEN Put(Esc);  Put(EscEsc);  INC(stuffed)
-		ELSE Put(ch)
-		END
-	END Write;
-
-	PROCEDURE WriteEOF;
-	BEGIN
-		Put(End)
-	END WriteEOF;
-	
-	PROCEDURE Close;
-	BEGIN
-			(* close compression *)
-		IF bit # 0 THEN Put0(CHR(byte)) END;	(* write last byte *)
-			(* close buffer *)
-		IF outpos # 0 THEN
-			IF write THEN PutSectors(outblock, (outpos+BS-1) DIV BS, out, 0) END;
-			INC(outblock, (outpos+BS-1) DIV BS);  outpos := 0
-		END
-	END Close;
-	
-	PROCEDURE WriteString(s: ARRAY OF CHAR);
+	PROCEDURE Length(VAR s: ARRAY OF CHAR): LONGINT;
 	VAR i: LONGINT;
 	BEGIN
-		i := 0;  WHILE s[i] # 0X DO Write(s[i]); INC(i) END;
-		Write(0X)
-	END WriteString;
+		i := 0;  WHILE s[i] # 0X DO INC(i) END;
+		RETURN i
+	END Length;
 	
 BEGIN
-	ASSERT((BufSize MOD BS = 0) & (BufSize <= MAX(INTEGER)));
 	NEW(list);  list.next := NIL;
 	Texts.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(s);
 	IF s.class = Texts.Name THEN
@@ -451,28 +452,53 @@ BEGIN
 		END;
 		IF ~ok THEN list.next := NIL END
 	END;
-	IF list.next # NIL THEN
-		Open;  WriteString(label);
-		n := list.next;
-		WHILE n # NIL DO
-			Texts.WriteString(W, n.src);  Texts.WriteString(W, " => ");
-			Texts.WriteString(W, n.dst);  Texts.WriteLn(W);
-			Texts.Append(Oberon.Log, W.buf);
-			WriteString(n.dst);
-			Files.Set(r, n.f, 0);  Files.Read(r, ch);
-			WHILE ~r.eof DO Write(ch);  Files.Read(r, ch) END;
-			WriteEOF;
-			n.f := NIL;  n := n.next
+	list := list.next;
+	IF list # NIL THEN
+		crc := CRC32.CRCInit;
+		Files.Set(w, Files.New(""), 0);
+		Files.WriteString(w, label);
+		crc := CRC32.CRC32(crc, label, Length(label)+1);
+		WHILE list # NIL DO
+			Texts.WriteString(W, list.src);
+			IF list.dst # list.src THEN
+				Texts.WriteString(W, " => ");
+				Texts.WriteString(W, list.dst)
+			END;
+			Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf);
+			Files.WriteString(w, list.dst);
+			crc := CRC32.CRC32(crc, list.dst, Length(list.dst)+1);
+			len := Files.Length(list.f);
+			Files.WriteBytes(w, len, 4);
+			crc := CRC32.CRC32(crc, len, 4);
+			Files.Set(r, list.f, 0);
+			LOOP
+				Files.ReadBytes(r, buf, FileBufSize);
+				len := FileBufSize-r.res;
+				IF len = 0 THEN EXIT END;
+				crc := CRC32.CRC32(crc, buf, len);
+				Files.WriteBytes(w, buf, len)
+			END;
+			list := list.next
 		END;
-		Write(0X);  Close;
-		Texts.WriteInt(W, bytesin DIV 1024, 1);  Texts.WriteString(W, "k in, ");
-		Texts.WriteInt(W, bytesout DIV 1024, 1);  Texts.WriteString(W, "k out, ");
-		Texts.WriteInt(W, stuffed DIV 1024, 1);  Texts.WriteString(W, "k stuffed, ");
-		Texts.WriteInt(W, 100-(bytesout*100 DIV bytesin), 1);  Texts.WriteString(W, "% saved, ");
-		Texts.WriteInt(W, outblock, 1);  Texts.WriteString(W, " blocks");  Texts.WriteLn(W);
-		Texts.Append(Oberon.Log, W.buf)
-	END;
-	list := NIL
+		buf := "";
+		Files.WriteString(w, buf);
+		crc := CRC32.CRC32(crc, buf, 1);
+		Files.WriteBytes(w, crc, 4);
+			(* now compress the temporary file onto the diskette *)
+		Texts.WriteString(W, "Compressing ");
+		Texts.WriteInt(W, Files.Length(Files.Base(w)) DIV 1024, 1);
+		Texts.WriteString(W, "k");  Texts.Append(Oberon.Log, W.buf);
+			(* compress file *)
+		Open;
+		Files.Set(compressRider, Files.Base(w), 0);
+		CompressUtil.Compress(CompressRead, CompressWrite);
+		CompressClose;
+		Texts.WriteString(W, " to ");  Texts.WriteInt(W, LONG(compressSec-start)*BS DIV 1024, 1);
+		Texts.Write(W, "k");  Texts.WriteLn(W);
+		Texts.WriteString(W, "done");  Texts.WriteLn(W);
+		Texts.Append(Oberon.Log, W.buf);
+		Files.Set(w, NIL, 0)
+	END
 END CreateInstallFloppy;
 
 PROCEDURE Verify*;
@@ -488,20 +514,6 @@ BEGIN
 		Out.String("verify off");  Out.Ln
 	END
 END Verify;
-
-PROCEDURE Write*;
-VAR s: ARRAY 10 OF CHAR;
-BEGIN
-	In.Open;  In.String(s);
-	IF ~In.Done THEN
-	ELSIF s = "on" THEN
-		write := TRUE;
-		Out.String("write on");  Out.Ln
-	ELSIF s = "off" THEN
-		write := FALSE;
-		Out.String("write off");  Out.Ln
-	END
-END Write;
 
 PROCEDURE Virtual*;	(* [imagefilename] ~ *)
 VAR s: ARRAY 32 OF CHAR;  res: INTEGER;
@@ -521,7 +533,9 @@ BEGIN
 END Virtual;
 
 BEGIN
-	Texts.OpenWriter(W);  verify := TRUE;  write := TRUE;  virtual := NIL
+	Texts.OpenWriter(W);
+	verify := TRUE;  virtual := NIL;
+	compressBuf := NIL
 END FDInstall.
 
 FDInstall.Virtual t ~
@@ -541,9 +555,9 @@ FDInstall.CreateInstallFloppy LABEL
 	{file [=> file]} ~
 ~
 
-DOS.CopyFrom c:\gneiss\asm\obl.bin => OBL.Bin c:\gneiss\asm\obl.asm => OBL.Asm ~
-Backup.ReadFiles OBL.BIN OBL.ASM ~
-System.RenameFiles OBL.BIN => OBL.Bin OBL.ASM => OBL.Asm ~
+DOS.Copy c:/gneiss/asm/obl.bin => OBL.Bin c:/gneiss/asm/obl.asm => OBL.Asm ~
+!Backup.ReadFiles OBL.BIN OBL.ASM ~
+!System.RenameFiles OBL.BIN => OBL.Bin OBL.ASM => OBL.Asm ~
 Miscellaneous.MakeOberonText OBL.Asm => OBL.Asm~
 
 FDInstall.Write off
@@ -556,7 +570,7 @@ FDInstall.CreateBootFloppy 1 Core0.Bin
 	System.obj NativeIntro.obj In.obj Diskette.obj 
 	Backup.obj Oberon10.Scn.Fnt Courier10.Scn.Fnt OBL.Bin Out.obj 
 	Empty.Display.obj ATDisk.obj ATFileDir.obj ATFiles.obj Install.obj 
-	Trace.Display.obj MemDisk.obj MemFileDir.obj MemFiles.obj 
+	Trace.Display.obj VirtDisk.obj MemFileDir.obj VirtFiles.obj 
 	FDInstall.obj ET.obj Core.Bin=>Native.Bootfile
 	Install.Oberon.Text=>Oberon.Text Install.Tool 
 ~ 

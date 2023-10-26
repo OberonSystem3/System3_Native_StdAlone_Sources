@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE DOS;	(* pjm *)
+MODULE DOS;	(** non-portable *)	(* pjm *)
 
 IMPORT Files, Fonts, Texts, Modules, Oberon, FATFiles;
 
@@ -284,6 +283,54 @@ BEGIN
 		END
 	END
 END CopyTo;
+
+(** DOS.Delete { file } ~  Delete files on DOS drive. *)
+
+PROCEDURE Delete*;
+VAR s: Texts.Scanner;  res: LONGINT;
+BEGIN
+	OpenScanner(s);
+	WHILE s.class IN {Texts.Name, Texts.String} DO
+		StartTask;
+		Texts.WriteString(wn, s.s);  Texts.Append(Oberon.Log, wn.buf);
+		FATFiles.Delete(s.s, res);
+		IF res # 0 THEN Texts.Write(wn, " ");  Error(wn, res) END;
+		Texts.WriteLn(wn);  Texts.Append(Oberon.Log, wn.buf);
+		Texts.Scan(s)
+	END
+END Delete;
+
+(** DOS.Rename { from => to } ~  Rename files on a DOS file system. *)
+
+PROCEDURE Rename*;	(* { from => to } ~ *)
+VAR s: Texts.Scanner;  from, to: ARRAY 64 OF CHAR;  res: LONGINT;
+BEGIN
+	OpenScanner(s);
+	WHILE s.class IN {Texts.Name, Texts.String} DO
+		COPY(s.s, from);  Texts.Scan(s);
+		IF (s.class = Texts.Char) & (s.c = "=") THEN
+			Texts.Scan(s);
+			IF (s.class = Texts.Char) & (s.c = ">") THEN
+				Texts.Scan(s);
+				IF (s.class IN {Texts.Name, Texts.String}) THEN
+					StartTask;
+					COPY(s.s, to);  Texts.Scan(s);
+					Texts.WriteString(wn, from);  Texts.WriteString(wn, " => ");  Texts.WriteString(wn, to);
+					Texts.Append(Oberon.Log, wn.buf);
+					IF OberonName(from) OR OberonName(to) THEN
+						Texts.WriteString(wn, " invalid name")
+					ELSE
+						FATFiles.Rename(from, to, res);
+						IF res # 0 THEN Texts.Write(wn, " ");  Error(wn, res) END
+					END;
+					Texts.WriteLn(wn);  Texts.Append(Oberon.Log, wn.buf)
+				END
+			ELSE s.class := Texts.Inval
+			END
+		ELSE s.class := Texts.Inval
+		END
+	END
+END Rename;
 
 BEGIN
 	Texts.OpenWriter(wd);  Texts.SetFont(wd, Fonts.This("Courier10.Scn.Fnt"));

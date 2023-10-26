@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Reals;
+MODULE Reals;	(** portable *)
 
 (** Implementation of the non-portable components of IEEE REAL and 
 LONGREAL manipulation. The routines here are required to do conversion 
@@ -45,6 +44,7 @@ IMPORT SYSTEM, Kernel;
 	30.8.1993	mh: changed RealX to avoid compiler warnings;
 	7.11.1995	jt: dynamic endianess test
 	22.01.97	pjm: NaN stuff (using quiet NaNs only to avoid traps)
+	05.01.98	prk: NaN with INF support
 *)
 
 VAR
@@ -123,22 +123,22 @@ BEGIN
 	END
 END Ten;
 
-(** Returns the NaN code (0 <= c < 4194304) or -1 if not NaN/Infinite. *)
+(** Returns the NaN code (0 <= c < 8399608) or -1 if not NaN/Infinite. *)
 PROCEDURE NaNCode* (x: REAL): LONGINT;
 BEGIN
 	IF ASH(SYSTEM.VAL(LONGINT, x), -23) MOD 256 = 255 THEN	(* Infinite or NaN *)
-		RETURN SYSTEM.VAL(LONGINT, x) MOD 400000H	(* lowest 22 bits *)
+		RETURN SYSTEM.VAL(LONGINT, x) MOD 800000H	(* lowest 23 bits *)
 	ELSE
 		RETURN -1
 	END
 END NaNCode;
 
-(** Returns the NaN code (0 <= h < 524288, MIN(LONGINT) <= l <= MAX(LONGINT)) or (-1,-1) if not NaN/Infinite. *)
+(** Returns the NaN code (0 <= h < 1048576, MIN(LONGINT) <= l <= MAX(LONGINT)) or (-1,-1) if not NaN/Infinite. *)
 PROCEDURE NaNCodeL* (x: LONGREAL;  VAR h, l: LONGINT);
 BEGIN
 	SYSTEM.GET(SYSTEM.ADR(x) + H, h); SYSTEM.GET(SYSTEM.ADR(x) + L, l);
 	IF ASH(h, -20) MOD 2048 = 2047 THEN	(* Infinite or NaN *)
-		h := h MOD 80000H	(* lowest 19 bits *)
+		h := h MOD 100000H	(* lowest 20 bits *)
 	ELSE
 		h := -1;  l := -1
 	END
@@ -158,26 +158,26 @@ BEGIN
 	RETURN ASH(h, -20) MOD 2048 = 2047
 END IsNaNL;
 
-(** Returns quiet NaN with specified code (0 <= l < 4194304). *)
+(** Returns NaN with specified code (0 <= l < 8399608). *)
 PROCEDURE NaN* (l: LONGINT): REAL;
 VAR x: REAL;
 BEGIN
-	SYSTEM.PUT(SYSTEM.ADR(x), (l MOD 400000H) + 7FC00000H);
+	SYSTEM.PUT(SYSTEM.ADR(x), (l MOD 800000H) + 7F800000H);
 	RETURN x
 END NaN;
 
-(** Returns quiet NaN with specified code (0 <= h < 524288, MIN(LONGINT) <= l <= MAX(LONGINT)). *)
+(** Returns NaN with specified code (0 <= h < 1048576, MIN(LONGINT) <= l <= MAX(LONGINT)). *)
 PROCEDURE NaNL* (h, l: LONGINT): LONGREAL;
 VAR x: LONGREAL;
 BEGIN
-	h := (h MOD 80000H) + 7FF80000H;
+	h := (h MOD 100000H) + 7FF00000H;
 	SYSTEM.PUT(SYSTEM.ADR(x) + H, h);
 	SYSTEM.PUT(SYSTEM.ADR(x) + L, l);
 	RETURN x
 END NaNL;
 
 PROCEDURE fcr(): SET;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	PUSH 0
 	FSTCW [ESP]
 	FWAIT
@@ -195,7 +195,7 @@ BEGIN
 END FCR;
 
 PROCEDURE setfcr(s: SET);
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	FLDCW s[EBP]
 END setfcr;
 

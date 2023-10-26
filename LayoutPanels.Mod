@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE LayoutPanels;	(* ck 6.4.97 / ps 12.5.97 *)
+MODULE LayoutPanels;	(** portable *)	(* ck 6.4.97 / ps 12.5.97 *)
 
 IMPORT
 	Files, Objects, Texts, Display, Display3, Effects, Gadgets, Oberon, Panels, PanelDocs, Documents, 
@@ -101,7 +100,6 @@ BEGIN
 END CopyPanel;
 
 PROCEDURE PanelAttr(F: Panel; VAR M: Objects.AttrMsg);
-VAR e: LP0.Element;
 BEGIN
 	IF M.id = Objects.get THEN
 		IF M.name = "Gen" THEN

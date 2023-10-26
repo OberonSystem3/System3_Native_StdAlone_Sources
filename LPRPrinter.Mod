@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE LPRPrinter;  
-
-(* EJZ 13.12.95 LPR Version of PSPrinter
-	pjm 02.02.96, ported to Native Oberon *)
-
-	IMPORT Files, Texts, Oberon, NetSystem;
+MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179 *)
+	
+	IMPORT FileDir, Files, Texts, Strings, Oberon, Printer, PSPrinter, NetSystem;
 
 	CONST
 		DefConPort = 515;
@@ -32,9 +28,10 @@ MODULE LPRPrinter;
 	VAR
 		W: Texts.Writer;
 		buffer: ARRAY BufLen OF CHAR;
+		opts: FileDir.FileName;
 		jobNr: INTEGER;
-		bannerPage, mailBack, postScript: BOOLEAN;
-		user: ARRAY 64 OF CHAR;
+		bannerPage, mailBack: BOOLEAN;
+		host, queue: ARRAY 64 OF CHAR;
 
 	PROCEDURE SendString(C: NetSystem.Connection; str: ARRAY OF CHAR);
 		VAR i: LONGINT;
@@ -78,26 +75,15 @@ MODULE LPRPrinter;
 		END;
 		queue[i] := 0X;
 		IF name[i] = "@" THEN
-			j := 0;
-			INC(i);
+			j := 0; INC(i);
 			WHILE name[i] # 0X DO
 				host[j] := name[i];
-				INC(j);
-				INC(i)
+				INC(j); INC(i)
 			END;
 			host[j] := 0X
 		ELSE
 			COPY("", host)
-		END;
-		IF queue = "" THEN
-			Texts.WriteString(W, "no queue name")
-		ELSIF host = "" THEN
-			Texts.WriteString(W, "no host name")
-		ELSE
-			RETURN
-		END;
-		Texts.WriteLn(W);
-		Texts.Append(Oberon.Log, W.buf)
+		END
 	END ScanDest;
 
 	PROCEDURE IntToStr(val: LONGINT; VAR str: ARRAY OF CHAR);
@@ -155,17 +141,19 @@ MODULE LPRPrinter;
 		str[i+1] := 0X
 	END ConcatCh;
 
-	PROCEDURE PrintFile(VAR name: ARRAY OF CHAR; F: Files.File; banner, postscript, mail: BOOLEAN);
+	PROCEDURE PrintFile(VAR host, queue, options: ARRAY OF CHAR; F: Files.File; banner, mail: BOOLEAN);
 		VAR
 			C: NetSystem.Connection;
 			R: Files.Rider;
-			host, queue: ARRAY 32 OF CHAR;
 			email, dataFile, controlFile: ARRAY 64 OF CHAR;
 			docName: ARRAY 128 OF CHAR;
 			nrStr: ARRAY 8 OF CHAR;
-			i: INTEGER;
+			i, j, k: INTEGER;
 			state: CHAR;
+			S: Texts.Scanner;
 	BEGIN
+		Oberon.OpenScanner(S, "NetSystem.EMail");
+		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := "" END;
 		INC(jobNr);
 		IF jobNr >= 1000 THEN
 			jobNr := 100
@@ -177,136 +165,149 @@ MODULE LPRPrinter;
 		controlFile := "cfA";
 		Concat(controlFile, nrStr);
 		Concat(controlFile, NetSystem.hostName);
-		ScanDest(name, host, queue);
-		IF (host # "") & (queue # "") THEN
-			Texts.WriteString(W, queue);
-			Texts.Write(W, "@");
-			Texts.WriteString(W, host);
+		Texts.WriteString(W, "LPR: ");
+		Texts.WriteString(W, queue);
+		Texts.Write(W, "@");
+		Texts.WriteString(W, host);
+		Texts.Append(Oberon.Log, W.buf);
+		IF Connect(C, host) THEN
+			Texts.WriteString(W, " sending ");
 			Texts.Append(Oberon.Log, W.buf);
-			IF Connect(C, host) THEN
-				Texts.WriteString(W, " printing ");
-				Texts.Append(Oberon.Log, W.buf);
-				NetSystem.Write(C, 02X); (* receive a print job *)
-				SendString(C, queue);
+			NetSystem.Write(C, 02X); (* receive a print job *)
+			SendString(C, queue);
+			NetSystem.Write(C, LF);
+			state := 0FFX; NetSystem.Read(C, state);
+			IF state = 0X THEN
+				NetSystem.Write(C, 03X); (* receive data file *)
+				IntToStr(Files.Length(F)+1, nrStr);
+				SendString(C, nrStr); (* data file length + 1 *)
+				NetSystem.Write(C, " ");
+				SendString(C, dataFile);
 				NetSystem.Write(C, LF);
 				state := 0FFX; NetSystem.Read(C, state);
 				IF state = 0X THEN
-					NetSystem.Write(C, 03X); (* receive data file *)
-					IntToStr(Files.Length(F)+1, nrStr);
-					SendString(C, nrStr); (* data file length + 1 *)
-					NetSystem.Write(C, " ");
-					SendString(C, dataFile);
+					Files.Set(R, F, 0); (* send data file *)
+					Files.ReadBytes(R, buffer, BufLen);
+					WHILE ~R.eof & (C.res = NetSystem.done) DO
+						NetSystem.WriteBytes(C, 0, BufLen, buffer);
+						Files.ReadBytes(R, buffer, BufLen)
+					END;
+					ASSERT(C.res = NetSystem.done);
+					NetSystem.WriteBytes(C, 0, BufLen-R.res, buffer);
 					NetSystem.Write(C, LF);
+					NetSystem.Write(C, 0X);
 					state := 0FFX; NetSystem.Read(C, state);
 					IF state = 0X THEN
-						Files.Set(R, F, 0); (* send data file *)
-						Files.ReadBytes(R, buffer, BufLen);
-						WHILE ~R.eof & (C.res = NetSystem.done) DO
-							NetSystem.WriteBytes(C, 0, BufLen, buffer);
-							Files.ReadBytes(R, buffer, BufLen)
+						buffer := ""; (* build control file *)
+						ConcatCh(buffer, "H"); (* host name *)
+						Concat(buffer, NetSystem.hostName);
+						ConcatCh(buffer, LF);
+						ConcatCh(buffer, "P"); (* user identification *)
+						Concat(buffer, email);
+						ConcatCh(buffer, LF);
+						IF mail THEN (* send mail when job has finished *)
+							ConcatCh(buffer, "M"); (* user identification *)
+							Concat(buffer, email);
+							ConcatCh(buffer, LF)
 						END;
-						ASSERT(C.res = NetSystem.done);
-						NetSystem.WriteBytes(C, 0, BufLen-R.res, buffer);
+						ConcatCh(buffer, "J"); (* job name *)
+						j := 0;  WHILE (options[j] # Oberon.OptionChar) & (options[j] # 0X) DO INC(j) END;
+						IF options[j] # 0X THEN
+							k := 0;  INC(j);
+							WHILE options[j] # 0X DO docName[k] := options[j];  INC(j);  INC(k) END;
+							docName[k] := 0X
+						ELSE
+							docName[0] := 0X
+						END;
+						IF docName[0] = 0X THEN docName := "Oberon Document" END;
+						Concat(buffer, docName);
+						ConcatCh(buffer, LF);
+						IF banner THEN
+							ConcatCh(buffer, "L"); (* banner page *)
+							Concat(buffer, email);
+							ConcatCh(buffer, LF)
+						END;
+						ConcatCh(buffer, "l");	(* print file direct *)
+						Concat(buffer, dataFile);
+						ConcatCh(buffer, LF);
+						ConcatCh(buffer, "U"); (* unlink data file *)
+						Concat(buffer, dataFile);
+						ConcatCh(buffer, LF);
+						ConcatCh(buffer, "N"); (* name of source file *)
+						Concat(buffer, docName);
+						ConcatCh(buffer, LF);
+						i := 0;
+						WHILE buffer[i] # 0X DO
+							INC(i)
+						END;
+						NetSystem.Write(C, 02X); (* receive control file *)
+						IntToStr(i, nrStr);
+						SendString(C, nrStr);
+						NetSystem.Write(C, " ");
+						SendString(C, controlFile);
 						NetSystem.Write(C, LF);
-						NetSystem.Write(C, 0X);
 						state := 0FFX; NetSystem.Read(C, state);
 						IF state = 0X THEN
-							buffer := ""; (* build control file *)
-							ConcatCh(buffer, "H"); (* host name *)
-							Concat(buffer, NetSystem.hostName);
-							ConcatCh(buffer, LF);
-							ConcatCh(buffer, "P"); (* user identification *)
-							Concat(buffer, user);
-							ConcatCh(buffer, LF);
-							IF mail THEN (* send mail when job has finished *)
-								ConcatCh(buffer, "M"); (* user identification *)
-								Concat(buffer, user);
-								ConcatCh(buffer, LF)
-							END;
-							ConcatCh(buffer, "J"); (* job name *)
-							Concat(buffer, "Oberon");
-							ConcatCh(buffer, LF);
-							IF banner THEN
-								ConcatCh(buffer, "L"); (* banner page *)
-								Concat(buffer, user);
-								ConcatCh(buffer, LF)
-							END;
-							IF postscript THEN							
-								ConcatCh(buffer, "o") (* print postscript file *)
-							ELSE
-								ConcatCh(buffer, "f") (* print formatted file *)
-							END;
-							Concat(buffer, dataFile);
-							ConcatCh(buffer, LF);
-							ConcatCh(buffer, "U"); (* unlink data file *)
-							Concat(buffer, dataFile);
-							ConcatCh(buffer, LF);
-							ConcatCh(buffer, "N"); (* name of source file *)
-							Concat(buffer, "print.ps");
-							ConcatCh(buffer, LF);
-							i := 0;
-							WHILE buffer[i] # 0X DO
-								INC(i)
-							END;
-							NetSystem.Write(C, 02X); (* receive control file *)
-							IntToStr(i, nrStr);
-							SendString(C, nrStr);
-							NetSystem.Write(C, " ");
-							SendString(C, controlFile);
-							NetSystem.Write(C, LF);
+							NetSystem.WriteBytes(C, 0, i, buffer); (* send control file *)
+							NetSystem.Write(C, 0X);
 							state := 0FFX; NetSystem.Read(C, state);
 							IF state = 0X THEN
-								NetSystem.WriteBytes(C, 0, i, buffer); (* send control file *)
-								NetSystem.Write(C, 0X);
-								state := 0FFX; NetSystem.Read(C, state);
-								IF state = 0X THEN
-									Texts.WriteString(W, "done")
-								ELSE
-									Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " send control file failed")
-								END
+								Texts.WriteString(W, "done")
 							ELSE
-								Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive control file failed")
+								Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " send control file failed")
 							END
 						ELSE
-							Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " send data file failed")
+							Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive control file failed")
 						END
 					ELSE
-						Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive data file failed")
+						Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " send data file failed")
 					END
 				ELSE
-					Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive print job failed")
-				END;
-				NetSystem.CloseConnection(C)
+					Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive data file failed")
+				END
 			ELSE
-				Texts.WriteString(W, " connecting failed")
+				Texts.WriteInt(W, ORD(state), 0); Texts.WriteString(W, " receive print job failed")
 			END;
-			Texts.WriteLn(W);
-			Texts.Append(Oberon.Log, W.buf)
-		END
+			NetSystem.CloseConnection(C)
+		ELSE
+			Texts.WriteString(W, " connecting failed")
+		END;
+		Texts.WriteLn(W);
+		Texts.Append(Oberon.Log, W.buf)
 	END PrintFile;
 
-(*
+	PROCEDURE Open*(P: Printer.Printer; printer, options: ARRAY OF CHAR);
+	BEGIN
+		COPY(options, opts);
+		ScanDest(printer, host, queue);
+		IF host # "" THEN	(* remote *)
+			PSPrinter.Open(P, "", options)
+		ELSE	(* local file *)
+			PSPrinter.Open(P, queue, options)
+		END
+	END Open;
+
 	PROCEDURE Close*(P: Printer.Printer);
-		VAR res: INTEGER;
 	BEGIN
 		WITH P: PSPrinter.PSPrinter DO
 			PSPrinter.Close(P);
-			Files.Delete(P.PrinterName, res);
-			PrintFile(P.PrinterName, P.printF, bannerPage, mailBack)
+			IF host # "" THEN
+				PrintFile(host, queue, opts, P.printF, bannerPage, mailBack)
+			END
 		END
 	END Close;
-*)
 
-(** LPRPrinter.PrintPSFile queue@host ps-file 
+(** LPRPrinter.PrintPSFile queue@host [ "\" options ] ps-file 
 		Print the PostScript -file (ps-file) on the lpr-printer given by queue and host. *)
 	PROCEDURE PrintPSFile*;
 		VAR
 			R: Texts.Reader;
 			S: Texts.Scanner;
-			name: ARRAY 64 OF CHAR;
+			name, options: FileDir.FileName;
+			F: Files.File;
 			i: INTEGER;
 			ch, open: CHAR;
-			F: Files.File;
+			host, queue: ARRAY 64 OF CHAR;
 	BEGIN
 		Texts.OpenReader(R, Oberon.Par.text, Oberon.Par.pos);
 		Texts.Read(R, ch);
@@ -324,13 +325,30 @@ MODULE LPRPrinter;
 			Texts.Read(R, ch)
 		END;
 		name[i] := 0X;
-		name[i] := 0X;
 		Texts.OpenScanner(S, Oberon.Par.text, Texts.Pos(R));
 		Texts.Scan(S);
+		IF (S.class = Texts.Char) & (S.c = Oberon.OptionChar) THEN
+			Texts.Scan(S); COPY(S.s, options);
+			Texts.Scan(S)
+		ELSE
+			options := ""
+		END;
 		IF S.class IN {Texts.Name, Texts.String} THEN
 			F := Files.Old(S.s);
 			IF F # NIL THEN
-				PrintFile(name, F, bannerPage, postScript, mailBack)
+				Strings.AppendCh(options, Oberon.OptionChar);
+				Strings.Append(options, S.s);
+				ScanDest(name, host, queue);
+				IF queue = "" THEN
+					Texts.WriteString(W, "no queue name")
+				ELSIF host = "" THEN
+					Texts.WriteString(W, "no host name")
+				ELSE
+					PrintFile(host, queue, options, F, bannerPage, mailBack);
+					RETURN
+				END;
+				Texts.WriteLn(W);
+				Texts.Append(Oberon.Log, W.buf)
 			END
 		END
 	END PrintPSFile;
@@ -392,8 +410,7 @@ MODULE LPRPrinter;
 		END;
 		i := 0;
 		WHILE ~R.eot & (ch > " ") & (ch # open) DO
-			name[i] := ch;
-			INC(i);
+			name[i] := ch; INC(i);
 			Texts.Read(R, ch)
 		END;
 		name[i] := 0X;
@@ -425,10 +442,13 @@ MODULE LPRPrinter;
 			R: Texts.Reader;
 			S: Texts.Scanner;
 			C: NetSystem.Connection;
+			email: ARRAY 64 OF CHAR;
 			name, host, queue, job: ARRAY 32 OF CHAR;
 			i: INTEGER;
 			ch, open: CHAR;
 	BEGIN
+		Oberon.OpenScanner(S, "NetSystem.EMail");
+		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := "" END;
 		Texts.OpenReader(R, Oberon.Par.text, Oberon.Par.pos);
 		Texts.Read(R, ch);
 		WHILE ~R.eot & (ch <= " ") DO
@@ -441,8 +461,7 @@ MODULE LPRPrinter;
 		END;
 		i := 0;
 		WHILE ~R.eot & (ch > " ") & (ch # open) DO
-			name[i] := ch;
-			INC(i);
+			name[i] := ch; INC(i);
 			Texts.Read(R, ch)
 		END;
 		name[i] := 0X;
@@ -466,7 +485,7 @@ MODULE LPRPrinter;
 				Texts.WriteString(W, "all jobs")
 			END;
 			Texts.WriteString(W, " for ");
-			Texts.WriteString(W, user);
+			Texts.WriteString(W, email);
 			Texts.WriteString(W, " on ");
 			Texts.WriteString(W, queue);
 			Texts.Write(W, "@");
@@ -476,7 +495,7 @@ MODULE LPRPrinter;
 				NetSystem.Write(C, 05X); (* remove jobs *)
 				SendString(C, queue);
 				NetSystem.Write(C, " ");
-				SendString(C, user);
+				SendString(C, email);
 				IF job # "" THEN
 					NetSystem.Write(C, " ");
 					SendString(C, job)
@@ -551,21 +570,36 @@ MODULE LPRPrinter;
 		Texts.Append(Oberon.Log, W.buf)
 	END MailBack;
 
-	PROCEDURE Init;
-	VAR S: Texts.Scanner;
+	PROCEDURE NewPrinter*(): Printer.Printer;
+		VAR P: Printer.Printer;
 	BEGIN
-		Oberon.OpenScanner(S, "NetSystem.EMail");
-		IF (S.class = Texts.String) OR (S.class = Texts.Name) THEN
-			COPY(S.s, user)
-		ELSE 
-			COPY("anonymous", user)
-		END
-	END Init;
+		P := PSPrinter.NewPrinter();
+		P.name := "LPRPrinter.Install";
+		P.Open := Open;
+		P.Close := Close;
+		RETURN P
+	END NewPrinter;
+	
+	PROCEDURE Install*;
+	BEGIN
+		Printer.Install(NewPrinter())
+	END Install;
 
 BEGIN
 	Texts.OpenWriter(W);
-	jobNr := 99;  Init;
-	bannerPage := FALSE; mailBack := FALSE; postScript := TRUE
+	jobNr := 99;
+	bannerPage := TRUE; mailBack := FALSE
 END LPRPrinter.
 
-System.Free LPRPrinter ~
+System.Free LPRPrinter PSPrinter ~
+
+LPRPrinter.Install
+
+LPRPrinter.ShowJobs lph1@lillian ~
+LPRPrinter.ShowJobs "lph1-ds@lillian" ~
+LPRPrinter.RemoveJob lph1@lillian 100 ~
+
+LPRPrinter.MailBack on
+LPRPrinter.BannerPage on
+
+LPRPrinter.PrintPSFile lph1@lillian Win95ETHDialback.ps

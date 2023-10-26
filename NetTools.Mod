@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,16 +13,15 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE NetTools; (* ejz,   *)
-	IMPORT (* Mac *)(* Win *) (*Registry,*) Input, Files, Objects, Strings, Texts, Oberon, NetSystem, Gadgets, Documents,
-		HyperDocs, Attributes, Streams, SYSTEM;
-
-(* search for (* Mac *) (* Win *) or (* Native *) *)
+MODULE NetTools;	(** portable *) (* ejz,   *)
+	IMPORT Input, Files, Objects, Strings, Texts, Oberon, NetSystem, Gadgets, Documents, HyperDocs, Attributes, Streams,
+		(*Threads,*) SYSTEM;
 
 (** NetTools is a utility module that contains procedures commonly used with TCP services. *)
 
 	CONST
 		MaxLine* = 1024; (* Mac = 1000 *)
+		MaxTry = 1000;
 		BufLen* = MaxLine;
 		ServerStrLen* = HyperDocs.ServerStrLen;
 		PathStrLen* = HyperDocs.PathStrLen;
@@ -59,7 +57,7 @@ MODULE NetTools; (* ejz,   *)
 		W: Texts.Writer;
 		curLen*: LONGINT; (** maximum length of the current blocking transfer *)
 		prevPos, curPos*: LONGINT; (** state of the current blocking transfer *)
-		TimeOut*: LONGINT; (** typical time-out forblocking transfer *)
+		TimeOut*: LONGINT; (** typical time-out for blocking transfer *)
 		progM: Objects.Object;
 		buffer: ARRAY BufLen OF CHAR;
 		proxyDomain: ARRAY 64 OF CHAR;
@@ -117,7 +115,7 @@ MODULE NetTools; (* ejz,   *)
 		IF port > 0 THEN
 			NetSystem.OpenConnection(C, NetSystem.anyport, adr, port, res)
 		ELSE
-			NetSystem.(*Async*)OpenConnection(C, NetSystem.anyport, adr, -port, res)
+			NetSystem.AsyncOpenConnection(C, NetSystem.anyport, adr, -port, res)
 		END;
 		IF res # NetSystem.done THEN
 			C := NIL;
@@ -173,7 +171,7 @@ MODULE NetTools; (* ejz,   *)
 	BEGIN
 		WITH S: TCPStream DO
 			IF n > 0 THEN
-				pos := 0; time := Input.Time();
+				pos := 0; time := Input.Time() + TimeOut;
 				REPEAT
 					IF S.avail < n THEN
 						len := S.Available(S)
@@ -191,7 +189,7 @@ MODULE NetTools; (* ejz,   *)
 						END;
 						INC(pos, len); DEC(n, len); DEC(S.avail, len)
 					END
-				UNTIL (n <= 0) OR S.eos OR UserBreak() OR (Input.Time() > (time+TimeOut));
+				UNTIL (n <= 0) OR S.eos OR UserBreak() OR (Input.Time() - time > 0);
 				IF n > 0 THEN
 					S.eos := TRUE; S.res := n
 				END
@@ -211,8 +209,7 @@ MODULE NetTools; (* ejz,   *)
 	END WriteTCPBytes;
 
 	PROCEDURE TCPAvailable*(S: Streams.Stream): LONGINT;
-		VAR
-			state: INTEGER;
+		VAR state: INTEGER;
 	BEGIN
 		WITH S: TCPStream DO
 			S.avail := NetSystem.Available(S.C);
@@ -220,7 +217,7 @@ MODULE NetTools; (* ejz,   *)
 				RETURN S.avail
 			ELSE
 				state := S.State(S);
-				IF state # Streams.inout (*~(state IN {Streams.in, Streams.out, Streams.inout})*) THEN
+				IF state # Streams.inout THEN
 					S.eos := TRUE
 				END;
 				RETURN 0
@@ -233,12 +230,8 @@ MODULE NetTools; (* ejz,   *)
 	BEGIN
 		WITH S: TCPStream DO
 			state := NetSystem.State(S.C);
-			CASE state OF
-(* this is different on Windows.  also check NetSystem.
-				NetSystem.in: RETURN Streams.in
-				|NetSystem.out: RETURN Streams.out
-*)
-				|NetSystem.inout: RETURN Streams.inout
+			IF state = NetSystem.inout THEN
+				RETURN Streams.inout
 			ELSE
 				S.eos := TRUE;
 				RETURN Streams.closed
@@ -279,9 +272,9 @@ MODULE NetTools; (* ejz,   *)
 (** Write all incoming data on connection C to R, until the connection is closed. notify is called after each
 		packet received. *)
 	PROCEDURE ReadData*(C: NetSystem.Connection; VAR R: Files.Rider; maxLen: LONGINT);
-		VAR len, rlen: LONGINT;
+		VAR len, rlen, try: LONGINT;
 	BEGIN
-		curPos := 0; ProgMNotify();
+		curPos := 0; ProgMNotify(); try := Input.Time() + TimeOut;
 		len := NetSystem.Available(C);
 		WHILE (curPos < maxLen) & ((len > 0) OR Connected(C, NetSystem.in)) DO
 			IF UserBreak() THEN
@@ -298,7 +291,12 @@ MODULE NetTools; (* ejz,   *)
 			ProgMNotify();
 			DEC(len, rlen);
 			IF len <= 0 THEN
-				len := NetSystem.Available(C)
+				len := NetSystem.Available(C);
+				IF len <= 0 THEN
+					IF try - Input.Time() < 0 THEN RETURN END
+				ELSE
+					try := Input.Time() + TimeOut
+				END
 			END
 		END;
 		curPos := 0; ProgMNotify()
@@ -321,25 +319,17 @@ MODULE NetTools; (* ejz,   *)
 
 (** Query a string setting in the NetSystem section in Registry. *)
 	PROCEDURE QueryString*(key: ARRAY OF CHAR; VAR s: ARRAY OF CHAR): BOOLEAN;
-	VAR S: Texts.Scanner;  lKey: ARRAY 32 OF CHAR;
+		VAR S: Texts.Scanner; lKey: ARRAY 32 OF CHAR;
 	BEGIN
-(* (* Mac *) (* Win *)
-		Registry.Get("NetSystem", key, s);
-		IF (Registry.res = Registry.Done) & (s # "") THEN
-			RETURN TRUE
+		lKey := "NetSystem."; Strings.Append(lKey, key);
+		Oberon.OpenScanner(S, lKey);
+		IF S.class IN {Texts.Name, Texts.String} THEN
+			COPY(S.s, s)
 		ELSE
-			COPY("", s); RETURN FALSE
-		END
-*) (* Native *) 
-	lKey := "NetSystem."; Strings.Append(lKey, key);
-	Oberon.OpenScanner(S, lKey);
-	IF S.class IN {Texts.Name, Texts.String} THEN
-		COPY(S.s, s)
-	ELSE
-		COPY("", s)
-	END;
-	RETURN s # ""
-END QueryString;
+			COPY("", s)
+		END;
+		RETURN s # ""
+	END QueryString;
 
 (** Get host and port of the Registry entry key in section NetSystem. *)
 	PROCEDURE GetHostPort*(key: ARRAY OF CHAR; VAR host: ARRAY OF CHAR; VAR port: INTEGER; defPort: INTEGER);
@@ -394,8 +384,8 @@ END QueryString;
 		WHILE url[i] = "/" DO
 			INC(i)
 		END;
-		j := 0;
-		WHILE (url[j] # 0X) & (url[j] # "@") DO
+		j := i;
+		WHILE (url[j] # 0X) & (url[j] # "@") & (url[j] # "/") DO
 			INC(j)
 		END;
 		IF url[j] = "@" THEN
@@ -452,5 +442,5 @@ END QueryString;
 BEGIN
 	Texts.OpenWriter(W);
 	progM := Gadgets.FindPublicObj("NetDocs.Progress");
-	InitProxy(); TimeOut := 5*60*Input.TimeUnit
+	InitProxy(); TimeOut := 60*Input.TimeUnit
 END NetTools.

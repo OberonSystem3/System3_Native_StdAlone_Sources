@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,18 +13,14 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Viewers; (*JG 4.8.93*)
+MODULE Viewers;	(** portable *) (*JG 4.8.93*)
 
 (**
 The module viewers provide the data type for implementing the tiled viewers 
 of the Oberon system. Each track of the Oberon system consists of a number of viewers.
 *)
 
-(* pjm 05.08.96 - recover from handler trap in Broadcast *)
-
     IMPORT Objects, Display;
-
-    CONST minint = MIN(INTEGER); maxint = MAX(INTEGER);
 
     TYPE
 	   Viewer* = POINTER TO ViewerDesc;
@@ -53,7 +48,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
     PROCEDURE Open* (V: Viewer; X, Y: INTEGER);
 	    VAR T, u, v: Display.Frame; M: Display.ControlMsg; N: Display.ModifyMsg;
     BEGIN
-	    IF (V.state = 0) & (X < maxint) THEN
+	    IF (V.state = 0) & (X < MAX(INTEGER)) THEN
           IF Y > DH THEN Y := DH END;
 		  T := FillerTrack.next;
 		  WHILE X >= T.X + T.W DO T := T.next END;
@@ -171,7 +166,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
     PROCEDURE This* (X, Y: INTEGER): Viewer;
 	    VAR T, V: Display.Frame;
     BEGIN
-	    IF (X < maxint) & (Y < DH) THEN
+	    IF (X < MAX(INTEGER)) & (Y < DH) THEN
 	  	  T := FillerTrack;
 		    REPEAT T := T.next UNTIL X < T.X + T.W;
 		    V := T.dsc;
@@ -191,7 +186,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
     PROCEDURE Locate* (X, H: INTEGER; VAR fil, bot, alt, max: Display.Frame);
 	    VAR T, V: Display.Frame;
     BEGIN
-	    IF X < maxint THEN
+	    IF X < MAX(INTEGER) THEN
 		    T := FillerTrack;
 		    REPEAT T := T.next UNTIL X < T.X + T.W;
 		    fil := T.dsc; bot := fil.next;
@@ -220,7 +215,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
 	    	NEW(T);
 		    T.X := curW; T.W := W; T.Y := 0; T.H := H;
 		    T.dsc := Filler; T.under := NIL;
-	        FillerViewer.X := curW + W; FillerViewer.W := maxint - FillerViewer.X;
+	        FillerViewer.X := curW + W; FillerViewer.W := MAX(INTEGER) - FillerViewer.X;
 		    FillerTrack.X := FillerViewer.X; FillerTrack.W := FillerViewer.W;
 	        S := FillerTrack;
             WHILE S.next # FillerTrack DO S := S.next END;
@@ -233,7 +228,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
     PROCEDURE OpenTrack* (X, W: INTEGER; Filler: Viewer);
 	    VAR newT: Track; S, T, t, v: Display.Frame; M: Display.ControlMsg;
     BEGIN
-	    IF (X < maxint) & (Filler.state = 0) THEN
+	    IF (X < MAX(INTEGER)) & (Filler.state = 0) THEN
 		    S := FillerTrack; T := S.next;
 		    WHILE X >= T.X + T.W DO S := T; T := S.next END;
 		    WHILE X + W > T.X + T.W DO T := T.next END;
@@ -258,7 +253,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
     PROCEDURE CloseTrack* (X: INTEGER);
 	    VAR T, V: Display.Frame; M: Display.ControlMsg;
     BEGIN
-	    IF X < maxint THEN
+	    IF X < MAX(INTEGER) THEN
 		    T := FillerTrack;
 		    REPEAT T := T.next UNTIL X < T.X + T.W;
 		    IF T(Track).under # NIL THEN
@@ -271,7 +266,7 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
 
 	PROCEDURE Broadcast (VAR M: Display.FrameMsg);
 	    VAR F, V: Display.Frame;
-	BEGIN M.res := minint; Objects.Stamp(M);
+	BEGIN M.res := MIN(INTEGER); Objects.Stamp(M);
         Display.ResetClip; F := FillerTrack.next;
 	    WHILE (F # FillerTrack) & (M.res < 0) DO V := F.dsc;
 		   REPEAT V := V.next; M.dlink := NIL; M.x := 0; M.y := 0;
@@ -286,10 +281,10 @@ of the Oberon system. Each track of the Oberon system consists of a number of vi
 BEGIN
     DH := Display.Height;
     NEW(FillerViewer);
-    FillerViewer.X := 0; FillerViewer.W := maxint; FillerViewer.Y := 0; FillerViewer.H := DH;
+    FillerViewer.X := 0; FillerViewer.W := MAX(INTEGER); FillerViewer.Y := 0; FillerViewer.H := DH;
     FillerViewer.next := FillerViewer;
     NEW(FillerTrack);
-    FillerTrack.X := 0; FillerTrack.W := maxint; FillerTrack.Y := 0; FillerTrack.H := DH;
+    FillerTrack.X := 0; FillerTrack.W := MAX(INTEGER); FillerTrack.Y := 0; FillerTrack.H := DH;
     FillerTrack.dsc := FillerViewer;
     FillerTrack.next := FillerTrack;
     buf := NIL; curW := 0; minH := 1;

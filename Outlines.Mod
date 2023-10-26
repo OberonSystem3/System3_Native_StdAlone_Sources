@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,17 +13,17 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Outlines;	(*	code written by P. Saladin	June 1994/modified jm 14.12.94	*)	
+MODULE Outlines;	(** portable *)	(*	code written by P. Saladin	June 1994/modified jm 14.12.94	*)	
 
 IMPORT
-	Files, Texts, Objects, Fonts, Display, Display3, Printer, Printer3, Effects, Attributes, Gadgets,
+	Files, Texts, Objects, Display, Display3, Printer, Printer3, Effects, Attributes, Gadgets,
 	Oberon, Documents, Desktops, Out;
 	
 CONST
 	open* = 0; close* = 1; folded* = 2; 
 	tempOpen* = 3; 	(* states *)
 	openMode* = {open, tempOpen};
-	
+
 	FW = 12;	FH = 10;
 
 	MaxPatLen = 128;
@@ -48,7 +47,6 @@ TYPE
 VAR
 	oldBroadcast: Display.MsgProc;
 	inf: FindInfo;
-	fnt : Objects.Library;
 	handle : Objects.Handler;
 	insertT: Texts.Text;
 	saveB: Texts.Buffer;
@@ -60,21 +58,21 @@ BEGIN
 	RETURN F;
 END MakeOutline;
 
-PROCEDURE GetFrame(): Display.Frame;
+PROCEDURE GetFrame (): Display.Frame;
 VAR D, F: Display.Frame;
 
 	PROCEDURE MarkedFrame;
 	BEGIN
 		D:= Documents.MarkedDoc();
-		IF D # NIL THEN F:= D.dsc
+		IF D # NIL THEN F := D.dsc
 		ELSE
-			D:= Oberon.MarkedViewer();
-			IF D # NIL THEN F:= D.dsc.next END
+			D := Oberon.MarkedViewer();
+			IF D # NIL THEN F := D.dsc.next END
 		END
 	END MarkedFrame;
 	
 BEGIN
-	F:= NIL;
+	F := NIL;
 	IF Oberon.Par.vwr IS Desktops.DocViewer THEN
 		IF Desktops.CurMenu(Gadgets.context) = Gadgets.context THEN	(* command in menu *)
 			D:= Desktops.CurDoc(Gadgets.context);
@@ -201,9 +199,6 @@ VAR f: Texts.Finder; o: Objects.Object; T: Texts.Text; pos: LONGINT; found: BOOL
 BEGIN
 	Effects.TrackHighlight(R, M.keys, M.X, M.Y, x, y, w, h);
 	IF ~Gadgets.InActiveArea(F, M) THEN M.res := 0; RETURN END;
-	(*
-	Gadgets.ThisFrame(M.dlink(Display.Frame).X, M.dlink(Display.Frame).Y, FF, u, v);
-	*)
 	FF := NIL;
 	IF FF = NIL THEN T:= GetText(M.dlink(Display.Frame)) ELSE T:= GetText(FF) END;
 	IF T # NIL  THEN (* frame in a text *)
@@ -252,70 +247,93 @@ BEGIN
 	END
 END ExpandAll;
 
-PROCEDURE CollapseAll*(T: Texts.Text; from: LONGINT; modes: SET);
+(** Collapse from the position of the next Outline to its matching one. *)
+PROCEDURE CollapseFromTo*(T: Texts.Text; beg, end: LONGINT; modes: SET);
 VAR F: Texts.Finder; o: Objects.Object; pos: LONGINT;
 BEGIN
-	Texts.OpenFinder(F, T, from); pos:= F.pos;
+	Texts.OpenFinder(F, T, beg); pos := F.pos;
 	LOOP
 		Texts.FindObj(F, o);
 		IF F.eot THEN EXIT END;
 		IF (o # NIL) & (o IS Outline) & (o(Outline).fstate IN modes) THEN EXIT
-		ELSE pos:= F.pos
+		ELSE pos := F.pos
 		END
 	END;
-	IF ~F.eot THEN
-		CollapseAll(T, F.pos, modes);
+	IF F.pos < end THEN
+		CollapseFromTo(T, F.pos, end, modes);
 		CloseForward(o(Outline), T, pos)
 	END
+END CollapseFromTo;
+
+PROCEDURE CollapseAll*(T: Texts.Text; modes: SET);
+BEGIN
+	CollapseFromTo(T, 0, T.len, modes)
 END CollapseAll;
 
 (*	----------------------------	Gadgets Stuff	----------------------------	*)
 
+PROCEDURE DTriangle (R: Display3.Mask; x, y, dim: INTEGER; open: BOOLEAN);
+VAR h, max: INTEGER;
+BEGIN
+	max := 1 + 2*(dim DIV 2);
+	IF open THEN
+		h := max;
+		WHILE h > 0 DO
+			Display3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
+			Display3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
+			INC(x, 2); INC(y); DEC(h, 2)
+		END
+	ELSE
+		h := 1; y := y + max DIV 2;
+		WHILE h <= max DO
+			Display3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
+			Display3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
+			INC(x, 2); DEC(y); INC(h, 2)
+		END
+	END
+END DTriangle;
+
 PROCEDURE RestoreOutline(F: Outline; R: Display3.Mask; x, y, w, h: INTEGER);
-VAR ch: INTEGER; obj: Objects.Object;
+VAR cx, cy, cw, ch: INTEGER;
 BEGIN
 	Display3.ReplConst(R, Display3.groupC, x, y, w, h, Display.replace);
+	cx := x + w DIV 4; cy := y + h DIV 4; cw := w DIV 2; ch := h DIV 2;
 	CASE F.fstate OF
-		-1: ch := 32;
-		|open: ch := 27;
-		|close: ch := 31;
-		|folded: ch := 29;
-		|tempOpen: ch := 32;
+		folded: Display3.ReplConst(R, Display3.black, cx, cy, cw, ch, Display.replace)
+		|open: DTriangle(R, cx, cy, ch, TRUE)
+		|close: DTriangle(R, cx, cy, ch, FALSE)
+	ELSE
 	END;
-	fnt.GetObj(fnt, ch, obj);
-	WITH obj : Fonts.Char DO
-		Display3.CopyPattern(R, Display.FG, obj.pat, x + w DIV 2 - obj.w DIV 2, y + h DIV 2 - obj.h DIV 2, Display.paint);
-	END;
-	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, 15, Display3.selectpat, x, y, x, y, w, h, Display.paint); END;
+	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, 15, Display3.selectpat, x, y, x, y, w, h, Display.paint) END
 END RestoreOutline;
 
-PROCEDURE PrintOutline(F: Outline; M: Display.DisplayMsg);
-VAR R: Display3.Mask; s: ARRAY 2 OF CHAR; x, y, w, h: INTEGER;
+PROCEDURE P(x: INTEGER): INTEGER;
+BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
+END P;
 
-	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
-	END P;
-
-	PROCEDURE Triangle (x, y, dim: INTEGER; open: BOOLEAN);
-	VAR h, max: INTEGER;
-	BEGIN
-		max := 1 + 2*(dim DIV 2);
-		IF open THEN
-			h := max;
-			WHILE h > 0 DO
-				Printer3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
-				Printer3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
-				INC(x, 2); INC(y); DEC(h, 2)
-			END
-		ELSE
-			h := 1; y := y + max DIV 2;
-			WHILE h < max DO
-				Printer3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
-				Printer3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
-				INC(x, 2); DEC(y); INC(h, 2)
-			END
+PROCEDURE PTriangle (R: Display3.Mask; x, y, dim: INTEGER; open: BOOLEAN);
+VAR h, max: INTEGER;
+BEGIN
+	max := 1 + 2*(dim DIV 2);
+	IF open THEN
+		h := max;
+		WHILE h > 0 DO
+			Printer3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
+			Printer3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
+			INC(x, 2); INC(y); DEC(h, 2)
 		END
-	END Triangle;
+	ELSE
+		h := 1; y := y + max DIV 2;
+		WHILE h <= max DO
+			Printer3.ReplConst(R, Display3.black, x, y, 1, h, Display3.replace);
+			Printer3.ReplConst(R, Display3.black, x + 1, y, 1, h, Display3.replace);
+			INC(x, 2); DEC(y); INC(h, 2)
+		END
+	END
+END PTriangle;
+
+PROCEDURE PrintOutline(F: Outline; M: Display.DisplayMsg);
+VAR R: Display3.Mask; x, y, w, h: INTEGER;
 
 BEGIN
 	Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
@@ -324,8 +342,8 @@ BEGIN
 	x := M.x + w DIV 4; y := M.y + h DIV 4; w := w DIV 2; h := h DIV 2;
 	CASE F.fstate OF
 		folded: Printer3.ReplConst(R, Display3.black, x, y, w, h, Display.replace)
-		|open: Triangle(x, y, h, TRUE)
-		|close: Triangle(x, y, h, FALSE)
+		|open: PTriangle(R, x, y, h, TRUE)
+		|close: PTriangle(R, x, y, h, FALSE)
 	ELSE
 	END
 END PrintOutline;
@@ -334,10 +352,8 @@ PROCEDURE CopyOutline*(VAR M: Objects.CopyMsg; from, to: Outline);
 BEGIN
 	Gadgets.CopyFrame(M, from, to);
 	to.fstate := from.fstate; to.len:= from.len;
-	IF from.buf # NIL THEN
-		NEW(to.buf); Texts.OpenBuf(to.buf); Texts.Copy(from.buf, to.buf)
-	ELSE
-		to.buf:= NIL
+	IF from.buf # NIL THEN NEW(to.buf); Texts.OpenBuf(to.buf); Texts.Copy(from.buf, to.buf)
+	ELSE to.buf:= NIL
 	END
 END CopyOutline;
 
@@ -455,8 +471,7 @@ END OutlineHandler;
 PROCEDURE NewOutline*;
 (* make a neutral one *)
 VAR F: Outline;
-BEGIN
-	F := MakeOutline(-1); Objects.NewObj := F;
+BEGIN F := MakeOutline(-1); Objects.NewObj := F;
 END NewOutline;
 
 PROCEDURE New*;
@@ -472,7 +487,44 @@ BEGIN
 	Objects.NewObj:= F
 END New;
 
+(*	----------------------------	HD extensions	----------------------------	*)
+
+PROCEDURE InsertText*(T: Texts.Text; beg, end: LONGINT); (*gs*)
+	VAR o: Outline;
+BEGIN
+	o := MakeOutline(folded); NEW(o.buf); Texts.OpenBuf(o.buf);
+	Ins(T, end, MakeOutline(close));
+	Texts.Save(T, beg, end+1, o.buf);
+	o.len := o.buf.len;
+	Texts.Delete(T, beg, end+1);
+	Ins(T, beg, o)
+END InsertText;
+
+PROCEDURE RemoveAll*(T: Texts.Text); (*gs*)
+	VAR F: Texts.Finder; o: Objects.Object; pos: LONGINT;
+BEGIN
+	ExpandAll(T, 0, FALSE);
+	Texts.OpenFinder(F, T, 0);
+	pos := F.pos; Texts.FindObj(F, o);
+	WHILE ~F.eot DO
+		IF o IS Outline THEN
+			Texts.Delete(T, pos, pos+1);
+			Texts.OpenFinder(F, T, pos)
+		END;
+		pos := F.pos; Texts.FindObj(F, o)
+	END
+END RemoveAll;
+
 (*	----------------------------	commands operating on outlines	----------------------------	*)
+
+PROCEDURE Remove*; (*gs*)
+	VAR T: Texts.Text;
+BEGIN
+	T := GetText(GetFrame());
+	IF T # NIL THEN RemoveAll(T)
+	ELSE Out.String("no text found"); Out.Ln
+	END
+END Remove;
 
 PROCEDURE Insert*;
 VAR S: Oberon.SelectMsg; o: Outline;
@@ -480,12 +532,7 @@ BEGIN
 	S.id:= Oberon.get; S.time:= -1; S.res:= -1; S.F:= NIL;
 	Display.Broadcast(S);
 	IF (S.time >= 0) & (S.text # NIL) THEN
-		o:=  MakeOutline(folded); NEW(o.buf); Texts.OpenBuf(o.buf);
-		Ins(S.text, S.end, MakeOutline(close));
-		Texts.Save(S.text, S.beg, S.end+1, o.buf);
-		o.len:= o.buf.len;
-		Texts.Delete(S.text, S.beg, S.end+1);
-		Ins(S.text, S.beg, o)
+		InsertText(S.text, S.beg, S.end)
 	ELSE
 		Gadgets.Integrate( MakeOutline(folded))
 	END
@@ -493,7 +540,7 @@ END Insert;
 
 (* -- search engine by uh *)
 
-PROCEDURE NoBroadcast(VAR M: Display.FrameMsg);
+PROCEDURE NoBroadcast (VAR M: Display.FrameMsg);
 BEGIN
 END NoBroadcast;
 
@@ -581,7 +628,8 @@ BEGIN
 				END
 			END;	(* LOOP *)
 
-			Display.Broadcast:= NoBroadcast; CollapseAll(text, bpos, {tempOpen}); Display.Broadcast:= oldBroadcast;
+			Display.Broadcast:= NoBroadcast; CollapseFromTo(text, bpos, text.len, {tempOpen}); 
+			Display.Broadcast:= oldBroadcast;
 			(* open needed Outlines in text *)
 			Texts.OpenFinder(f, text, bpos); fpos:= f.pos;
 			LOOP
@@ -595,7 +643,8 @@ BEGIN
 			END;
 			RETURN TRUE
 		ELSE
-			Display.Broadcast:= NoBroadcast; CollapseAll(text, bpos, {tempOpen}); Display.Broadcast:= oldBroadcast;
+			Display.Broadcast:= NoBroadcast; CollapseFromTo(text, bpos, text.len, {tempOpen}); 
+			Display.Broadcast:= oldBroadcast;
 			RETURN FALSE
 		END
 	ELSE RETURN FALSE
@@ -644,9 +693,9 @@ BEGIN
 			inf.time := S.time; NEW(inf.rBuf); Texts.OpenBuf(inf.rBuf); Texts.Save(S.text, S.beg, S.end, inf.rBuf)
 		END;
 		C.id := Oberon.get; C.F := NIL; C.car := NIL; Display.Broadcast(C);
-		IF (C.car = NIL) OR ~(inf.sLen > 0) OR (inf.rBuf = NIL) THEN RETURN FALSE END;	(* ###*)
+		IF (C.car = NIL) OR ~(inf.sLen > 0) OR (inf.rBuf = NIL) THEN RETURN FALSE END;	(*###*)
 		pos := C.pos; p := pos - inf.sLen;
-		IF p < 0 THEN RETURN FALSE END;	(* ###*)
+		IF p < 0 THEN RETURN FALSE END;	(*###*)
 		Texts.OpenReader(R, T, p); Texts.Read(R, ch); i := 0;
 		WHILE (ch = inf.sPat[i]) & (i < inf.sLen) DO Texts.Read(R, ch); INC(i) END;
 		IF i = inf.sLen THEN
@@ -688,13 +737,12 @@ PROCEDURE Collapse*;
 VAR T: Texts.Text;
 BEGIN
 	T:= GetText(GetFrame());
-	IF T # NIL THEN CollapseAll(T, 0, openMode)
+	IF T # NIL THEN CollapseAll(T, openMode)
 	ELSE Out.String("no text found"); Out.Ln
 	END
 END Collapse;
 
 BEGIN
-	fnt := Objects.ThisLibrary("Oberon10.Scn.Fnt");
 	handle := OutlineHandler;
 	NEW(insertT); Texts.Open(insertT, "");
 	NEW(saveB)
@@ -706,4 +754,4 @@ Gadgets.Insert Outlines.New ~
 Outlines.Insert
 Outlines.Collapse *
 Outlines.Expand *
-Outlines.Search 	Outlines.Replace	Outlines.ReplaceAll
+Outlines.Search	Outlines.Replace	Outlines.ReplaceAll

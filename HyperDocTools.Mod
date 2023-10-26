@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HyperDocTools; (* ejz,   *)
-	IMPORT Files, Objects, Fonts, Texts, Oberon, Display3, Attributes, Strings, Gadgets, TextGadgets, Documents, Display,
-		HyperDocs, TextDocs, Desktops, Links;
+MODULE HyperDocTools;	(** portable *) (* ejz,   *)
+	IMPORT Files, Objects, Fonts, Texts, Oberon, Display3, Attributes, Strings, Gadgets, TextGadgets, Documents,
+		HyperDocs, TextDocs, Desktops;
 
 (** Module HyperDocTools provides some tools to manipulate links.
 	See also HyperDocs.Tool & HyperLinks.Panel . *)
@@ -256,8 +255,7 @@ MODULE HyperDocTools; (* ejz,   *)
 			ELSE
 				Texts.WriteString(W, "Doc-Size: ");
 				Texts.WriteInt(W, I.size, 0);
-				Texts.WriteLn(W);
-				Texts.Append(Oberon.Log, W.buf)
+				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 			END
 		END
 	END LinkInfo;
@@ -437,8 +435,7 @@ MODULE HyperDocTools; (* ejz,   *)
 							END;
 							beg := pos-1;
 							Texts.OpenReader(R, T, beg);
-							Texts.Read(R, ch);
-							col := R.col;
+							Texts.Read(R, ch); col := R.col;
 							WHILE (beg > 0) & (col = R.col) & (R.lib IS Fonts.Font) DO
 								DEC(beg);
 								Texts.OpenReader(R, T, beg);
@@ -479,7 +476,7 @@ MODULE HyperDocTools; (* ejz,   *)
 				pos := F.pos;
 				Texts.FindObj(F, obj)
 			END;
-			Texts.SetFont(W, Fonts.This("Oberon12.Scn.Fnt"));
+			Texts.SetFont(W, Fonts.This("Default12.Scn.Fnt"));
 			NEW(T);
 			Texts.Open(T, "");
 			s := schemes;

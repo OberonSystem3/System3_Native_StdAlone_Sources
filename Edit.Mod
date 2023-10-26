@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Edit; (*JG 4.4.95 / NW 24.1.91*)
+MODULE Edit;	(** portable *) (*JG 4.4.95 / NW 24.1.91*)
 
 	IMPORT Files, Objects, Display, Viewers, MenuViewers, Printer, Fonts, Texts, TextFrames, Oberon;
 
@@ -470,11 +469,11 @@ MODULE Edit; (*JG 4.4.95 / NW 24.1.91*)
 	BEGIN par := Oberon.Par;
 		Texts.WriteString(W, "Edit.Print"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-		IF S.class = Texts.Name THEN
+		IF S.class IN {Texts.Name,Texts.String} THEN
 			COPY(S.s, server);
 			IF S.nextCh = Oberon.OptionChar THEN
 				Texts.Scan(S);  Texts.Scan(S);
-				IF (S.class = Texts.Name) OR (S.class = Texts.String) THEN COPY(S.s, options)
+				IF S.class IN {Texts.Name,Texts.String} THEN COPY(S.s, options)
 				ELSE options := "" 
 				END
 			ELSE options := ""

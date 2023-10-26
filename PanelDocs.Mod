@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE PanelDocs;	(* jm 1.2.95 *)
+MODULE PanelDocs;	(** portable *)	(* jm 1.2.95 *)
 
 (** Implementation of a document for the panel gadgets.
 *)
@@ -27,14 +26,21 @@ MODULE PanelDocs;	(* jm 1.2.95 *)
 *)
 
 IMPORT
-	Objects, Display, Display3, Files, Strings, Attributes, Links, Oberon, Panels, Texts, Gadgets, Documents, Desktops, Printer;
+	Objects, Display, Display3, Files, Strings, Attributes, Links, Oberon, Panels, Texts, Gadgets, Documents, Desktops, Printer, Modules;
 
 CONST
 	Menu = "Desktops.StoreDoc[Store]";
 
 VAR
 	W: Texts.Writer;
-	
+
+PROCEDURE Explain;
+BEGIN
+	IF (Modules.res # 0) & (Modules.resMsg # "") THEN
+		Texts.WriteString(W, " (");  Texts.WriteString(W, Modules.resMsg);  Texts.Write(W, ")")
+	END
+END Explain;
+
 (** Loads a panel from disk. VW, VH indicate the prefered size of the panel. *)
 PROCEDURE OpenPanel*(D: Documents.Document; name: ARRAY OF CHAR; VAR VW, VH: INTEGER): Gadgets.Frame;
 TYPE EmptyMsg = RECORD (Display.FrameMsg) END;
@@ -74,6 +80,7 @@ BEGIN
 				
 				IF (root # NIL) & (root IS Objects.Dummy) THEN
 					Texts.WriteString(W, "  discarding "); Texts.WriteString(W, root(Objects.Dummy).GName);
+					Explain;
 					Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
 					root := NIL
 				ELSIF (root # NIL) & (root IS Display.Frame) THEN
@@ -147,7 +154,7 @@ PROCEDURE PrintPanelDoc(F: Panels.Panel);
 VAR P: Display.DisplayMsg; O: Display3.OverlapMsg;
 
 	PROCEDURE Dev(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit);
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit);
 	END Dev;
 	
 BEGIN
@@ -167,7 +174,6 @@ BEGIN
 END PrintPanelDoc;
 
 PROCEDURE DocHandle*(D: Objects.Object; VAR M: Objects.ObjMsg);
-VAR C: Objects.CopyMsg;
 BEGIN
 	WITH D: Documents.Document DO
 		IF M IS Objects.AttrMsg THEN
@@ -255,23 +261,37 @@ END AppendPanel;
 
 (** remove context panel from its own context **)
 PROCEDURE RemovePanel*;
-	VAR f, ctxt, dsc: Display.Frame; mm: Display.ModifyMsg; cm: Display.ControlMsg;
+	VAR f, ctxt, dsc: Display.Frame; list: Objects.Object; mm: Display.ModifyMsg; cm: Display.ControlMsg;
 BEGIN
 	IF (Gadgets.context # NIL) & (Gadgets.context IS Display.Frame) THEN
 		f := Gadgets.context(Display.Frame);
 		IF (f.dlink # NIL) & (f.dlink IS Display.Frame) THEN
 			ctxt := f.dlink(Display.Frame);
+			dsc := ctxt.dsc; list := NIL;
+			WHILE dsc # NIL DO
+				IF dsc.Y < f.Y THEN
+					dsc.slink := list; list := dsc
+				END;
+				dsc := dsc.next
+			END;
 			mm.id := Display.move; mm.mode := Display.state;
-			dsc := ctxt.dsc;
+			WHILE list # NIL DO
+				dsc := list(Display.Frame); mm.F := dsc;
+				mm.X := dsc.X; mm.Y := dsc.Y + f.H; mm.W := dsc.W; mm.H := dsc.H;
+				mm.dX := 0; mm.dY := f.H; mm.dW := 0; mm.dH := 0;
+				Display.Broadcast(mm);
+				list := list.slink; dsc.slink := NIL
+			END;
+			(* dsc := ctxt.dsc;
 			WHILE dsc # NIL DO
 				IF dsc.Y < f.Y THEN
 					mm.F := dsc;
 					mm.X := dsc.X; mm.Y := dsc.Y + f.H; mm.W := dsc.W; mm.H := dsc.H;
-					mm.dX := 0; mm.dY := f.H; mm.dW := 0; mm.dH := 0;
+					mm.dX := 0; mm.dY := dsc.Y - mm.Y; mm.dW := 0; mm.dH := 0;
 					Display.Broadcast(mm)
 				END;
 				dsc := dsc.next
-			END;
+			END; *)
 			mm.F := ctxt; mm.id := Display.move; mm.mode := Display.display;
 			mm.X := ctxt.X; mm.Y := ctxt.Y + f.H; mm.W := ctxt.W; mm.H := ctxt.H - f.H;
 			mm.dX := 0; mm.dY := f.H; mm.dW := 0; mm.dH := -f.H;

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,17 +13,19 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE TextFrames; (* JG / pjm *)
+MODULE TextFrames;	(** portable *) (* JG / pjm *)
 
-  IMPORT Input, Modules, Objects, Display, Viewers, Fonts, Texts, Oberon, MenuViewers, Kernel;
+  IMPORT Input, Modules, Objects, Display, Viewers, Fonts, Texts, Oberon, MenuViewers;
 
   CONST CR = 0DX;
-    FullColor = 15;
     replace = Display.replace; paint = Display.paint; invert = Display.invert;
     extend = Display.extend; reduce = Display.reduce;
 
 	StandardMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
 	LogMenu = "System.Clear Edit.Locate Edit.Search Edit.Store";
+	OpenCmd = "Edit.Open";
+	
+	Modern = FALSE;
 	
   TYPE
   	Line = POINTER TO LineDesc;
@@ -65,12 +66,12 @@ MODULE TextFrames; (* JG / pjm *)
 
   VAR
     menuH*, barW*, left*, right*, top*, bot*, lsp*: INTEGER; (*standard sizes*)
-    asr, dsr, selH, markW, eolW, boxW: INTEGER;
-    par: Oberon.ParList; ch: CHAR;
+    MarkColor, BarColor, MenuBG, TextBG, FullColor, mode: INTEGER;
+    asr, dsr, selH, markW, eolW: INTEGER;
+    ch: CHAR;
     W, KW: Texts.Writer; (*keyboard writer*)
     box: Fonts.Char;
     BoxPat: ARRAY 12 OF SET;
-    MarkColor, BarColor, MenuBG, TextBG, mode: INTEGER;
     
   PROCEDURE Min (i, j: INTEGER): INTEGER;
   BEGIN IF i >= j THEN RETURN j ELSE RETURN i END
@@ -122,6 +123,8 @@ MODULE TextFrames; (* JG / pjm *)
         IF X + obj.x + obj.w <= NX THEN
           Display.CopyPattern(R.col, obj.pat, X + obj.x, Y + obj.y, mode);
           X := X + obj.dx
+        ELSE
+          X := NX
         END;
       END;
       INC(len); Texts.Read(R, ch)
@@ -424,7 +427,7 @@ MODULE TextFrames; (* JG / pjm *)
   END SetSelection;
 
   PROCEDURE TrackSelection* (F: Frame; X, Y: INTEGER; VAR keysum: SET);
-    VAR loc: Location; keys: SET;
+    VAR loc: Location; modKeys, keys: SET; M: Oberon.SelectMsg;
   BEGIN
       IF F.trailer.next # F.trailer THEN
     	IF F.sel # 0 THEN FlipSelection(F, F.selbeg, F.selend) END;
@@ -433,6 +436,7 @@ MODULE TextFrames; (* JG / pjm *)
       	LocateChar(F, F.left, Y - F.Y, F.selbeg)
     	ELSE F.selbeg := loc
     	END;
+    	F.sel := 0;
     	INC(loc.pos); loc.x := loc.x + loc.dx; F.selend := loc;
     	FlipSelection(F, F.selbeg, F.selend);
         keysum := {};
@@ -447,6 +451,19 @@ MODULE TextFrames; (* JG / pjm *)
         	ELSIF loc.pos > F.selend.pos THEN FlipSelection(F, F.selend, loc); F.selend := loc
       	END
   	  UNTIL keys = {};
+       (* ps - 3.4.98 *)
+        Input.KeyState(modKeys);
+        IF Input.SHIFT IN modKeys THEN
+          M.id := Oberon.get; M.F := NIL; M.sel := NIL; M.text := NIL; M.time := -1; Display.Broadcast(M);
+          IF (M.time > 0) & (M.text = F.text) & (M.sel IS Frame) THEN
+            IF M.beg > F.selbeg.pos THEN M.beg := F.selbeg.pos END;
+            IF M.end < F.selend.pos THEN M.end := F.selend.pos END;
+            FlipSelection(F, F.selbeg, F.selend);
+            LocatePos(F, M.beg, F.selbeg); LocatePos(F, M.end, F.selend);
+            FlipSelection(F, F.selbeg, F.selend);
+            M.F := M.sel; M.id := Oberon.set; Display.Broadcast(M)
+          END
+        END;
         F.time := Input.Time(); F.sel := 1
       END
   END TrackSelection;
@@ -514,20 +531,24 @@ MODULE TextFrames; (* JG / pjm *)
   BEGIN Texts.OpenScanner(S, F.text, 0); Texts.Scan(S); COPY(S.s, s)
   END GetAttr;
 
+  PROCEDURE CallCmd (cmd: ARRAY OF CHAR; F: Frame; pos: LONGINT; new: BOOLEAN);
+    VAR res: INTEGER; par: Oberon.ParList;
+  BEGIN
+    NEW(par); par.vwr := Viewers.This(F.X, F.Y);
+    par.frame := F; par.text := F.text; par.pos := pos;
+    Oberon.Call(cmd, par, new, res);
+    IF res > 0 THEN
+      Texts.WriteString(W, "Call error: ");
+      Texts.WriteString(W, Modules.resMsg);
+      Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+    END
+  END CallCmd;
+
   PROCEDURE Call* (F: Frame; pos: LONGINT; new: BOOLEAN);
-    VAR S: Texts.Scanner; res: INTEGER;
+    VAR S: Texts.Scanner;
   BEGIN
     Texts.OpenScanner(S, F.text, pos); Texts.Scan(S);
-    IF (S.line = 0) & (S.class = Texts.Name) THEN
-      par.vwr := Viewers.This(F.X, F.Y);
-      par.frame := F; par.text := F.text; par.pos := pos + S.len;
-      Oberon.Call(S.s, par, new, res);
-      IF res > 0 THEN
-        Texts.WriteString(W, "Call error: "); (*Texts.WriteString(W, S.s); Texts.Write(W, " ");*)
-        Texts.WriteString(W, Modules.resMsg);
-        Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-      END
-    END
+    IF (S.line = 0) & (S.class = Texts.Name) THEN CallCmd(S.s, F, pos + S.len, new) END
   END Call;
 
   PROCEDURE Write* (F: Frame; ch: CHAR; lib: Objects.Library; col, voff: SHORTINT);
@@ -537,6 +558,9 @@ MODULE TextFrames; (* JG / pjm *)
         Texts.Delete(F.text, F.carloc.pos - 1, F.carloc.pos);
         SetCaret(F, F.carloc.pos - 1)
       END
+    ELSIF (ch >= 0C1X) & (ch <= 0C4X) THEN
+    ELSIF (ch >= 0A0X) & (ch <= 0A9X) THEN
+    ELSIF (ch >= 0F0X) & (ch <= 0FFX) THEN
     ELSE
       KW.lib := lib; KW.col := col; KW.voff := voff; Texts.Write(KW, ch);
       Texts.Insert(F.text, F.carloc.pos, KW.buf);
@@ -600,10 +624,17 @@ MODULE TextFrames; (* JG / pjm *)
       IF F.time > M.time THEN M.sel := F; M.time := F.time;
         M.text := F.text; M.beg := F.selbeg.pos; M.end := F.selend.pos;
         IF M.end > M.text.len THEN M.end := M.text.len END
-      ELSIF (F.text = M.text) & (F.selbeg.pos < M.beg) & (M.sel IS Frame) THEN
+(*
+       ELSIF (F.text = M.text) & (F.selbeg.pos < M.beg) & (M.sel IS Frame) THEN
         IF (M.beg <= M.sel(Frame).org) & (F.selend.pos >= Pos(F, F.X+F.W, F.Y)) THEN
         	M.beg := F.selbeg.pos
         END
+*)
+     ELSIF F.text = M.text THEN	(* extend selection over frame boundaries *)
+        (* 7.4.98 - ps *)
+        IF (F.selbeg.pos < M.beg) & (F.selend.pos >= Pos(F, F.X+F.W, F.Y)) THEN M.beg := F.selbeg.pos END;
+        IF (F.selend.pos > M.end) & (F.selbeg.pos = F.org) THEN M.end := F.selend.pos END;
+        IF M.end > F.text.len THEN M.end :=  F.text.len END
       END
     END
   END GetSelection;
@@ -622,7 +653,7 @@ MODULE TextFrames; (* JG / pjm *)
   
   PROCEDURE Update* (F: Frame; beg, end, len: LONGINT);
     VAR R: Texts.Reader; L, LB, LR, LS: Line; done: BOOLEAN;
-      org, orgB, orgL, orgS, off, Llen: LONGINT;
+      org, orgB, orgS, off, Llen: LONGINT;
       botY, Y, YB, YL, YR, YS, wid, H: INTEGER;
   BEGIN
     IF end < F.org THEN F.org := F.org - (end - beg) + len;
@@ -653,7 +684,7 @@ MODULE TextFrames; (* JG / pjm *)
             END;
             org := org + Llen; Y := Y - lsp;
             IF botY <= Y THEN (* update with reusing lines *)
-              orgL := org; YL := Y; L := LR;
+              YL := Y; L := LR;
               WHILE (L.next # F.trailer) & (botY + lsp <= Y) DO
                 org := org + L.len; Y := Y - lsp; L := L.next
               END;
@@ -789,7 +820,11 @@ MODULE TextFrames; (* JG / pjm *)
       END
     ELSIF 1 IN Keys THEN
       TrackWord(F, X, Y, pos, keysum);
-      IF (pos >= 0) & ~(0 IN keysum) THEN Call(F, pos, 2 IN keysum) END
+      IF 0 IN keysum THEN
+        IF (pos >= 0) & ~(2 IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
+      ELSE
+        IF pos >= 0 THEN Call(F, pos, 2 IN keysum) END
+      END
     ELSIF 2 IN Keys THEN
         Oberon.Defocus; TrackCaret(F, X, Y, keysum);
         IF F.car # 0 THEN
@@ -805,7 +840,9 @@ MODULE TextFrames; (* JG / pjm *)
               Oberon.GetSelection(text, beg, end, time);
               IF time >= 0 THEN
                 Texts.OpenReader(R, F.text, F.carloc.pos); Texts.Read(R, ch);
-                Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+                IF (R.lib # NIL) & (R.lib IS Fonts.Font) THEN
+      	          Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+      	      END
               END
             END
          END
@@ -869,7 +906,7 @@ MODULE TextFrames; (* JG / pjm *)
           END
         END
       ELSIF M IS Objects.AttrMsg THEN
-        WITH M: Objects.AttrMsg DO GetAttr(F, M.s) END
+        WITH M: Objects.AttrMsg DO GetAttr(F, M.s); M.class := Objects.String; M.res := 0 END
       ELSIF M IS Objects.CopyMsg THEN
         WITH M: Objects.CopyMsg DO Copy(F, F1); M.obj := F1 END
       ELSIF M IS Objects.LinkMsg THEN
@@ -881,17 +918,10 @@ MODULE TextFrames; (* JG / pjm *)
   (*creation*)
 
   PROCEDURE Menu (name, commands: ARRAY OF CHAR): Texts.Text;
-    VAR T: Texts.Text; fnt: Objects.Library;
+    VAR T: Texts.Text;
   BEGIN
     NEW(T); Texts.Open(T, "");
-    IF Display.Width < 1024 THEN
-    	fnt := W.lib;
-    	Texts.SetFont(W, Fonts.This("Oberon8.Scn.Fnt"))
-    END;
     Texts.WriteString(W, name); Texts.WriteString(W, " | "); Texts.WriteString(W, commands);
-    IF Display.Width < 1024 THEN
-    	Texts.SetFont(W, fnt)
-    END;
     Texts.Append(T, W.buf);
     RETURN T
  END Menu;
@@ -904,7 +934,9 @@ MODULE TextFrames; (* JG / pjm *)
   PROCEDURE NewMenu* (name, commands: ARRAY OF CHAR): Frame;
     VAR F: Frame;
   BEGIN NEW(F);
-    Open(F, Handle, Menu(name, commands), 0, MenuBG, left DIV 4, 0, 1, 0, lsp);
+    IF Modern THEN Open(F, Handle, Menu(name, commands), 0, MenuBG, left DIV 4, 0, 3, 1, lsp)
+    ELSE Open(F, Handle, Menu(name, commands), 0, MenuBG, left DIV 4, 0, 1, 0, lsp)
+    END;
     RETURN F
   END NewMenu;
 
@@ -915,49 +947,59 @@ MODULE TextFrames; (* JG / pjm *)
     RETURN F
   END NewText;
 
-	PROCEDURE ShowText(title: ARRAY OF CHAR; T: Texts.Text; W, H: INTEGER);
-		VAR X, Y: INTEGER; V: Viewers.Viewer; menu: ARRAY 100 OF CHAR;
-	BEGIN
-		X := 0; WHILE (title[X] # 0X) & (title[X] # "|") DO INC(X) END;
-		IF title[X] = "|" THEN
-			title[X] := 0X;  INC(X);  Y := 0;
-			WHILE title[X] # 0X DO menu[Y] := title[X];  INC(X);  INC(Y) END;
-			menu[Y] := 0X
-		ELSE
-			menu := ""
+PROCEDURE *ShowText(title: ARRAY OF CHAR; T: Texts.Text; W, H: INTEGER);
+	VAR X, Y: INTEGER; V: Viewers.Viewer; menu: ARRAY 100 OF CHAR;
+BEGIN
+	X := 0; WHILE (title[X] # 0X) & (title[X] # "|") DO INC(X) END;
+	IF title[X] = "|" THEN
+		title[X] := 0X;  INC(X);  Y := 0;
+		WHILE title[X] # 0X DO menu[Y] := title[X];  INC(X);  INC(Y) END;
+		menu[Y] := 0X
+	ELSE
+		menu := ""
+	END;
+	IF T = Oberon.Log THEN
+		Oberon.AllocateSystemViewer(0, X, Y);
+		IF menu = "" THEN menu := LogMenu END;
+		V := MenuViewers.New(NewMenu(title, menu), NewText(T, Max(T.len-200, 0)), menuH, X, Y)
+	ELSE
+		IF W > LONG(Display.Width * 3) DIV 8 THEN Oberon.AllocateUserViewer(0, X, Y)
+		ELSE Oberon.AllocateSystemViewer(0, X, Y)
 		END;
-		IF T = Oberon.Log THEN
-			Oberon.AllocateSystemViewer(0, X, Y);
-			IF menu = "" THEN menu := LogMenu END;
-			V := MenuViewers.New(NewMenu(title, menu), NewText(T, Max(T.len-200, 0)), menuH, X, Y)
-		ELSE
-			IF W > LONG(Display.Width * 3) DIV 8 THEN Oberon.AllocateUserViewer(0, X, Y)
-			ELSE Oberon.AllocateSystemViewer(0, X, Y)
-			END;
-			IF menu = "" THEN menu := StandardMenu END;
-			V := MenuViewers.New(NewMenu(title, menu), NewText(T, 0), menuH, X, Y)
-		END
-	END ShowText;
+		IF menu = "" THEN menu := StandardMenu END;
+		V := MenuViewers.New(NewMenu(title, menu), NewText(T, 0), menuH, X, Y)
+	END
+END ShowText;
 
-  PROCEDURE Init;
-  VAR s: ARRAY 8 OF CHAR;
-  BEGIN
-    Kernel.GetConfig("Color", s);
-    IF s[0] # "0" THEN
-      MarkColor := 12; BarColor := 13; MenuBG := 13; TextBG := 14; mode := paint
-    ELSE
-      MarkColor := 15; BarColor := 15; MenuBG := 15; TextBG := 0; mode := invert
-    END;
-    Oberon.OpenText := ShowText
-  END Init;
+(** Replace the default system editor with a textframe. *)
+PROCEDURE ReplaceSystemEditor*;
+BEGIN
+	Oberon.OpenText := ShowText
+END ReplaceSystemEditor;
 
 BEGIN
-  Init;
-  menuH := Fonts.Default.height + 2;
+  IF Oberon.OpenText = NIL THEN
+    Oberon.OpenText := ShowText
+  END;
+  IF Display.Depth(0) # 1 THEN
+    MarkColor := 12; MenuBG := 13; TextBG := 14;
+    IF Modern THEN BarColor := 12; FullColor := Display.FG - TextBG 
+    ELSE BarColor := 13; FullColor := Display.FG 
+    END;
+    mode := paint
+  ELSE
+    MarkColor := Display.FG; BarColor := Display.FG; MenuBG := Display.FG; TextBG:= Display.BG;
+    FullColor := Display.FG;  mode := invert
+  END;
+  IF Modern THEN menuH := Fonts.Default.height + 8
+  ELSE menuH := Fonts.Default.height + 2
+  END;
   barW := Fonts.Default.height + 2;
   left := barW + Fonts.Default.height DIV 2;
   right := Fonts.Default.height DIV 2;
-  top := Fonts.Default.height DIV 2;
+  IF Modern THEN top := Fonts.Default.height DIV 2 * 2 DIV 3
+  ELSE top := Fonts.Default.height DIV 2
+  END;
   bot := Fonts.Default.height DIV 2;
   asr := Fonts.Default.maxY;
   dsr := -Fonts.Default.minY;
@@ -965,7 +1007,6 @@ BEGIN
   selH := Fonts.Default.height;
   markW := Fonts.Default.height DIV 3 * 2;
   eolW := Fonts.Default.height DIV 2;
-  boxW := Fonts.Default.height;
   Texts.OpenWriter(W); Texts.OpenWriter(KW);
   BoxPat[0] := {0..11}; 
   BoxPat[1] := {0, 11}; BoxPat[2] := {0, 11}; BoxPat[3] := {0, 11}; BoxPat[4] := {0, 11};
@@ -973,6 +1014,5 @@ BEGIN
   BoxPat[9] := {0, 11}; BoxPat[10] := {0, 11}; BoxPat[11] := {0.. 11};
   NEW(box);
   box.dx := 12; box.x := 0; box.y := -3; box.w := 12; box.h := 12;
-  box.pat := Display.NewPattern(12, 12, BoxPat);
-  NEW(par)
+  box.pat := Display.NewPattern(12, 12, BoxPat)
 END TextFrames.

@@ -14,17 +14,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Display;
-(* Name:      Module DOSColDisplay.Mod                         *)
-(* Purpose:   Analogon to Display-Module for B/W Monitor       *)
-(* Date:      18.3.92    /	3. 6. 93                                      *)
-(* Author:    Ott Hans-Werner                                  *)
-(* ARD, 31.08.94 Pharlap version                                  *)
-(* ARD, 18. 2. 95 Inline Version                                  *)
-(* pjm 06.02.96, port to Native Oberon *)
-(* pjm 27.02.96, fixed some problems with Gadgets *)
-(* pjm 20.03.96, fixed error in CP1.  Made h value param in CP* *)
-(* pjm 09.08.96, fixed error in DisplayBlock *)
+MODULE Display;	(* Ott Hans-Werner, ard, pjm *)
 
 	IMPORT Kernel, SYSTEM, Objects;
 	
@@ -40,8 +30,15 @@ MODULE Display;
 		get* = 0; set* = 1; reset* = 2; (*SelectMsg id*)
 		drop* = 0; integrate* = 1; (*ConsumeMsg id*)
 		
-	TYPE Pattern* = LONGINT;
-			PatternPtr = POINTER TO RECORD w, h, pixmap: SHORTINT END;
+		unknown* = 0; index8* = 8; color555* = 16; color565* = 17; color664* = 18; color888* = 24; color8888* = 32;
+	
+	TYPE Color* = LONGINT;
+	
+			Pattern* = LONGINT;
+			PatternPtr = POINTER TO RECORD
+				w, h: CHAR;
+				pixmap: ARRAY 8192 OF CHAR
+			END;
 			List = POINTER TO ListDesc;
 			ListDesc = RECORD
 				next: List;
@@ -105,52 +102,62 @@ MODULE Display;
 		Height*: (* map hight*)
 			INTEGER;
 			
-		arrow*, star*, cross*, downArrow*, hook*: Pattern;
+		arrow*, star*, cross*, downArrow*, hook*,
 		grey0*, grey1*, grey2*, ticks*, solid*: Pattern;
 
 		Broadcast*: MsgProc;
 
-		Pat: List;
+		pattern: List;
 
 		clipx, clipy, clipright, cliptop, height, width: INTEGER;	(* clipping variables *)
 		width3: LONGINT;
 		mask, imask: ARRAY 9 OF CHAR;
 		rev: ARRAY 256 OF CHAR;
-	
+		depth: INTEGER;
+		palette: ARRAY 256 OF LONGINT;
+
 	PROCEDURE max (i, j: INTEGER): INTEGER; BEGIN IF i >= j THEN RETURN i ELSE RETURN j END END max;
 	PROCEDURE min (i, j: LONGINT): INTEGER; BEGIN  IF i >= j THEN RETURN SHORT(j) ELSE RETURN SHORT(i) END END min;
 		
-	PROCEDURE Map*(X: INTEGER): LONGINT;
-	BEGIN RETURN 0A0000H 
+	PROCEDURE Map*(x: LONGINT): LONGINT;
+	BEGIN
+		RETURN 0A0000H 
 	END Map;
 	
-	PROCEDURE AdjustClip*(X, Y, W, H: INTEGER);
+	PROCEDURE AdjustClip*(x, y, w, h: LONGINT);
 	VAR right, top: INTEGER;
 	BEGIN 
-		right := X + W; top := Y + H; clipx := max(clipx, X); clipy := max(clipy, Y); 
-		clipright := min(right, clipright); cliptop := min(top, cliptop);
+		right := SHORT(x + w); top := SHORT(y + h); 
+		clipx := max(clipx, SHORT(x)); clipy := max(clipy, SHORT(y)); 
+		clipright := min(right, clipright); cliptop := min(top, cliptop)
 	END AdjustClip;
 
 	PROCEDURE GetDim*(pat: Pattern; VAR w, h: INTEGER);
-	VAR s: SHORTINT;
-	BEGIN SYSTEM.GET(pat, s); w := s; SYSTEM.GET(pat+1, s); h := s; 
+	VAR ch: CHAR;
+	BEGIN
+		SYSTEM.GET(pat, ch); w := ORD(ch); SYSTEM.GET(pat+1, ch); h := ORD(ch) 
 	END GetDim;
 
 	PROCEDURE ResetClip*;
-	BEGIN clipx := 0; clipy := UBottom; clipright := width; cliptop := height
+	BEGIN
+		clipx := 0; clipy := UBottom; clipright := width; cliptop := height
 	END ResetClip;
 	
-	PROCEDURE SetClip*(x, y, w, h: INTEGER);
-	BEGIN clipright := x+w; cliptop := y+h; clipy := y; clipx := x
+	PROCEDURE SetClip*(x, y, w, h: LONGINT);
+	BEGIN
+		clipright := SHORT(x+w); cliptop := SHORT(y+h); clipy := SHORT(y); clipx := SHORT(x)
 	END SetClip;
 	
 	PROCEDURE GetClip*(VAR x, y, w, h: INTEGER);
-	BEGIN x := clipx; y := clipy; w := clipright - clipx; h := cliptop - clipy
+	BEGIN
+		x := clipx; y := clipy; w := clipright - clipx; h := cliptop - clipy
 	END GetClip;
 	
-	PROCEDURE SetColor*(col, red, green, blue: INTEGER);	(* 0 <= col, red, green, blue < 256 *)
+	PROCEDURE SetColor*(col: Color; red, green, blue: LONGINT);	(* 0 <= col, red, green, blue < 256 *)
 	VAR ch: CHAR;
 	BEGIN
+		palette[col] := ASH(ASH(red, 8) + green, 8) + blue;
+		col := col MOD 16;
 			(* see table 8.11 of Ferraro, 3rd edition *)
 		IF col = 6 THEN col := 14H
 		ELSIF col > 7 THEN INC(col, 30H)
@@ -164,34 +171,32 @@ MODULE Display;
 		SYSTEM.PORTOUT(3C9H, CHR(blue))
 	END SetColor;
 
-	PROCEDURE GetColor*(col: INTEGER; VAR red, green, blue: INTEGER);
+	PROCEDURE GetColor*(col: Color; VAR red, green, blue: INTEGER);
 	BEGIN
-		IF col = 6 THEN col := 14H
-		ELSIF col > 7 THEN col := col + 30H
-		END;
-		red := 0;  green := 0;  blue := 0;
-		SYSTEM.PORTOUT(3C7H, CHR(col));
-		SYSTEM.PORTIN(3C9H, SYSTEM.VAL(CHAR, red));
-		SYSTEM.PORTIN(3C9H, SYSTEM.VAL(CHAR, green));
-		SYSTEM.PORTIN(3C9H, SYSTEM.VAL(CHAR, blue));
-		red := red * 4 + red DIV 16;
-		green := green * 4 + green DIV 16;
-		blue := blue * 4 + blue DIV 16
+		IF col >= 0 THEN col := palette[col] END;
+		red := SHORT(ASH(col, -16) MOD 256);
+		green := SHORT(ASH(col, -8) MOD 256);
+		blue := SHORT(col MOD 256)
 	END GetColor;
 	
-	PROCEDURE Dot*(col, x, y, mode: INTEGER);
-	CODE
+	PROCEDURE RGB*(red, green, blue: LONGINT): Color;
+	BEGIN
+		RETURN MIN(LONGINT) + ASH(red, 16) + ASH(green, 8) + blue
+	END RGB;
+	
+	PROCEDURE Dot*(col: Color; x, y, mode: LONGINT);
+	CODE {SYSTEM.i386}
 		MOV AX, clipy
-		CMP y[EBP], AX
+		CMP WORD y[EBP], AX
 		JL ret
 		MOV AX, cliptop
-		CMP y[EBP], AX
+		CMP WORD y[EBP], AX
 		JGE ret
 		MOV AX, clipx
-		CMP x[EBP], AX
+		CMP WORD x[EBP], AX
 		JL ret
 		MOV AX, clipright
-		CMP x[EBP], AX
+		CMP WORD x[EBP], AX
 		JGE ret
 		
 		MOV AX, 1803H	; AL = Data/Rotate; AH = Modus; DX = Graphic-Controller
@@ -214,14 +219,15 @@ smode:
 		OUT DX, AX
 
 		MOV AX, Height
-		SUB AX, y[EBP]
+		SUB AX, WORD y[EBP]
 		DEC AX
 		MOVSX EAX,AX
 		IMUL EAX,width3
-		MOVSX ESI, x[EBP]
+		MOV ESI, x[EBP]
 		SHR ESI, 3
-		ADD EAX, 0A0000H
 		ADD ESI, EAX
+		AND ESI, 0FFFFH
+		ADD ESI, 0A0000H
 		
 		MOV DX, 03CEH
 		MOV CL, BYTE x[EBP]
@@ -236,20 +242,20 @@ smode:
 ret:
 	END Dot;
 
-	PROCEDURE CopyBlock*(SX, SY, W, H, DX, DY, mode: INTEGER);
+	PROCEDURE CopyBlock*(sx, sy, w, h, dx, dy, mode: LONGINT);
 	VAR top, right: INTEGER;
 			x1, x2, x3, x4, x5, x6, x7, x8: LONGINT;
-			help, help2, diff, start, end, msk, imsk, h: LONGINT;
+			help, help2, diff, start, end, msk, imsk, lh: LONGINT;
 			leftmask, rightmask: CHAR;  plane, count: SHORTINT;
-	CODE
-		MOVSX EDX, WORD 16[EBP]	; DX := DX	(sign extension for later)
+	CODE {SYSTEM.i386}
+		MOV EDX, dx[EBP]
 		
 		MOV AX,DX
-		ADD AX, W[EBP]
+		ADD AX, WORD w[EBP]
 		MOV right[EBP], AX	; right := DX + W
 		
-		MOV AX, DY[EBP]
-		ADD AX, H[EBP]
+		MOV AX, WORD dy[EBP]
+		ADD AX, WORD h[EBP]
 		MOV top[EBP], AX	; top := DY + H
 		
 			; IF DX < clipx THEN W := W - (clipx - DX); DX := clipx END
@@ -257,18 +263,18 @@ ret:
 		JGE ok0
 		MOV AX, clipx
 		SUB AX, DX
-		SUB W[EBP], AX
+		SUB WORD w[EBP], AX
 		MOV DX, clipx
 ok0:
 			; IF DY < clipy THEN H := H - (clipy - DY); DY := clipy END
-		MOV AX, DY[EBP]
+		MOV AX, WORD dy[EBP]
 		CMP AX, clipy
 		JGE ok1
 		MOV AX, clipy
-		SUB AX, DY[EBP]
-		SUB H[EBP], AX
+		SUB AX, WORD dy[EBP]
+		SUB WORD h[EBP], AX
 		MOV AX, clipy
-		MOV DY[EBP], AX
+		MOV WORD dy[EBP], AX
 ok1:
 			; IF  clipright < right THEN  W :=  clipright - DX END
 		MOV AX, clipright
@@ -276,21 +282,21 @@ ok1:
 		JGE ok2
 		MOV AX, clipright
 		SUB AX, DX
-		MOV W[EBP], AX
+		MOV WORD w[EBP], AX
 ok2:
 			; IF cliptop  < top THEN H := cliptop - DY END
 		MOV AX, cliptop
 		CMP AX, top[EBP]
 		JGE ok3
 		MOV AX, cliptop
-		SUB AX, DY[EBP]
-		MOV H[EBP], AX
+		SUB AX, WORD dy[EBP]
+		MOV WORD h[EBP], AX
 ok3:
 
 		;	IF (W <= 0) OR (H <= 0) THEN RETURN END;
-		CMP W[EBP], 0
+		CMP WORD w[EBP], 0
 		JLE ret
-		CMP H[EBP], 0
+		CMP WORD h[EBP], 0
 		JLE ret
 		
 		LEA EAX, mask
@@ -301,35 +307,24 @@ ok3:
 		MOV AX, height
 		DEC AX
 		MOVSX EAX,AX
-		MOV h[EBP], EAX	; h := height-1
+		MOV lh[EBP], EAX	; h := height-1
 
-		MOV 16[EBP], EDX	; DX := DX
+		MOV dx[EBP], EDX	; DX := DX
 		
-		MOVSX EAX, SX[EBP]
-		MOV DWORD SX[EBP], EAX
-		MOVSX EAX, SY[EBP]
-		MOV DWORD SY[EBP], EAX
-		MOVSX EAX, H[EBP]
-		MOV DWORD H[EBP], EAX
-		MOVSX EAX, W[EBP]
-		MOV DWORD W[EBP], EAX
-		MOVSX EAX, DY[EBP]
-		MOV DWORD DY[EBP], EAX
-
-		MOV	EAX, h[EBP]
+		MOV	EAX, lh[EBP]
 		MOV	EBX, EAX
-		SUB	EAX, DWORD SY[EBP]	; EAX := height - sy
-		MOV	DWORD SY[EBP], EAX
-		SUB	EBX, DWORD DY[EBP]	; EBX := height - dy
-		MOV	DWORD DY[EBP], EBX
-		MOV	EAX, DWORD SX[EBP]	; EAX := sx
+		SUB	EAX, sy[EBP]	; EAX := height - sy
+		MOV	sy[EBP], EAX
+		SUB	EBX, dy[EBP]	; EBX := height - dy
+		MOV	dy[EBP], EBX
+		MOV	EAX, sx[EBP]	; EAX := sx
 		MOV	ECX, EAX
 		MOV	EBX, EAX
 		MOV	EDX, EAX
 		SHR	EAX, 3	; EAX := sx DIV 8
 		AND	ECX, 7	; ECX := sx MOD 8
-		ADD	EBX, DWORD W[EBP]
-		ADD	EDX, DWORD W[EBP]
+		ADD	EBX, w[EBP]
+		ADD	EDX, w[EBP]
 		SHR	EBX, 3	; EBX := (sx+w) DIV 8
 		AND	EDX, 7	; EDX := (sx+w) MOD 8
 		MOV	x1[EBP], EAX	; x1 := sx DIV 8
@@ -337,14 +332,14 @@ ok3:
 		MOV	x3[EBP], ECX	; x3 := sx MOD 8
 		INC	EDX
 		MOV	x4[EBP], EDX	; x4 := (sx+w) MOD 8 (+1)
-		MOV	EAX, 16[EBP]	; EAX := dx
+		MOV	EAX, dx[EBP]	; EAX := dx
 		MOV	ECX, EAX
 		MOV	EBX, EAX
 		MOV	EDX, EAX
 		SHR	EAX, 3	; EAX := dx DIV 8
 		AND	ECX, 7	; ECX := dx MOD 8
-		ADD	EBX, DWORD W[EBP]	; EBX := dx +w
-		ADD	EDX, DWORD W[EBP]
+		ADD	EBX, w[EBP]	; EBX := dx +w
+		ADD	EDX, w[EBP]
 		SHR	EBX, 3	; EBX := (dx+w) DIV 8
 		AND	EDX, 7	; EDX := (dx+w) MOD 8
 		MOV	x5[EBP], EAX	; x5 := dx DIV 8
@@ -352,13 +347,15 @@ ok3:
 		MOV	x7[EBP], ECX	; x7 := dx MOD 8
 		INC	EDX
 		MOV	x8[EBP], EDX	; x8 := (dx+w) MOD 8
-		MOV	ESI, DWORD SY[EBP]
+		MOV	ESI, sy[EBP]
 		IMUL	ESI, width3	; w3[EBP]
 		ADD	ESI, x1[EBP]	; ESI := startbyte source bottomleft
+		AND ESI, 0FFFFH
 		ADD ESI, 0A0000H	; offset of screen
-		MOV	EDI, DWORD DY[EBP]
+		MOV	EDI, dy[EBP]
 		IMUL	EDI, width3	; w3[EBP]
 		ADD	EDI, EAX
+		AND EDI, 0FFFFH
 		ADD EDI, 0A0000H	; offset of screen
 		MOV	start[EBP], ESI	; starbyte source bottom left
 		MOV	end[EBP], EDI	; startbyte dest bottom left
@@ -391,16 +388,16 @@ ok3:
 		MOV	leftmask[EBP], DH
 		MOV	rightmask[EBP], DH
 inmorebytes:
-		MOV	EDX, DWORD H[EBP]	; EDX := h
-		MOV	EAX, DWORD SX[EBP]	; EAX := sx
-		MOV	EBX, DWORD SY[EBP]	; EBX := sy
-		CMP	EAX, 16[EBP]	; sx < dx ?	(16[EBP] was sign-extended at start)
+		MOV	EDX, h[EBP]	; EDX := h
+		MOV	EAX, sx[EBP]	; EAX := sx
+		MOV	EBX, sy[EBP]	; EBX := sy
+		CMP	EAX, dx[EBP]	; sx < dx ?
 		JGE	CB1	; no -> goto CB1
 		MOV	ECX, x8[EBP]	; sx < dx !
 		SUB	ECX, x4[EBP]	; ECX := differnce between s/dest x
 		ADD	ECX, 32
 		AND	CL, 1FH	; CL := rotate shift count
-		CMP	BX, DY[EBP]	; sy < dy ?	was EBX
+		CMP	BX, WORD dy[EBP]	; sy < dy ?	was EBX
 		JL	CB10	; yes goto CB10
 		JMP	CB13	; else goto CB13
 			
@@ -408,7 +405,7 @@ CB1:
 		SUB	ECX, x3[EBP]	; sx >= dx
 		ADD	ECX, 32
 		AND	CL, 1FH	; CL:= rotate shift count
-		CMP	BX, DY[EBP]	; sy >= dy?
+		CMP	BX, WORD dy[EBP]	; sy >= dy?
 		JGE	CB12	; yes goto CB12
 CB11:
 		MOV	help[EBP], EDX	; (sx >= dx) & (sy < dy) / save linecounter
@@ -500,7 +497,7 @@ cbl31:
 		JG	CB11h
 		JMP	resetgrafCB
 CB12:
-		MOV	EAX, DWORD H[EBP]	; (sx >= dx) & (sy >= dy)
+		MOV	EAX, h[EBP]	; (sx >= dx) & (sy >= dy)
 		DEC	EAX
 		IMUL	EAX, width3	; w3[EBP]	; (Note: EDX is not modified)
 		SUB	ESI, EAX
@@ -696,7 +693,7 @@ cbl121:
 		JG	cbl10
 		JMP	resetgrafCB
 CB13:
-		MOV	EAX, DWORD H[EBP]	; (sx < dx) & (sy >= dy)
+		MOV	EAX, h[EBP]	; (sx < dx) & (sy >= dy)
 		DEC	EAX
 		IMUL	EAX, width3	; w3[EBP]
 		SUB	ESI, EAX
@@ -1096,13 +1093,13 @@ resetgrafCB:
 endCB:
 ret:
 	END CopyBlock;
-	
-	PROCEDURE SetMode*(X: INTEGER; s: SET);
+
+	PROCEDURE SetMode*(x: LONGINT; s: SET);
 	BEGIN END SetMode;
 	
 	PROCEDURE CPTranslate(pat: LONGINT;  cpX, cpY, cpW, cpH: INTEGER;  VAR buf: ARRAY OF INTEGER);
 	VAR cpw, cph, cpsw: SHORTINT;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV BX,cpW[EBP]
 		ADD BX,7
 		SHR BX,3
@@ -1158,8 +1155,8 @@ loopcp:
 l7cp:
 	END CPTranslate;
 	
-	PROCEDURE CP1(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP1(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1184,8 +1181,8 @@ cploop2:
 		JG cploop2
 	END CP1;
 
-	PROCEDURE CP2(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP2(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1215,8 +1212,8 @@ cploop3:
 		JG cploop3
 	END CP2;
 	
-	PROCEDURE CP3(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP3(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1246,8 +1243,8 @@ cploop5:
 		JG cploop5
 	END CP3;
 	
-	PROCEDURE CP4(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP4(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1282,8 +1279,8 @@ cploop7:
 		JG cploop7
 	END CP4;
 
-	PROCEDURE CP5(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP5(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1325,8 +1322,8 @@ cploop9:
 		JG cploop9
 	END CP5;
 
-	PROCEDURE CP6(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP6(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1343,7 +1340,6 @@ cploop11:
 		PUSH ESI
 		XOR ESI, ESI
 		SHLD ESI, EBX, CL
-;;DB 00FH, 0A5H, 0DEH
 		SHL EBX, CL
 		PUSH ECX
 		MOV DX, BX
@@ -1375,8 +1371,8 @@ cploop11:
 		JG cploop11
 	END CP6;
 
-	PROCEDURE CP7(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP7(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1413,8 +1409,8 @@ cploop1:
 		JG cploop1
 	END CP7;
 
-	PROCEDURE CP8(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP8(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1460,8 +1456,8 @@ cploop4:
 		JG cploop4
 	END CP8;
 
-	PROCEDURE CP9(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP9(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1507,8 +1503,8 @@ cploop6:
 		JG cploop6
 	END CP9;
 
-	PROCEDURE CP10(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP10(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1563,8 +1559,8 @@ cploop8:
 		JG cploop8
 	END CP10;
 
-	PROCEDURE CP11(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP11(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1628,8 +1624,8 @@ cploop10:
 		JG cploop10
 	END CP11;
 
-	PROCEDURE CP12(col: SHORTINT;  dest, pat, X: LONGINT;  h: SHORTINT);
-	CODE
+	PROCEDURE CP12(col: CHAR;  dest, pat, X: LONGINT;  h: SHORTINT);
+	CODE {SYSTEM.i386}
 		MOV EDI, dest[EBP]
 		MOV ESI, pat[EBP]	; patternaddress
 		ADD ESI, 2
@@ -1647,7 +1643,6 @@ cploop12:
 		PUSH ESI
 		XOR ESI, ESI
 		SHLD ESI, EBX, CL
-;;DB 00FH, 0A5H, 0DEH
 		SHL EBX, CL
 		PUSH ECX
 		LEA EDX, rev
@@ -1707,76 +1702,76 @@ cploop12:
 		JG cploop12
 	END CP12;
 
-	PROCEDURE CopyPattern*(col: INTEGER; pat: Pattern; X, Y, mode: INTEGER);
+	PROCEDURE CopyPattern*(col: Color; pat: Pattern; x, y, mode: LONGINT);
 	VAR dest, i, diff: LONGINT; 
 			w, h: SHORTINT; 
-			x, y, cpX, cpY, cpW, cpH, nofbytes: INTEGER;
+			x1, y1, cpX, cpY, cpW, cpH, nofbytes: INTEGER;
 			buf: ARRAY 256 OF INTEGER;
 			lm, rm: CHAR;
 	BEGIN 
 		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h); 
-		cpW := w + X; cpH := h + Y; 
-		x := X; y := Y;
-		IF x < clipx THEN X := clipx END;
-		IF y < clipy THEN Y := clipy END;
+		cpW := SHORT(w + x); cpH := SHORT(h + y); 
+		x1 := SHORT(x); y1 := SHORT(y);
+		IF x1 < clipx THEN x := clipx END;
+		IF y1 < clipy THEN y := clipy END;
 		IF cpW >  clipright THEN cpW :=  clipright END;
 		IF cpH > cliptop THEN cpH := cliptop END;
-		cpW := cpW - X; cpH := cpH - Y; 
-		cpX := X - x; cpY := Y - y;
+		cpW := cpW - SHORT(x); cpH := cpH - SHORT(y); 
+		cpX := SHORT(x) - x1; cpY := SHORT(y) - y1;
 		IF (cpW <= 0) OR (cpH <= 0) OR (cpX < 0) OR (cpY < 0) THEN RETURN END;
 		IF (cpW # w) OR (cpH # h) THEN
 			CPTranslate(pat, cpX, cpY, cpW, cpH, buf);
 			pat := SYSTEM.ADR(buf[0])
 		END;
 		SYSTEM.GET(pat, w); SYSTEM.GET(pat+1, h); 
-		dest := (Height-Y-1) * width3 + X DIV 8;
+		dest := ((Height-SHORT(y)-1) * width3 + SHORT(x) DIV 8) MOD 10000H;
 		INC(dest, 0A0000H);	(* display offset *)
-		(*help1 := (X + w-1) MOD 8;*)
-		diff := (X + w-1) DIV 8 - (X DIV 8);
+		(*help1 := (SHORT(x) + w-1) MOD 8;*)
+		diff := (SHORT(x) + w-1) DIV 8 - (SHORT(x) DIV 8);
 		SYSTEM.PORTOUT(03CEH, SYSTEM.VAL(INTEGER, 0FF08H));	(* AX = Default bitmask; DX = Graphic-Controller *)
 		SYSTEM.PORTOUT(03CEH, SYSTEM.VAL(INTEGER, 5));	(* AL = Graphics mode; AH = Read-Mode = 0/Write-Mode = 0 (bits 0,1) *)
 		IF mode = invert THEN
 			SYSTEM.PORTOUT(03CEH, SYSTEM.VAL(INTEGER, 1803H));	(* AX = invert mode; DX = Graphic-Controller *)	
 			IF w <= 8 THEN
 				IF diff = 0 THEN
-					CP1(SHORT(col), dest, pat, X, h)
+					CP1(CHR(col), dest, pat, SHORT(x), h)
 				ELSE
-					CP2(SHORT(col), dest, pat, X, h)
+					CP2(CHR(col), dest, pat, SHORT(x), h)
 				END
 			ELSIF w <= 16 THEN
 				IF diff = 1 THEN
-					CP3(SHORT(col), dest, pat, X, h)
+					CP3(CHR(col), dest, pat, SHORT(x), h)
 				ELSE
-					CP4(SHORT(col), dest, pat, X, h)
+					CP4(CHR(col), dest, pat, SHORT(x), h)
 				END
 			ELSIF w <= 24 THEN
-				CP5(SHORT(col), dest, pat, X, h)
+				CP5(CHR(col), dest, pat, SHORT(x), h)
 			ELSE
-				CP6(SHORT(col), dest, pat, X, h)
+				CP6(CHR(col), dest, pat, SHORT(x), h)
 			END
 		ELSE (* paint & replace *)
 			IF w <= 8 THEN
 				IF diff = 0 THEN 
-					CP7(SHORT(col), dest, pat, X, h)
+					CP7(CHR(col), dest, pat, SHORT(x), h)
 				ELSE
-					CP8(SHORT(col), dest, pat, X, h)
+					CP8(CHR(col), dest, pat, SHORT(x), h)
 				END
 			ELSIF w <= 16 THEN
 				IF diff = 1 THEN
-					CP9(SHORT(col), dest, pat, X, h)
+					CP9(CHR(col), dest, pat, SHORT(x), h)
 				ELSE
-					CP10(SHORT(col), dest, pat, X, h)
+					CP10(CHR(col), dest, pat, SHORT(x), h)
 				END
 			ELSIF w <= 24 THEN
-				CP11(SHORT(col), dest, pat, X, h)
+				CP11(CHR(col), dest, pat, SHORT(x), h)
 			ELSE
-				CP12(SHORT(col), dest, pat, X, h)
+				CP12(CHR(col), dest, pat, SHORT(x), h)
 			END
 		END
 	END CopyPattern;
 	
-	PROCEDURE ReplConst1(col: SHORTINT;  H, start: LONGINT;  rm, lm: CHAR);
-	CODE
+	PROCEDURE ReplConst1(col: CHAR;  H, start: LONGINT;  rm, lm: CHAR);
+	CODE {SYSTEM.i386}
 		MOV AH, lm[EBP]
 		AND AH, rm[EBP]
 		MOV AL, 8
@@ -1792,9 +1787,9 @@ rcloop1:
 		LOOP rcloop1
 	END ReplConst1;
 	
-	PROCEDURE ReplConst2(col: SHORTINT;  H: INTEGER;  start, end: LONGINT;  rm, lm: CHAR);
+	PROCEDURE ReplConst2(col: CHAR;  H: INTEGER;  start, end: LONGINT;  rm, lm: CHAR);
 	VAR temp: LONGINT;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV ESI, start[EBP]
 		MOV BH, col[EBP]
 		MOV EDI, end[EBP]
@@ -1831,9 +1826,10 @@ rclabel1:
 		JG rcloop2
 	END ReplConst2;
 	
-	PROCEDURE ReplConst*(col, X, Y, W, H, mode: INTEGER);
-	VAR right, top: INTEGER; addr, start, end: LONGINT; rm, lm: CHAR;
-	BEGIN  
+	PROCEDURE ReplConst*(col: Color; x, y, w, h, mode: LONGINT);
+	VAR right, top, X, Y, W, H: INTEGER; addr, start, end: LONGINT; rm, lm: CHAR;
+	BEGIN 
+		X := SHORT(x);  Y := SHORT(y);  W := SHORT(w);  H := SHORT(h);
 		top := Y + H; right := X + W;
 		IF X < clipx THEN X := clipx END;
 		IF Y < clipy THEN Y := clipy END;
@@ -1849,20 +1845,20 @@ rclabel1:
 		END;
 		SYSTEM.PORTOUT(03CEH, 205H);	(* AL = Gaphics mode; AH = Read-Mode = 0/Write-Mode = 2 (bits 0,1) *)
 		SYSTEM.PORTOUT(03C4H, 0F02H);	(* AL = Plane select; AH = Bitplanemask; DX = Sequencer *)
-		addr := (Height - Y - 1) * width3;
+		addr := ((Height - Y - 1) * width3) MOD 10000H;
 		INC(addr, 0A0000H);
 		start := addr + X DIV 8; end := addr + (X + W) DIV 8;
 		lm := imask[X MOD 8]; rm := mask[(X + W) MOD 8];
 		IF start = end THEN
-			ReplConst1(SHORT(col), H, start, rm, lm)
+			ReplConst1(CHR(col), H, start, rm, lm)
 		ELSE
-			ReplConst2(SHORT(col), H, start, end, rm, lm)
+			ReplConst2(CHR(col), H, start, end, rm, lm)
 		END;
 	END ReplConst;
 	
-	PROCEDURE FillPattern1(col: SHORTINT; pat: Pattern; pX, pY, X, Y, W, H, mode: LONGINT);
+	PROCEDURE FillPattern1(col: CHAR; pat: Pattern; pX, pY, X, Y, W, H, mode: LONGINT);
 	VAR leftmask, rightmask, flag, color, help3: CHAR;  topleft, help, help1, help2: LONGINT;
-	CODE
+	CODE {SYSTEM.i386}
 		MOV	EAX, mode[EBP]	; get mode and set local AH
 		CMP	AX, 0
 		JNE	Inv4
@@ -1922,6 +1918,7 @@ getxy4:
 		
 		MOV	EDI, width3	; w3[EBP]
 		IMUL	EDI, Y[EBP]
+		AND EDI, 0FFFFH
 		ADD	EDI,0A0000H
 		ADD	EDI, EBX	; EDI := START-Adr
 		SUB	EDX, EBX	; Diff in bytes
@@ -2830,34 +2827,34 @@ resetgrafRP:
 endRP:
 	END FillPattern1;
 	
-	PROCEDURE FillPattern*(col: INTEGER; pat: Pattern; pX, pY, X, Y, W, H, mode: INTEGER);
-	VAR w(*, h*): SHORTINT; right, top: INTEGER;
+	PROCEDURE FillPattern*(col: Color; pat: Pattern; px, py, x, y, w, h, mode: LONGINT);
+	VAR pw: SHORTINT; right, top: INTEGER;
 	BEGIN 
-		SYSTEM.GET(pat, w); (*SYSTEM.GET(pat+1, h);*)
-		IF (w # 16) & (w # 32) THEN RETURN END;
-		top := Y + H; right := X + W; 
-		IF X < clipx THEN X := clipx END;
-		IF Y < clipy THEN Y := clipy END;
+		SYSTEM.GET(pat, pw);
+		IF (pw # 16) & (pw # 32) THEN RETURN END;
+		top := SHORT(y + h); right := SHORT(x + w); 
+		IF x < clipx THEN x := clipx END;
+		IF y < clipy THEN y := clipy END;
 		IF  clipright < right THEN right :=  clipright END;
 		IF cliptop < top THEN top := cliptop END;
-		IF (W <= 0) OR (H <= 0) OR (X < 0) OR (Y < 0) THEN RETURN END;
-		FillPattern1(SHORT(col), pat, pX, pY, X, Y, W, H, mode)
+		IF (w <= 0) OR (h <= 0) OR (x < 0) OR (y < 0) THEN RETURN END;
+		FillPattern1(CHR(col), pat, px, py, x, y, w, h, mode)
 	END FillPattern;
 
-	PROCEDURE ReplPattern*(col: INTEGER; pat: Pattern; X, Y, W, H, mode: INTEGER);
+	PROCEDURE ReplPattern*(col: Color; pat: Pattern; x, y, w, h, mode: LONGINT);
 	BEGIN 
-		FillPattern(col, pat, 0, 0, X, Y, W, H, mode);
+		FillPattern(col, pat, 0, 0, x, y, w, h, mode)
 	END ReplPattern;
 	
-	PROCEDURE NewPattern*(width, height: INTEGER; VAR image: ARRAY OF SET): Pattern;
-	VAR len, src, dest: LONGINT; i: INTEGER; p: PatternPtr; inter: SET;  pl: List;
-	BEGIN 
-		len := (width+7) DIV 8;
-		SYSTEM.NEW(p, 4+len*height); p.w := SHORT(width); p.h := SHORT(height);
-		src := SYSTEM.ADR(image); dest := SYSTEM.ADR(p.pixmap);
+	PROCEDURE NewPattern*(w, h: LONGINT; VAR image: ARRAY OF SET): Pattern;
+	VAR len, src, dest, i: LONGINT;  p: PatternPtr;  pl: List;
+	BEGIN
+		len := (w+7) DIV 8;
+		SYSTEM.NEW(p, 4+len*h);  p.w := CHR(w);  p.h := CHR(h);
+		src := SYSTEM.ADR(image[0]);  dest := SYSTEM.ADR(p.pixmap[0]);
 		i := 0;
-		WHILE i < height DO SYSTEM.MOVE(src, dest, len); INC(src, 4); INC(dest, len); INC(i) END;
-		NEW(pl);  pl.pat := p;  pl.next := Pat;  Pat := pl;	(* put in list to avoid GC *)
+		WHILE i < h DO SYSTEM.MOVE(src, dest, len);  INC(src, 4);  INC(dest, len);  INC(i) END;
+		NEW(pl);  pl.pat := p;  pl.next := pattern;  pattern := pl;	(* put in list to avoid GC *)
 		RETURN SYSTEM.ADR(p.w)
 	END NewPattern;
 	
@@ -3016,44 +3013,54 @@ endRP:
 		
 		image[0] := -{};
 		image[1] := -{};
-		solid := NewPattern(16, 2, image);
-		
+		image[2] := -{};
+		image[3] := -{};
+		image[4] := -{};
+		image[5] := -{};
+		image[6] := -{};
+		image[7] := -{};
+		solid := NewPattern(16, 8, image)
 	END CreatePatterns;
 	
-	PROCEDURE Depth*(X: INTEGER): INTEGER;
-	BEGIN RETURN 4 END Depth; 
+	PROCEDURE Depth*(x: LONGINT): INTEGER;
+	BEGIN
+		RETURN depth
+	END Depth;
 	
-	PROCEDURE DisplayBlock*(B:LONGINT; DX, DY, W, H, SX, SY, mode:INTEGER);
+	PROCEDURE TrueColor*(x: LONGINT): BOOLEAN;
+	BEGIN
+		RETURN FALSE
+	END TrueColor;
+
+	PROCEDURE DisplayBlock*(adr, dx, dy, w, h, sx, sy, mode: LONGINT);
 	VAR BitmapWth, locW, locH, SourceAdr, DestAdr, AreaHeight: LONGINT;
-	CODE
-		MOVSX EAX,SY[EBP]
-		MOV DWORD SY[EBP],EAX
+	CODE {SYSTEM.i386}
 		MOVSX EAX, Width
 		SHR EAX,3
 		MOV locW[EBP], EAX	; locW := Width DIV 8
 		MOVSX EAX, Height
 		DEC EAX
-		DEC EAX
-		MOV locH[EBP], EAX	; locH := Height-2
+		MOV locH[EBP], EAX	; locH := Height-1
 		CLI
-		MOV ESI, B[EBP]		; address of bitmap descriptor
+		MOV ESI, adr[EBP]		; address of bitmap descriptor
 		MOV EDI, 12[ESI]
 		MOV EAX, 8[ESI]
 		MOV BitmapWth[EBP], EAX
-		MOVSX ECX, DY[EBP]
+		MOV ECX, dy[EBP]
 		IMUL EAX,ECX
-		MOVSX EBX, WORD 32[EBP]
+		MOV EBX, dx[EBP]
 		ADD EAX, EBX
 		ADD EAX, EDI		; source address
 		MOV SourceAdr[EBP], EAX
 		MOV ESI, EAX		; esi = source index register
 		MOV EAX, locW[EBP] 
 		MOV EBX, locH[EBP] 
-		SUB EBX,DWORD SY[EBP]
+		SUB EBX, sy[EBP]
 		IMUL EAX,EBX 
-		MOVSX EBX, SX[EBP]
+		MOV EBX, sx[EBP]
 		SHR EBX,3
 		ADD EAX, EBX
+		AND EAX, 0FFFFH
 		ADD EAX, 0A0000H		; destination address
 		MOV DestAdr[EBP], EAX
 		MOV EDI, EAX		; edi = destination index register
@@ -3062,7 +3069,7 @@ endRP:
 		OUT DX, AX
 		MOV DX, 03CEH
 		MOV AL, 3
-		MOV BX, 8[EBP]
+		MOV BX, WORD mode[EBP]
 		CMP BX, 1
 		JE DispPMode
 		JG DispIMode
@@ -3080,15 +3087,15 @@ DispSetMode:
 		OUT DX, AX		  ; set writemode 2, readmode 0
 		XOR AX, AX
 		OUT DX, AX	; disable set/reset
-		MOV CL, BYTE SX[EBP]
+		MOV CL, BYTE sx[EBP]
 		AND CL, 7		; ?DX MOD 8
 		MOV AX, 8008H	
 		SHR AH,CL		  ; prepare bitmask
 		MOV DestAdr[EBP], EDI
-		MOVSX ECX, H[EBP]
+		MOV ECX, h[EBP]
 		IMUL ECX, BitmapWth[EBP]
 		ADD ECX, ESI
-		MOVSX EBX, W[EBP]
+		MOV EBX, w[EBP]
 		MOV AreaHeight[EBP], EBX
 DispRowLoop:
 		JE DispEnd
@@ -3126,6 +3133,16 @@ DispEnd:
 		STI
 	END DisplayBlock;
 
+	PROCEDURE TransferFormat*(x: LONGINT): LONGINT;	(** non-portable *)
+	BEGIN
+		RETURN unknown
+	END TransferFormat;
+
+	PROCEDURE TransferBlock*(VAR buf: ARRAY OF CHAR;  ofs, stride, x, y, w, h, mode: LONGINT);	(** non-portable *)
+	BEGIN
+		HALT(99)
+	END TransferBlock;
+	
 	PROCEDURE SetBorder;
 	VAR ch: CHAR;
 	BEGIN
@@ -3135,11 +3152,32 @@ DispEnd:
 		SYSTEM.PORTOUT(3C0H, 020X)
 	END SetBorder;
 	
+	PROCEDURE Init;
+	VAR s: ARRAY 10 OF CHAR;
+	BEGIN
+		Kernel.GetConfig("Color", s);
+		IF s = "0" THEN depth := 1 ELSE depth := 4 END
+	END Init;
+	
+	PROCEDURE InitRev;
+	VAR i, j, x: LONGINT;
+	BEGIN
+		FOR i := 0 TO 255 DO
+			x := 0;
+			FOR j := 0 TO 7 DO
+				x := ASH(x, 1);
+				IF ODD(ASH(i, -j)) THEN INC(x) END
+			END;
+			rev[i] := CHR(x)
+		END
+	END InitRev;
+	
 BEGIN
+	Init;
 	Width := 640; 
 	Height := 480; 
 	Left:= 0; ColLeft:= 0; Bottom:= 0; UBottom:= -330; 
-	Pat := NIL;
+	pattern := NIL;
 	width := Width;
 	height := Height;
 	clipx := 0; clipy := UBottom; clipright := width; cliptop := height;
@@ -3148,40 +3186,9 @@ BEGIN
 	mask[5] := 0F8X; mask[6] := 0FCX; mask[7] := 0FEX; mask[8] := 0FFX;
 	imask[0] := 0FFX; imask[1] := 7FX; imask[2] := 3FX; imask[3] := 1FX; imask[4] := 0FX; 
 	imask[5] := 7X; imask[6] := 3X; imask[7] := 1X; imask[8] := 0X;
-	rev[0] := 0X; rev[1] := 80X; rev[2] := 40X; rev[3] := 0C0X; rev[4] := 20X; rev[5] := 0A0X; rev[6] := 60X; rev[7] := 0E0X;
-	rev[8] := 10X; rev[9] := 90X; rev[10] := 50X; rev[11] := 0D0X; rev[12] := 30X; rev[13] := 0B0X; rev[14] := 70X; rev[15] := 0F0X;
-	rev[16] := 8X; rev[17] := 88X; rev[18] := 48X; rev[19] := 0C8X; rev[20] := 28X; rev[21] := 0A8X; rev[22] := 68X; rev[23] := 0E8X;
-	rev[24] := 18X; rev[25] := 98X; rev[26] := 58X; rev[27] := 0D8X; rev[28] := 38X; rev[29] := 0B8X; rev[30] := 78X; rev[31] := 0F8X;
-	rev[32] := 4X; rev[33] := 84X; rev[34] := 44X; rev[35] := 0C4X; rev[36] := 24X; rev[37] := 0A4X; rev[38] := 64X; rev[39] := 0E4X;
-	rev[40] := 14X; rev[41] := 94X; rev[42] := 54X; rev[43] := 0D4X; rev[44] := 34X; rev[45] := 0B4X; rev[46] := 74X; rev[47] := 0F4X;
-	rev[48] := 0CX; rev[49] := 8CX; rev[50] := 4CX; rev[51] := 0CCX; rev[52] := 2CX; rev[53] := 0ACX; rev[54] := 6CX; rev[55] := 0ECX;
-	rev[56] := 1CX; rev[57] := 9CX; rev[58] := 5CX; rev[59] := 0DCX; rev[60] := 3CX; rev[61] := 0BCX; rev[62] := 7CX; rev[63] := 0FCX;
-	rev[64] := 2X; rev[65] := 82X; rev[66] := 42X; rev[67] := 0C2X; rev[68] := 22X; rev[69] := 0A2X; rev[70] := 62X; rev[71] := 0E2X;
-	rev[72] := 12X; rev[73] := 92X; rev[74] := 52X; rev[75] := 0D2X; rev[76] := 32X; rev[77] := 0B2X; rev[78] := 72X; rev[79] := 0F2X;
-	rev[80] := 0AX; rev[81] := 8AX; rev[82] := 4AX; rev[83] := 0CAX; rev[84] := 2AX; rev[85] := 0AAX; rev[86] := 6AX; rev[87] := 0EAX;
-	rev[88] := 1AX; rev[89] := 9AX; rev[90] := 5AX; rev[91] := 0DAX; rev[92] := 3AX; rev[93] := 0BAX; rev[94] := 7AX; rev[95] := 0FAX;
-	rev[96] := 6X; rev[97] := 86X; rev[98] := 46X; rev[99] := 0C6X; rev[100] := 26X; rev[101] := 0A6X; rev[102] := 66X; rev[103] := 0E6X;
-	rev[104] := 16X; rev[105] := 96X; rev[106] := 56X; rev[107] := 0D6X; rev[108] := 36X; rev[109] := 0B6X; rev[110] := 76X; rev[111] := 0F6X;
-	rev[112] := 0EX; rev[113] := 8EX; rev[114] := 4EX; rev[115] := 0CEX; rev[116] := 2EX; rev[117] := 0AEX; rev[118] := 6EX; rev[119] := 0EEX;
-	rev[120] := 1EX; rev[121] := 9EX; rev[122] := 5EX; rev[123] := 0DEX; rev[124] := 3EX; rev[125] := 0BEX; rev[126] := 7EX; rev[127] := 0FEX;
-	rev[128] := 1X; rev[129] := 81X; rev[130] := 41X; rev[131] := 0C1X; rev[132] := 21X; rev[133] := 0A1X; rev[134] := 61X; rev[135] := 0E1X;
-	rev[136] := 11X; rev[137] := 91X; rev[138] := 51X; rev[139] := 0D1X; rev[140] := 31X; rev[141] := 0B1X; rev[142] := 71X; rev[143] := 0F1X;
-	rev[144] := 9X; rev[145] := 89X; rev[146] := 49X; rev[147] := 0C9X; rev[148] := 29X; rev[149] := 0A9X; rev[150] := 69X; rev[151] := 0E9X;
-	rev[152] := 19X; rev[153] := 99X; rev[154] := 59X; rev[155] := 0D9X; rev[156] := 39X; rev[157] := 0B9X; rev[158] := 79X; rev[159] := 0F9X;
-	rev[160] := 5X; rev[161] := 85X; rev[162] := 45X; rev[163] := 0C5X; rev[164] := 25X; rev[165] := 0A5X; rev[166] := 65X; rev[167] := 0E5X;
-	rev[168] := 15X; rev[169] := 95X; rev[170] := 55X; rev[171] := 0D5X; rev[172] := 35X; rev[173] := 0B5X; rev[174] := 75X; rev[175] := 0F5X;
-	rev[176] := 0DX; rev[177] := 8DX; rev[178] := 4DX; rev[179] := 0CDX; rev[180] := 2DX; rev[181] := 0ADX; rev[182] := 6DX; rev[183] := 0EDX;
-	rev[184] := 1DX; rev[185] := 9DX; rev[186] := 5DX; rev[187] := 0DDX; rev[188] := 3DX; rev[189] := 0BDX; rev[190] := 7DX; rev[191] := 0FDX;
-	rev[192] := 3X; rev[193] := 83X; rev[194] := 43X; rev[195] := 0C3X; rev[196] := 23X; rev[197] := 0A3X; rev[198] := 63X; rev[199] := 0E3X;
-	rev[200] := 13X; rev[201] := 93X; rev[202] := 53X; rev[203] := 0D3X; rev[204] := 33X; rev[205] := 0B3X; rev[206] := 73X; rev[207] := 0F3X;
-	rev[208] := 0BX; rev[209] := 8BX; rev[210] := 4BX; rev[211] := 0CBX; rev[212] := 2BX; rev[213] := 0ABX; rev[214] := 6BX; rev[215] := 0EBX;
-	rev[216] := 1BX; rev[217] := 9BX; rev[218] := 5BX; rev[219] := 0DBX; rev[220] := 3BX; rev[221] := 0BBX; rev[222] := 7BX; rev[223] := 0FBX;
-	rev[224] := 7X; rev[225] := 87X; rev[226] := 47X; rev[227] := 0C7X; rev[228] := 27X; rev[229] := 0A7X; rev[230] := 67X; rev[231] := 0E7X;
-	rev[232] := 17X; rev[233] := 97X; rev[234] := 57X; rev[235] := 0D7X; rev[236] := 37X; rev[237] := 0B7X; rev[238] := 77X; rev[239] := 0F7X;
-	rev[240] := 0FX; rev[241] := 8FX; rev[242] := 4FX; rev[243] := 0CFX; rev[244] := 2FX; rev[245] := 0AFX; rev[246] := 6FX; rev[247] := 0EFX;
-	rev[248] := 1FX; rev[249] := 9FX; rev[250] := 5FX; rev[251] := 0DFX; rev[252] := 3FX; rev[253] := 0BFX; rev[254] := 7FX; rev[255] := 0FFX;
+	InitRev;
 	CreatePatterns;  SetBorder;
 	Unit := 10000
 END Display.
 
-System.CopyFiles Display.obj => VGA.Display.obj ~
+Compiler.Compile VGA.Display.Mod\X ~

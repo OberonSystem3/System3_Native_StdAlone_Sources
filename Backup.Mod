@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
+MODULE Backup;	(** portable, except where noted *) (*JG 20.5.94/pm 16.6.94*)
 
 	IMPORT Diskette, Diskette0, Oberon, Texts, TextFrames;
 
@@ -26,7 +25,7 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
 		Oberon.Remove(me)
 	END MotorOff;
 	
-	PROCEDURE Format*;
+	PROCEDURE Format*;	(** non-portable *)
       VAR R: Texts.Reader; ch: CHAR; t: Oberon.Task;
 	BEGIN
       Texts.WriteString(W, "Backup.Format ");
@@ -90,30 +89,58 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
         Diskette.CloseVol;
         T := TextFrames.Text("");
 		Texts.Append(T, W.buf);
-		Oberon.OpenText("Directory", T, 380, 300)
+		Oberon.OpenText("Directory", T, 300, 300)
 	END Directory;
 
-    PROCEDURE ReadFile (name: ARRAY OF CHAR);
+    PROCEDURE ReadFile (VAR name, oname: ARRAY OF CHAR);
     BEGIN
-	    Texts.WriteString(W, name); Texts.WriteString(W, " reading");
+	    Texts.WriteString(W, name);
+	    IF name # oname THEN Texts.WriteString(W, " => ");  Texts.WriteString(W, oname) END;
+	    Texts.WriteString(W, " reading");
 	    Texts.Append(Oberon.Log, W.buf);
-        Diskette.ReadFile(name);
+        Diskette.ReadFile(name, oname);
         IF Diskette.res # 0 THEN Texts.WriteString(W, " failed") END;
 	    Texts.WriteLn(W);
         Texts.Append(Oberon.Log, W.buf)
     END ReadFile;
 
+	PROCEDURE ScanName(VAR S: Texts.Scanner;  VAR name1, name2: ARRAY OF CHAR);
+	VAR ok: BOOLEAN;
+	BEGIN
+		ASSERT(S.class IN {Texts.Name, Texts.String});
+		COPY(S.s, name1);  COPY(S.s, name2);  ok := TRUE;
+		Texts.Scan(S);
+		IF (S.class = Texts.Char) & (S.c = "=") THEN
+			Texts.Scan(S);
+			IF (S.class = Texts.Char) & (S.c = ">") THEN
+				Texts.Scan(S);
+				IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, name2);  Texts.Scan(S)
+				ELSE ok := FALSE
+				END
+			ELSE ok := FALSE
+			END
+		END;
+		IF ~ok THEN COPY("", name1);  COPY("", name2); S.class := Texts.Inval END
+	END ScanName;
+	
 	PROCEDURE ReadFiles*;
 		VAR par: Oberon.ParList; S: Texts.Scanner; T: Texts.Text;
         beg, end, time: LONGINT; freeEntries, freeSpace: INTEGER;
+        name, oname: ARRAY 32 OF CHAR;
 	BEGIN
 		Diskette.OpenVol(freeEntries, freeSpace);
 		par := Oberon.Par;
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-        WHILE S.class = Texts.Name DO ReadFile(S.s); Texts.Scan(S) END;
+        WHILE S.class IN {Texts.Name, Texts.String} DO
+  	      ScanName(S, name, oname);
+  	      IF name # "" THEN ReadFile(name, oname) END
+        END;
         IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(T, beg, end, time);
           IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-            IF S.class = Texts.Name THEN ReadFile(S.s) END
+            IF S.class IN {Texts.Name, Texts.String} THEN
+            	ScanName(S, name, oname);
+  	     	 IF name # "" THEN ReadFile(name, oname) END
+  	      END
           END
         END;
         Diskette.CloseVol
@@ -121,14 +148,7 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
 
     PROCEDURE ReadEntry (name: ARRAY OF CHAR; date, time: LONGINT; size: LONGINT);
     BEGIN
-        IF size # 0 THEN
-	      Texts.WriteString(W, name); Texts.WriteString(W, " reading");
-		  Texts.Append(Oberon.Log, W.buf);
-          Diskette.ReadFile(name);
-          IF Diskette.res # 0 THEN Texts.WriteString(W, " failed") END;
-	  	Texts.WriteLn(W);
-          Texts.Append(Oberon.Log, W.buf)
-        END
+        IF size # 0 THEN ReadFile(name, name) END
     END ReadEntry;
 
 	PROCEDURE ReadAll*;
@@ -141,11 +161,13 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
         Diskette.CloseVol
 	END ReadAll;
 
-    PROCEDURE WriteFile (VAR name: ARRAY OF CHAR);
+    PROCEDURE WriteFile (VAR oname, name: ARRAY OF CHAR);
     BEGIN
-		Texts.WriteString(W, name); Texts.WriteString(W, " writing");
+		Texts.WriteString(W, oname);
+	    IF name # oname THEN Texts.WriteString(W, " => ");  Texts.WriteString(W, name) END;
+		Texts.WriteString(W, " writing");
 	    Texts.Append(Oberon.Log, W.buf);
-        Diskette.WriteFile(name);
+        Diskette.WriteFile(oname, name);
         IF Diskette.res # 0 THEN Texts.WriteString(W, " failed") END;
 		Texts.WriteLn(W);
         Texts.Append(Oberon.Log, W.buf)
@@ -154,14 +176,21 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
 	PROCEDURE WriteFiles*;
 		VAR par: Oberon.ParList; S: Texts.Scanner; T: Texts.Text;
            beg, end, time: LONGINT; freeEntries, freeSpace: INTEGER;
+           name, oname: ARRAY 32 OF CHAR;
 	BEGIN
 		Diskette.OpenVol(freeEntries, freeSpace);
 		par := Oberon.Par;
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-	    WHILE S.class = Texts.Name DO WriteFile(S.s); Texts.Scan(S) END;
+	    WHILE S.class IN {Texts.Name, Texts.String} DO
+  	      ScanName(S, oname, name);
+  	      IF name # "" THEN WriteFile(oname, name) END
+	    END;
         IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(T, beg, end, time);
           IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-            IF S.class = Texts.Name THEN WriteFile(S.s) END
+            IF S.class IN {Texts.Name, Texts.String} THEN
+              ScanName(S, oname, name);
+  	    	IF name # "" THEN WriteFile(oname, name) END
+            END
           END
         END;
 		Diskette.CloseVol
@@ -186,10 +215,10 @@ MODULE Backup; (*JG 20.5.94/pm 16.6.94*)
 		Diskette.GetSectors(0, 1, b, 0);  Diskette.PutSectors(0, 1, b, 0);	(* writable? *)
 		par := Oberon.Par;
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-		WHILE S.class = Texts.Name DO DeleteFile(S.s); Texts.Scan(S) END;
+		WHILE S.class IN {Texts.Name, Texts.String} DO DeleteFile(S.s); Texts.Scan(S) END;
         IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(T, beg, end, time);
           IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-            IF S.class = Texts.Name THEN DeleteFile(S.s) END
+            IF S.class IN {Texts.Name, Texts.String} THEN DeleteFile(S.s) END
           END
         END;
 		Diskette.CloseVol

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE HyperDocs; (* ejz,   *)
-	IMPORT 
-	(* Win *)(* Mac *) (*Registry,*) Files, BTrees, Strings, Objects, Display3, Fonts, Texts, Oberon, Attributes, Links,
+MODULE HyperDocs;	(** portable *) (* ejz,   *)
+	IMPORT Files, BTrees, Strings, Objects, Display3, Fonts, Texts, Oberon, Attributes, Links,
 		Modules, Gadgets, TextGadgets0, TextGadgets, Documents, Desktops, Pictures, Display, MIME;
-
-(* serach for (* Win *) (* Mac *) or (* Native *) *)
 
 (** Module HyperDocs allows to build links between any documents. Documents are either documents on the
 		local disk or documents retrieved from the internet. A link to a document is just a string, which describes
@@ -201,16 +197,6 @@ MODULE HyperDocs; (* ejz,   *)
 			l := l.next
 		END;
 		IF l = NIL THEN
-(* (* Win *) (* Mac *)
-			Registry.Get("LinkSchemes", prefix, gen);
-			IF (gen # "") & (Registry.res = Registry.Done) THEN
-				obj := Gadgets.CreateObject(gen);
-				IF (obj # NIL) & (obj IS LinkScheme) THEN
-					l := obj(LinkScheme); COPY(prefix, l.prefix);
-					l.next := linkSchemes; linkSchemes := l
-				END
-			END
-*) (* Native *) 
 			gen := "LinkSchemes."; Strings.Append(gen, prefix);
 			Oberon.OpenScanner(S, gen);
 			IF S.class IN {Texts.Name, Texts.String} THEN
@@ -1613,5 +1599,7 @@ BEGIN
 	linkPictMethods.Background := Background;
 	ClearCache();
 	Modules.InstallTermHandler(FreeMod);
-	docW := Oberon.SystemTrack(0)-Oberon.UserTrack(0); docH := Display.Height-Desktops.menuH
+	(*docW := Oberon.SystemTrack(0)-Oberon.UserTrack(0); docH := Display.Height-Desktops.menuH*)
+	docW := Display.Width*5 DIV 8;
+	docH := Display.Height*7 DIV 8
 END HyperDocs.

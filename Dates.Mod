@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Dates; (* PS   *)
-
-(* Native version *)
+MODULE Dates;	(** portable *) (* PS   *)
 
 IMPORT Oberon, Texts;
 
@@ -98,7 +95,7 @@ END ToHMS;
 
 (** Returns weekday from date, where 0 is monday *)
 PROCEDURE DayOfWeek* (date: LONGINT): INTEGER;
-VAR y, m, d: INTEGER; num: LONGINT;
+VAR num: LONGINT;
 BEGIN
 	num := NumberOfDays(date);
 	RETURN SHORT((num+1) MOD 7)
@@ -126,7 +123,7 @@ BEGIN
 END AddYear;
 
 PROCEDURE AddMonth* (date: LONGINT; months: INTEGER): LONGINT;
-VAR y, dy, m, d: INTEGER;
+VAR y, m, d: INTEGER;
 BEGIN
 	ToYMD(date, y, m, d); INC(m, months - 1);
 	y :=  y + m DIV 12;
@@ -178,6 +175,7 @@ END AddSecond;
 PROCEDURE AddTime* (VAR time, date: LONGINT; sec: LONGINT);
 VAR h, m, s: LONGINT; ss, mm, hh: INTEGER;
 BEGIN
+	h := 0; m := 0;
 	ToHMS(time, hh, mm, ss); s := sec + ss;
 	IF (s < 0) OR (s >= 60) THEN
 		m := s DIV 60 + mm; s := s MOD 60;
@@ -194,8 +192,8 @@ END AddTime;
 PROCEDURE Init();
 	VAR
 		diff: ARRAY 8 OF CHAR;
-		i, j: LONGINT;
 		S: Texts.Scanner;
+		i, j: LONGINT;
 BEGIN
 	A[0] := 0; A[1] := 31; A[2] := 59; A[3] := 90; A[4] := 120; A[5] := 151; A[6] := 181;
 	A[7] := 212; A[8] := 243; A[9] :=  273; A[10] := 304; A[11] := 334; A[12] := 365;

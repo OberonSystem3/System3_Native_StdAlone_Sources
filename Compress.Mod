@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,8 +13,8 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
-	IMPORT Files, Texts, Oberon,
+MODULE Compress;	(** portable *) (* (c) ejz, first version: 14.1.92, this version: 8.1.98 / 1.1.98 gs *)
+	IMPORT Files, Modules, Texts, Oberon,
 		(* TextDocs *)
 		Objects, Gadgets, Documents, TextDocs, Desktops;
 		(* TextDocs *)
@@ -37,6 +36,7 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		Temp = "Compress.Temp";
 		err1 = "Error in archive";
 		err2 = " not found";
+		err3 = "encryption key needed";
 		xx = 32768;
 		Menu = 0;
 		Cmd = 1;
@@ -47,6 +47,7 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		EntryNotFound *= 3;
 		ArchiveExists *= 4;
 		FileError *= 5;
+		KeyNeeded* = 6;
 		DocId0 = 0F7X;
 		DocId1 = 07X;
 		(* TextDocs *)
@@ -57,6 +58,9 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		EditMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
 		TextFrames *)
 
+		(* extensions *)
+		encryption* = 0;
+
 	TYPE
 		Node = RECORD
 			parent, smallerChild, largerChild: INTEGER
@@ -66,7 +70,8 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 			name*: Name;
 			length*, check: LONGINT;
 			date*, time*: LONGINT;
-			ratio: REAL
+			ratio*: REAL;
+			extensions*: SET (* encryption *)
 		END;
 		List = POINTER TO ListDesc;
 		ListDesc = RECORD
@@ -79,6 +84,7 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 			next: HeaderList
 		END;
 		EnumProc* = PROCEDURE (h: Header; VAR stop: BOOLEAN);
+		CryptProc* = PROCEDURE (VAR Rin: Files.Rider; nIn: LONGINT; VAR Rout: Files.Rider; key: ARRAY OF CHAR; VAR res: INTEGER);
 
 	VAR
 		W: Texts.Writer;
@@ -90,6 +96,8 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		Err, verbose, sorted: BOOLEAN;
 		cmdSource, help: INTEGER;
 		headerList: HeaderList;
+		Decrypt*, Encrypt*: CryptProc;
+		curKey: ARRAY 64 OF CHAR;
 
 	PROCEDURE ReadHeader(VAR R: Files.Rider; VAR h: Header; VAR err: BOOLEAN);
 		VAR
@@ -119,12 +127,19 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 			Files.ReadLInt(R, h.date);
 			Files.ReadLInt(R, h.time);
 			Files.ReadReal(R, h.ratio);
+			IF h.length < 0 THEN
+				Files.ReadSet(R, h.extensions);
+				h.length := -h.length
+			ELSE
+				h.extensions := {} 
+			END;
 			IF (h.ratio > 0.0) & (h.ratio < 1000000.0) THEN
 				pos := 0; chk := 0;
 				WHILE pos < 32 DO
 					chk := chk+ORD(h.name[pos]);
 					INC(pos)
 				END;
+				h.name[31] := 0X;
 				chk := chk+h.length+ENTIER(h.ratio)+(h.time MOD xx)+(h.date MOD xx);
 				err := chk # h.check
 			ELSE
@@ -136,20 +151,33 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 	PROCEDURE WriteHeader(VAR R: Files.Rider; VAR h: Header);
 		VAR i: LONGINT;
 	BEGIN
+		IF curKey # "" THEN
+			INCL(h.extensions, encryption)
+		END;
 		h.check := 0;
 		i := 0;
-		WHILE i < 32 DO
+		WHILE (i < 32) & (h.name[i] # 0X) DO
 			h.check := h.check + ORD(h.name[i]);
 			INC(i)
+		END;
+		WHILE i < 32 DO
+			h.name[i] := 0X; INC(i)
 		END;
 		Oberon.GetClock(h.time, h.date);
 		h.check := h.check+h.length+(h.time MOD xx)+(h.date MOD xx)+ENTIER(h.ratio);
 		Files.WriteBytes(R, h.name, 32);
-		Files.WriteLInt(R, h.length);
+		IF h.extensions # {} THEN
+			Files.WriteLInt(R, -h.length)
+		ELSE
+			Files.WriteLInt(R, h.length)
+		END;
 		Files.WriteLInt(R, h.check);
 		Files.WriteLInt(R, h.date);
 		Files.WriteLInt(R, h.time);
-		Files.WriteReal(R, h.ratio)
+		Files.WriteReal(R, h.ratio);
+		IF h.extensions # {} THEN
+			Files.WriteSet(R, h.extensions)
+		END
 	END WriteHeader;
 
 	PROCEDURE CopyFrom(VAR Ri, Ro: Files.Rider; len: LONGINT);
@@ -193,8 +221,8 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		IF CurBitNr = 7 THEN
 			IF BufferPtr = BufferSize THEN
 				Files.ReadBytes(R, Buffer, BufferSize);
-				INC(Len, BufferSize);
-				IF Len >= maxLen+ BufferSize THEN Err := TRUE END;
+				INC(Len, BufferSize-R.res);
+				IF Len >= (maxLen+BufferSize) THEN Err := TRUE END;
 				BufferPtr := 0
 			END;
 			CurByte := ORD(Buffer[BufferPtr]);
@@ -215,8 +243,8 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 			IF CurBitNr = 7 THEN
 				IF BufferPtr = BufferSize THEN
 					Files.ReadBytes(R, Buffer, BufferSize);
-					INC(Len, BufferSize);
-					IF Len > maxLen+ BufferSize THEN Err := TRUE END;
+					INC(Len, BufferSize-R.res);
+					IF Len >= (maxLen+BufferSize) THEN Err := TRUE END;
 					BufferPtr := 0
 				END;
 				CurByte := ORD(Buffer[BufferPtr]);
@@ -503,36 +531,63 @@ MODULE Compress; (* (c) ejz, first version: 14.1.92, this version: 23.10.97 *)
 		END
 	END Expand;
 
-(** Compress len Bytes form Ri to Ro, lenWr returns the number of Bytes written to Ro. *)
-	PROCEDURE CopyToArc(VAR Ri, Ro: Files.Rider; len: LONGINT; VAR lenWr: LONGINT);
+(* Compress len Bytes form Ri to Ro. *)
+	PROCEDURE CopyToArc(VAR Ri, Ro: Files.Rider; len: LONGINT; VAR h: Header);
+		VAR
+			F: Files.File;
+			R: Files.Rider;
+			len0: LONGINT;
+			res: INTEGER;
 	BEGIN
-		INC(len);
-		Len := 0;
-		BufferPtr := 0;
-		CurBitNr := 7;
-		CurByte := 0;
-		Compress(Ri, Ro, len);
-		FlushBits(Ro);
-		(*ratio := 100*Len/len;*)
-		lenWr := Len
+		res := Done;
+		len0 := len; INC(len); Len := 0;
+		BufferPtr := 0; CurBitNr := 7; CurByte := 0;
+		IF encryption IN h.extensions THEN
+			F := Files.New(""); Files.Set(R, F, 0);
+			Compress(Ri, R, len);
+			FlushBits(R); Files.Set(R, F, 0);
+			len := Len; Len := Files.Pos(Ro);
+			Encrypt(R, len, Ro, curKey, res); ASSERT(res = Done);
+			Len := Files.Pos(Ro)-Len
+		ELSE
+			Compress(Ri, Ro, len);
+			FlushBits(Ro)
+		END;
+		IF len0 < 1 THEN
+			len0 := 1
+		END;
+		h.length := Len; h.ratio := 100*Len/len0
 	END CopyToArc;
 
-(** Expand a maximum of len Bytes from Ri to Ro
+(* Expand a maximum of len Bytes from Ri to Ro.
 	res:
 		Done
 		ErrorInArchive: error in compressed data *)
-	PROCEDURE CopyFromArc(VAR Ri, Ro: Files.Rider; len: LONGINT; VAR res: INTEGER);
+	PROCEDURE CopyFromArc(VAR Ri, Ro: Files.Rider; VAR h: Header; VAR res: INTEGER);
+		VAR
+			F: Files.File;
+			R: Files.Rider;
 	BEGIN
-		maxLen := len;
-		Len := 0;
-		BufferPtr := BufferSize;
-		CurBitNr := 7;
-		CurByte := 0;
-		Expand(Ri, Ro);
+		res := Done; Len := 0;
+		BufferPtr := BufferSize; CurBitNr := 7; CurByte := 0;
+		IF encryption IN h.extensions THEN
+			IF (Decrypt # NIL) & (curKey # "") THEN
+				F := Files.New(""); Files.Set(R, F, 0);
+				Decrypt(Ri, h.length, R, curKey, res); ASSERT(res = Done);
+				maxLen := Files.Length(F); Files.Set(R, F, 0);
+				Expand(R, Ro);
+				Err := Err OR ((Len MOD BufferSize) # BufferPtr)
+			ELSE
+				Texts.WriteString(W, err3);
+				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
+				res := KeyNeeded
+			END
+		ELSE
+			maxLen := h.length;
+			Expand(Ri, Ro)
+		END;
 		IF Err THEN
 			res := ErrorInArchive
-		ELSE
-			res := Done
 		END
 	END CopyFromArc;
 
@@ -621,6 +676,40 @@ TextFrames *)
 		RETURN NIL
 	END Search;
 
+	PROCEDURE ClearCrypt*();
+	BEGIN
+		Decrypt := NIL; Encrypt := NIL; curKey := ""
+	END ClearCrypt;
+
+	PROCEDURE InstallCrypt*(install, key: ARRAY OF CHAR);
+		VAR
+			mod: Modules.Module;
+			cmd: Modules.Command;
+			i, j: LONGINT;
+	BEGIN
+		ClearCrypt(); COPY(key, curKey);
+		i := 0;
+		WHILE (install[i] # 0X) & (install[i] # ".") DO
+			INC(i)
+		END;
+		IF install[i] = "." THEN
+			install[i] := 0X; INC(i);
+			mod := Modules.ThisMod(install);
+			IF mod # NIL THEN
+				j := 0;
+				WHILE install[i] # 0X DO
+					install[j] := install[i]; INC(i); INC(j)
+				END;
+				install[j] := 0X;
+				cmd := Modules.ThisCommand(mod, install);
+				IF cmd # NIL THEN
+					cmd()
+				END
+			END
+		END;
+		ASSERT((Decrypt # NIL) & (Encrypt # NIL))
+	END InstallCrypt;
+
 	PROCEDURE GetArgs(VAR nameList: List);
 		VAR
 			h, last: List;
@@ -630,6 +719,7 @@ TextFrames *)
 			T: Texts.Text;
 			beg, end, time, pos: LONGINT;
 	BEGIN
+		ClearCrypt();
 		verbose := FALSE; sorted := FALSE;
 		pos := 0;
 		end := 0;
@@ -655,8 +745,14 @@ TextFrames *)
 			Texts.Scan(S);
 			WHILE (S.class = Texts.Char) & (S.c = Oberon.OptionChar) DO
 				Texts.Scan(S);
-				verbose := verbose OR (CAP(S.s[0]) = "D");
-				sorted := sorted OR (CAP(S.s[0]) = "S");
+				ASSERT(S.class = Texts.Name);
+				CASE CAP(S.s[0]) OF
+					"C": Texts.Scan(S); COPY(S.s, mn); ASSERT(S.class = Texts.Name);
+							Texts.Scan(S); ASSERT(S.class IN {Texts.Name, Texts.String});
+							InstallCrypt(mn, S.s)
+					|"D": verbose := TRUE
+					|"S": sorted := TRUE
+				END;
 				Texts.Scan(S)
 			END;
 			IF (S.class = Texts.Char) & (S.c = "^") THEN
@@ -851,14 +947,9 @@ TextFrames *)
 			END;
 			pos := Files.Pos(Ra);
 			COPY(file, h.name);
-			h.length := 0;
-			h.check := 0;
-			h.date := 0;
-			h.time := 0;
-			h.ratio := 0.0;
+			h.extensions := {};
 			WriteHeader(Ra, h);
-			CopyToArc(R, Ra, len, h.length);
-			h.ratio := 100*h.length/len;
+			CopyToArc(R, Ra, len, h);
 			Files.Set(Ra, ArcF, pos);
 			WriteHeader(Ra, h);
 			Files.Close(ArcF);
@@ -896,7 +987,7 @@ TextFrames *)
 			Ra, Rt: Files.Rider;
 			h: Header;
 			err, del: BOOLEAN;
-			pos, p: LONGINT;
+			pos: LONGINT;
 	BEGIN
 		ArcF := Files.Old(archive);
 		IF ArcF # NIL THEN
@@ -904,10 +995,9 @@ TextFrames *)
 			Files.Set(Rt, TmpF, 0);
 			del := FALSE;
 			Files.Set(Ra, ArcF, 0);
-			pos := Files.Pos(Ra);
 			ReadHeader(Ra, h, err);
 			WHILE (h.name # EOFName) & ~err DO
-				p := Files.Pos(Ra);
+				pos := Files.Pos(Ra);
 				IF h.name = file THEN
 					del := TRUE
 				ELSE
@@ -915,8 +1005,7 @@ TextFrames *)
 					Files.Set(Ra, ArcF, pos);
 					CopyFrom(Ra, Rt, h.length)
 				END;
-				pos := Files.Pos(Ra);
-				Files.Set(Ra, ArcF, p+h.length);
+				Files.Set(Ra, ArcF, pos+h.length);
 				ReadHeader(Ra, h, err)
 			END;
 			IF err THEN
@@ -953,23 +1042,22 @@ TextFrames *)
 	BEGIN
 		ArcF := Files.Old(archive);
 		IF ArcF # NIL THEN
-			found := FALSE;
+			found := FALSE; res := Done;
 			Files.Set(Ra, ArcF, 0);
 			ReadHeader(Ra, h, err);
 			WHILE (h.name # EOFName) & ~err & ~found DO
 				pos := Files.Pos(Ra);
 				IF h.name = file THEN
 					found := TRUE;
-					CopyFromArc(Ra, R, h.length, res)
-				END;
-				Files.Set(Ra, ArcF, pos+h.length);
-				ReadHeader(Ra, h, err)
+					CopyFromArc(Ra, R, h, res)
+				ELSE
+					Files.Set(Ra, ArcF, pos+h.length);
+					ReadHeader(Ra, h, err)
+				END
 			END;
 			IF err THEN
 				res := ErrorInArchive
-			ELSIF found THEN
-				res := Done
-			ELSE
+			ELSIF ~found THEN
 				res := EntryNotFound
 			END
 		ELSE
@@ -1000,8 +1088,12 @@ TextFrames *)
 				AddF := Files.New(h.name);
 				IF AddF # NIL THEN
 					Files.Set(RF, AddF, 0);
-					CopyFromArc(Ra, RF, h.length, res);
-					Files.Register(AddF); Files.SetDate(AddF, h.time, h.date)
+					CopyFromArc(Ra, RF, h, res);
+					IF res = Done THEN
+						Files.Register(AddF); Files.SetDate(AddF, h.time, h.date)
+					ELSE
+						RETURN
+					END
 				ELSE
 					res := FileError;
 					RETURN
@@ -1055,7 +1147,10 @@ TextFrames *)
 			Texts.WriteInt(W, h.length, 0);
 			Texts.WriteString(W, "  ");
 			Texts.WriteRealFix(W, h.ratio, 0, 2, 0);
-			Texts.WriteString(W, "% ")
+			Texts.WriteString(W, "% ");
+			IF encryption IN h.extensions THEN
+				Texts.WriteString(W, "   encrypted")
+			END
 		END;
 		Texts.WriteLn(W)
 	END ShowHead;
@@ -1220,7 +1315,7 @@ TextFrames *)
 		IF nameList = NIL THEN
 			RETURN
 		END;
-		Enumerate(nameList.name, ShowHead, FALSE, res);
+		Enumerate(nameList.name, ShowHead, res);
 		verbose := FALSE;
 		IF res = ArchiveNotFound THEN
 			CreateArchive(nameList.name, res);
@@ -1337,11 +1432,10 @@ TextFrames *)
 				Texts.WriteLn(W);
 				Texts.Append(Oberon.Log, W.buf);
 				changed := TRUE;
-				h.ratio := 0.0;
+				h.extensions := {};
 				WriteHeader(R, h);
 				Files.Set(RF, AddF, 0);
-				CopyToArc(RF, R, Files.Length(AddF), h.length);
-				h.ratio := 100*h.length/Files.Length(AddF);
+				CopyToArc(RF, R, Files.Length(AddF), h);
 				Files.Close(AddF);
 				Files.Set(R, ArcF, pos);
 				WriteHeader(R, h);
@@ -1548,8 +1642,12 @@ TextFrames *)
 				END;
 				AddF := Files.New(temp);
 				Files.Set(RF, AddF, 0);
-				CopyFromArc(R, RF, h.length, res);
-				Files.Register(AddF)
+				CopyFromArc(R, RF, h, res);
+				IF res = Done THEN
+					Files.Register(AddF)
+				ELSE
+					RETURN
+				END
 			ELSE
 				Files.Set(R, ArcF, pos+h.length);
 				ReadHeader(R, h, err)
@@ -1624,20 +1722,24 @@ TextFrames *)
 				Texts.Append(Oberon.Log, W.buf);
 				AddF := Files.Old(h.name);
 				IF AddF # NIL THEN
-					Texts.WriteString(W, " overwriting");
-					Files.Close(AddF);
-					Files.Delete(h.name, res)
+					Texts.WriteString(W, " overwriting")
 				END;
 				Texts.WriteLn(W);
 				Texts.Append(Oberon.Log, W.buf);
 				AddF := Files.New(h.name);
 				Files.Set(RF, AddF, 0);
-				CopyFromArc(R, RF, h.length, res);
-				Files.Register(AddF); Files.SetDate(AddF, h.time, h.date);
+				CopyFromArc(R, RF, h, res);
+				IF res = Done THEN
+					Files.Register(AddF); Files.SetDate(AddF, h.time, h.date)
+				ELSE
+					err := TRUE
+				END;
 				Remove(nameList, h.name)
 			END;
-			Files.Set(R, ArcF, pos+h.length);
-			ReadHeader(R, h, err)
+			IF ~err THEN
+				Files.Set(R, ArcF, pos+h.length);
+				ReadHeader(R, h, err)
+			END
 		END;
 		IF err THEN
 			Texts.WriteString(W, err1);
@@ -1781,18 +1883,22 @@ TextFrames *)
 				pos := Files.Pos(R);
 				AddF := Files.Old(h.name);
 				IF AddF # NIL THEN
-					Texts.WriteString(W, " overwriting");
-					Files.Close(AddF);
-					Files.Delete(h.name, res)
+					Texts.WriteString(W, " overwriting")
 				END;
 				Texts.WriteLn(W);
 				Texts.Append(Oberon.Log, W.buf);
 				AddF := Files.New(h.name);
 				Files.Set(RF, AddF, 0);
-				CopyFromArc(R, RF, h.length, res);
-				Files.Register(AddF); Files.SetDate(AddF, h.time, h.date);
-				Files.Set(R, ArcF, pos+h.length);
-				ReadHeader(R, h, err)
+				CopyFromArc(R, RF, h, res);
+				IF res = Done THEN
+					Files.Register(AddF); Files.SetDate(AddF, h.time, h.date)
+				ELSE
+					err := TRUE
+				END;
+				IF ~err THEN
+					Files.Set(R, ArcF, pos+h.length);
+					ReadHeader(R, h, err)
+				END
 			END;
 			IF err THEN
 				Texts.WriteString(W, err1);
@@ -1808,3 +1914,54 @@ BEGIN
 	verbose := FALSE;
 	Texts.OpenWriter(W)
 END Compress.
+
+MODULE TestCrypt;
+	IMPORT Files, Strings, Compress;
+
+	PROCEDURE *Decrypt(VAR Rin: Files.Rider; nIn: LONGINT; VAR Rout: Files.Rider; key: ARRAY OF CHAR; VAR res: INTEGER);
+		VAR
+			i, n: LONGINT;
+			ch: CHAR;
+	BEGIN
+		n := Strings.Length(key); i := 0;
+		WHILE i < nIn DO
+			Files.Read(Rin, ch);
+			Files.Write(Rout, CHR( (ORD(ch)+ORD(key[i MOD n])) MOD 256 ) );
+			INC(i)
+		END;
+		res := Compress.Done
+	END Decrypt;
+
+	PROCEDURE *Encrypt(VAR Rin: Files.Rider; nIn: LONGINT; VAR Rout: Files.Rider; key: ARRAY OF CHAR; VAR res: INTEGER);
+		VAR
+			i, n: LONGINT;
+			ch: CHAR;
+	BEGIN
+		n := Strings.Length(key); i := 0;
+		WHILE i < nIn DO
+			Files.Read(Rin, ch);
+			Files.Write(Rout, CHR( (ORD(ch)-ORD(key[i MOD n])) MOD 256 ) );
+			INC(i)
+		END;
+		res := Compress.Done
+	END Encrypt;
+
+	PROCEDURE Install*;
+	BEGIN
+		Compress.Decrypt := Decrypt;
+		Compress.Encrypt := Encrypt
+	END Install;
+
+END TestCrypt.
+
+System.Free TestCrypt Compress ~
+System.DeleteFiles Test.Arc ~
+
+Compress.Add \C TestCrypt.Install key Test.Arc TestCrypt.Mod Compress.Mod ~
+Compress.Add Test.Arc System3.Tool ~
+
+Compress.Directory \D Test.Arc ~
+
+Compress.Extract Test.Arc TestCrypt.Mod ~
+Compress.Extract \C TestCrypt.Install key Test.Arc TestCrypt.Mod ~
+Compress.Extract Test.Arc TestCrypt.Mod ~

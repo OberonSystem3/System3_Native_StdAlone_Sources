@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Freecell;	(** written by Patrick Saladin   *)
+MODULE Freecell;	(** portable *)	(** written by Patrick Saladin   *)
 (*
 	17.9.96	fixed bug when moving cards
 *)
@@ -33,15 +32,12 @@ CONST
 	
 TYPE
 	DistributeMsg = RECORD (Display.FrameMsg)
-		tail: Cards.Card;
-		to: ARRAY COLUMN OF Cards.Stack;
-		index: INTEGER;
+		tail: Cards.Card
 	END;
 
 	SetSelectMsg = RECORD (Display.FrameMsg)
 		child: Display.Frame;
-		stack: Cards.Stack;
-		count: INTEGER
+		stack: Cards.Stack
 	END;
 
 	FreeMsg = RECORD (Display.FrameMsg)
@@ -91,16 +87,14 @@ VAR C: Cards.CollectMsg; D: DistributeMsg;
 BEGIN C.res:= -1; D.res:= -1;
 	C.tail:= Cards.NewTail(); F.handle(F, C);
 	Cards.Shuffle(C.tail);
-	D.tail:= C.tail; D.index:= 0; F.handle(F, D)
+	D.tail:= C.tail; F.handle(F, D)
 END StartGame;
 
 PROCEDURE WaitMouseRelease(VAR M: Oberon.InputMsg);
 BEGIN
-	IF M.keys # {} THEN
-		REPEAT Input.Mouse(M.keys, M.X, M.Y); Oberon.DrawCursor(Oberon.Mouse, Effects.PointHand, M.X, M.Y)
-		UNTIL M.keys = {};
-		M.res:= 0
-	END
+	REPEAT Input.Mouse(M.keys, M.X, M.Y); Oberon.DrawCursor(Oberon.Mouse, Effects.PointHand, M.X, M.Y)
+	UNTIL M.keys = {};
+	M.res:= 0
 END WaitMouseRelease;
 
 PROCEDURE GetRowSize(col, temp: INTEGER) : INTEGER;
@@ -151,11 +145,11 @@ BEGIN
 END DrawTemp;
 
 PROCEDURE TrackTemp(T: Cards.Stack; VAR M: Oberon.InputMsg);
-VAR P: Panel; x, y: INTEGER; Fit: FitMsg;
+VAR P: Panel; Fit: FitMsg;
 BEGIN
 	WITH T: Temp DO
 		IF (M.dlink IS Panel) THEN
-			P:= M.dlink(Panel); x:= T.X+M.x; y:= T.Y+M.y;
+			P:= M.dlink(Panel);
 			IF M.keys = {1} THEN
 				Fit.F:= NIL; Fit.card:= T.tail.next; Fit.stack:= NIL; Fit.res:= -1;
 				P.handle(P, Fit);
@@ -186,7 +180,7 @@ BEGIN
 END TrackTemp;
 
 PROCEDURE TempHandler(T: Objects.Object; VAR M: Objects.ObjMsg);
-VAR T0: Temp; c: Cards.Card;
+VAR T0: Temp;
 BEGIN
 	WITH T: Temp DO
 		IF (M IS FreeMsg) & Cards.IsEmpty(T.tail) THEN INC(M(FreeMsg).tempCnt)
@@ -329,10 +323,10 @@ BEGIN
 END DrawColumn;
 
 PROCEDURE TrackColumn(C: Cards.Stack; VAR M: Oberon.InputMsg);
-VAR P: Panel; c, cc: Cards.Card; x, y, i, diff: INTEGER; dcol: BOOLEAN; F: FreeMsg; Fit: FitMsg;	
+VAR P: Panel; c, cc: Cards.Card; x, i, diff: INTEGER; dcol: BOOLEAN; F: FreeMsg; Fit: FitMsg;	
 BEGIN
 	WITH C: Column DO
-		x:= C.X+M.x; y:= C.Y+M.y;
+		x:= C.X+M.x;
 		IF Effects.Inside(M.X, M.Y, x, M.y+C.topY-CardH, CardW, C.H-(C.topY-C.Y)+CardH) & (M.dlink IS Panel) THEN
 			P:= M.dlink(Panel);
 			IF Cards.IsEmpty(C.tail) THEN
@@ -465,7 +459,7 @@ BEGIN
 		IF (M IS SetSelectMsg) THEN
 			WITH M: SetSelectMsg DO
 				IF Panels.IsChild(P, M.child) THEN
-					P.stack:= M.stack;P.count:= M.count;
+					P.stack:= M.stack;
 					IF M.stack # NIL THEN P.card:= M.stack.tail.next^END
 				END
 			END
@@ -660,6 +654,3 @@ BEGIN
 		columnMethods.moveCard:= ColumnMoveCard;
 		columnMethods.restoreStack:= DrawColumn; columnMethods.trackMouse:= TrackColumn; 
 END Freecell.
-
-System.Free Freecell ~
-(Freecell.NewDoc)

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Links;
+MODULE Links;	(** portable *)
 
 (** The Links module manage a set of named references to objects for the gadgets.
 *)
@@ -85,7 +84,7 @@ BEGIN
 		Files.WriteString(R, list.name); WriteRef(R, lib, list.obj);
 		list := list.next
 	END;
-	Files.WriteString(R, 0X)
+	Files.WriteString(R, "")
 END StoreLinks;
 
 (** Load links from a file. *)
@@ -190,7 +189,8 @@ BEGIN
 	END
 END DeleteLink;
 
-(** Default handling of setting, retrieving and enumerating a list of links. Parameter list might be modified during a set operation. *)
+(** Default handling of setting, retrieving and enumerating a list of links. Parameter list might be modified
+during a set operation. *)
 PROCEDURE HandleLinkMsg*(VAR list: Link; VAR M: Objects.LinkMsg);
 VAR p: Link;
 BEGIN
@@ -229,29 +229,29 @@ BEGIN
 END Broadcast;
 
 (** Get the named link of obj. *)
-	PROCEDURE GetLink*(obj: Objects.Object; name: ARRAY OF CHAR; VAR ob1: Objects.Object);
-		VAR L: Objects.LinkMsg;
-	BEGIN
-		IF obj # NIL THEN
-			L.id := Objects.get; L.res := -1; 
-			COPY(name, L.name); L.obj := NIL;
-			obj.handle(obj, L);
-			ob1 := L.obj
-		ELSE
-			ob1 := NIL
-		END
-	END GetLink;
+PROCEDURE GetLink*(obj: Objects.Object; name: ARRAY OF CHAR; VAR ob1: Objects.Object);
+	VAR L: Objects.LinkMsg;
+BEGIN
+	IF obj # NIL THEN
+		L.id := Objects.get; L.res := -1; 
+		COPY(name, L.name); L.obj := NIL;
+		obj.handle(obj, L);
+		ob1 := L.obj
+	ELSE
+		ob1 := NIL
+	END
+END GetLink;
 
 (** Set the named link of obj. *)
-	PROCEDURE SetLink*(obj: Objects.Object; name: ARRAY OF CHAR; ob1: Objects.Object);
-		VAR L: Objects.LinkMsg;
-	BEGIN
-		IF obj # NIL THEN
-			L.id := Objects.set; L.res := -1; 
-			COPY(name, L.name); L.obj := ob1;
-			obj.handle(obj, L)
-		END
-	END SetLink;
+PROCEDURE SetLink*(obj: Objects.Object; name: ARRAY OF CHAR; ob1: Objects.Object);
+	VAR L: Objects.LinkMsg;
+BEGIN
+	IF obj # NIL THEN
+		L.id := Objects.set; L.res := -1; 
+		COPY(name, L.name); L.obj := ob1;
+		obj.handle(obj, L)
+	END
+END SetLink;
 
 END Links.
 

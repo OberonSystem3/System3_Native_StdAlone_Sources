@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE AHA1520;	(* Native driver for Adaptec 152x - Contributed by W. Ibl to the System 3 project 15.02.96 *)
+MODULE AHA1520;	(** non-portable *)	(* Native driver for Adaptec 152x - Contributed by W. Ibl to the System 3 project 15.02.96 *)
 
 IMPORT SYSTEM,Kernel;
 
@@ -381,7 +380,7 @@ BEGIN
 END RemScsiCmd;
 
 PROCEDURE RepInDouble(data,len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,BRSTCNTRL
 	MOV EDI,data[EBP]
@@ -391,7 +390,7 @@ CODE
 END RepInDouble;
 
 PROCEDURE RepInByte(data,len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,DATAPORT
 	MOV EDI,data[EBP]
@@ -401,7 +400,7 @@ CODE
 END RepInByte;
 
 PROCEDURE RepOutDouble(data,len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,BRSTCNTRL
 	MOV ESI,data[EBP]
@@ -411,7 +410,7 @@ CODE
 END RepOutDouble;
 
 PROCEDURE RepOutWord(data,len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,DATAPORT
 	MOV ESI,data[EBP]
@@ -421,7 +420,7 @@ CODE
 END RepOutWord;
 
 PROCEDURE RepOutByte(data,len: LONGINT);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,DATAPORT
 	MOV ESI,data[EBP]
@@ -431,7 +430,7 @@ CODE
 END RepOutByte;
 
 PROCEDURE SetBits(port: INTEGER; bits: SET);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,port[EBP]
 	IN AL,DX
@@ -440,7 +439,7 @@ CODE
 END SetBits;
 
 PROCEDURE ClrBits(port: INTEGER; bits: SET);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,port[EBP]
 	MOV EBX,bits[EBP]
@@ -451,7 +450,7 @@ CODE
 END ClrBits;
 
 PROCEDURE ClrSetBits(port: INTEGER; clr,set: SET);
-CODE
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,port[EBP]
 	MOV EBX,clr[EBP]
@@ -463,33 +462,24 @@ CODE
 END ClrSetBits;
 
 PROCEDURE TestHi(port: INTEGER; bits: SET): BOOLEAN;
-CODE
-	MOV CL,1
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,port[EBP]
 	MOV EBX,bits[EBP]
 	IN AL,DX
 	AND EAX,EBX
 	CMP AL,BL
-	JE end
-	MOV CL,0
-end:
-	MOV AL,CL
+	SETE AL
 END TestHi;
 
 PROCEDURE TestLo(port: INTEGER; bits: SET): BOOLEAN;
-CODE
-	MOV CL,1
+CODE {SYSTEM.i386}
 	MOV DX,portbase
 	ADD DX,port[EBP]
 	MOV EBX,bits[EBP]
 	IN AL,DX
-	AND EAX,EBX
-	CMP AL,0
-	JE end
-	MOV CL,0
-end:
-	MOV AL,CL
+	AND AL, BL
+	SETE AL
 END TestLo;
 
 PROCEDURE LowerACK();

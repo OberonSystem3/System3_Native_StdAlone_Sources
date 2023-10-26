@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE ListGadgets;	(* ps,   *)
+MODULE ListGadgets;	(** portable *)	(* ps,   *)
 
 IMPORT
 	Files, Strings, Input, Display, Display3, Printer, Printer3, Objects, Links, Attributes, Fonts, Texts, Oberon,
@@ -100,7 +99,7 @@ END P;
 
 PROCEDURE TimeOk (): BOOLEAN;
 BEGIN
-	IF Oberon.Time() <= mayscroll THEN RETURN FALSE
+	IF Oberon.Time() - mayscroll <= 0 THEN RETURN FALSE
 	ELSE mayscroll := Oberon.Time() + WaitTime; RETURN TRUE
 	END
 END TimeOk;
@@ -1107,7 +1106,7 @@ BEGIN
 END UpdateFrame;
 
 PROCEDURE FrameAttr (F: Frame; VAR M: Objects.AttrMsg);
-VAR R: ListRiders.Rider; l: Line;
+VAR R: ListRiders.Rider; l: Line; B: Texts.Buffer;
 BEGIN
 	IF M.id = Objects.get THEN
 		IF M.name = "Gen" THEN
@@ -1120,11 +1119,16 @@ BEGIN
 			IF F.point # NIL THEN
 				R := F.do.GetRider(F, FALSE);
 				IF R # NIL THEN
-					Texts.Delete(pointText, 0, pointText.len);
+					Oberon.FadeCursor(Oberon.Mouse);
+					NEW(B); Texts.OpenBuf(B); Texts.Recall(B);
+					IF pointText.len > 0 THEN Texts.Delete(pointText, 0, pointText.len) END;
 					IF inclpath IN F.state0 THEN WritePath(F, F.point, F.point.lev - 1) END;
 					R.do.Seek(R, F.point.key); ValueToStr(R.d, M.s); Texts.WriteString(W, M.s);
 					Texts.Append(pointText, W.buf);
-					Attributes.TxtToStr(pointText, M.s)
+					Attributes.TxtToStr(pointText, M.s);
+					Texts.Delete(pointText, 0, pointText.len);
+					(* restore restore buffer *)
+					Texts.Append(pointText, B); Texts.Delete(pointText, 0, pointText.len)
 				END
 			END
 		ELSIF M.name = "PointKey" THEN
@@ -1576,7 +1580,7 @@ BEGIN
 	Texts.OpenWriter(W);
 	NEW(pointText); Texts.Open(pointText, "");
 
-	WaitTime := 75 * Input.TimeUnit DIV 1000; mayscroll := MIN(LONGINT);
+	WaitTime := 75 * Input.TimeUnit DIV 1000; mayscroll := Oberon.Time();
 
 	NEW(methods);
 	methods.GetRider := GetStandardRider;

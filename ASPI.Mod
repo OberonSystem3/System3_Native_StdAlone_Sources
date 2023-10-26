@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE ASPI;	(* Contributed by P. Ryser to the System 3 project *)
+MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 project *)
 
 	IMPORT SYSTEM, PCI, NCRScript, Kernel;
 
@@ -189,8 +188,9 @@ MODULE ASPI;	(* Contributed by P. Ryser to the System 3 project *)
 		disconnected: LONGINT;
 
 	PROCEDURE -rdtsc;	(* pentium only *)
-	CODE
-		DB 0FH, 31H
+	CODE {SYSTEM.Pentium, SYSTEM.Privileged}
+		;DB 0FH, 31H
+		RDTSC
 	END rdtsc;
 	
 	PROCEDURE GetTime(VAR time: Time);

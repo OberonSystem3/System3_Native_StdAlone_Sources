@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Layouts;	(*	Jörg Derungs, 31.7.1996	*)
+MODULE Layouts;	(** portable *)	(*	Jörg Derungs, 31.7.1996	*)
 
 IMPORT Objects, Gadgets, Display, Out;
 
@@ -22,17 +21,18 @@ CONST	(** Node id constants *)
 		Inval* = Objects.Inval;
 
 		(** data types *)
-		String* = Objects.String;	Int* = Objects.Int;	Real* = Objects.Real;	Bool* = Objects.Bool;	Char* = Objects.Char;
+		Int* = Objects.Int; Real* = Objects.Real; Bool* = Objects.Bool;
+		Char* = Objects.Char; String* = Objects.String;
 		Format* = 8;	Ident* =  9;
 
 		(** operators *)
-		Def* =  20;	Set* =  21;
-		Params* =  22;	Layout* =  23;	Attributes* =  24;	Links* =  25;
-		Instance* = 26;	Obj* = 27;	Break* = 28;
+		Def* =  20; Set* =  21;
+		Params* =  22; Layout* =  23; Attributes* =  24; Links* =  25;
+		Instance* = 26; Obj* = 27; Break* = 28;
 		
 		(** special layout constants used in NewFormat *)
-		Left* = 60;	Right* = 61;	Bottom* = 62;	Top* = 63;	Center* = 64;
-		Static* = 65;	Dynamic* = 66;	Hor* = 67;	Vert* = 68;
+		Left* = 60; Right* = 61; Bottom* = 62; Top* = 63; Center* = 64;
+		Static* = 65; Dynamic* = 66; Hor* = 67; Vert* = 68;
 		
 		
 		(* format ids *)
@@ -45,8 +45,6 @@ CONST	(** Node id constants *)
 		(* ObjNode ids *)
 		leaf = 0; place = 1; list = 2; table = 3;
 		
-		debug = FALSE;
-
 TYPE
 		Node* = POINTER TO NodeDesc;
 		NodeDesc* = RECORD
@@ -86,11 +84,11 @@ TYPE
 			x, y, w, h : INTEGER;
 			row, col, spanw, spanh : INTEGER;
 			minx, miny, minw, minh : INTEGER;	(*  bounding box of components *)
-			hFactor, vFactor : INTEGER;	(* for FILL in object *)
+			hFactor, vFactor : INTEGER;	(* expansion factor *)
 			gmaxw, gmaxh, hexpand, vexpand : IntLine;
 			hfill, vfill : INTEGER;			(* number of fills in components *)
 			hdist, vdist, hborder, vborder : INTEGER;	(* border *)
-			cols, rows : INTEGER;				(* rows and columns in Table *)
+			cols, rows : INTEGER;				(* rows and columns in TABLE *)
 			format : SET;							(* special formatting *)
 			def, lastdef : AssignNode;		(* definitions in Configs *)
 			size : SizeProc;
@@ -212,7 +210,7 @@ BEGIN	NEW (node);
 	RETURN node
 END NewValNode;
 
-(**	convert data to Node	*)
+(**	Nodes for values	*)
 			
 PROCEDURE NewString* (str : ARRAY OF CHAR) : Node;
 VAR node : ValNode;
@@ -397,9 +395,7 @@ BEGIN
 		IF (assign # NIL) & (assign IS AssignNode) THEN WITH assign : AssignNode DO
 			val := GetNode (assign.dsc, TRUE);
 			IF (val # NIL) & (val IS ValNode) THEN WITH val : ValNode DO
-				IF debug THEN Out.String (assign.name); Out.String (" = ") END;
-				IF val = NIL THEN IF debug THEN Out.String ("NIL"); Out.Ln END
-				ELSE IF debug THEN Out.String ("Value"); Out.Ln END;
+				IF val # NIL THEN
 					IF (assign.name = "w") THEN node.w := SHORT (val.int);
 						IF (node.w < 0) & (node.obj # NIL) & (node.obj IS Display.Frame) THEN
 							node.w := node.obj(Display.Frame).W
@@ -478,8 +474,7 @@ BEGIN
 						Out.String ("' or wrong argument type"); Out.Ln
 					END
 				END
-			END ELSIF debug THEN Out.String (assign.name); Out.String (" has no dsc"); Out.Ln
-			END
+			END END
 		END END;
 		layout := layout.next
 	END
@@ -512,7 +507,6 @@ PROCEDURE SizeOfNew (node : ObjNode);		(* node # NIL *)
 BEGIN
 	IF node.sized THEN Reset (node); RETURN
 	ELSE node.sized := TRUE END;
-	IF debug THEN Out.String ("size of new Gadget"); Out.Ln END;
 	FindIdents (node.dsc);
 	Settings (node);
 	IF (node.obj # NIL) & (node.obj IS Display.Frame) THEN
@@ -538,7 +532,7 @@ BEGIN
 	END;
 	IF (node.obj # NIL) & (node.obj IS Display.Frame) THEN
 		obj := node.obj(Display.Frame);
-		M.F := obj; M.id := Display.extend; M.mode := Display.state;
+		M.F := obj; M.id := Display.extend; M.mode := Display.state; M.x := 0; M.y := 0;
 		M.X := node.x; M.Y := node.y; M.W := node.w; M.H := node.h;
 		M.dX := M.X - obj.X; M.dY := M.Y - obj.Y; M.dW := M.W - obj.W; M.dH := M.H - obj.H;
 		M.res := -1; Objects.Stamp(M);
@@ -693,7 +687,6 @@ VAR dsc, obj : Node;
 			IF span = 1 THEN
 				IF fill = 0 THEN expand[col] := MAX(INTEGER)
 				ELSIF fill > expand[col] THEN expand[col] := fill END;
-				IF debug THEN Out.String ("hfill"); Out.Int (col, 3); Out.Int (expand[col], 6); Out.String ("   ") END;
 				IF max[col] < w THEN max[col] := w END;
 			ELSE	cur := anchor; key := LONG(col+span)*LONG(MAX(INTEGER)) - col;
 				WHILE key > cur.next.key DO cur := cur.next END;
@@ -728,7 +721,6 @@ VAR dsc, obj : Node;
 						DEC (cur.size, max[col]);
 						d := col
 					END;
-					IF debug THEN Out.Int (fills, 6); Out.Int (cf, 6); Out.Ln END;
 					IF fills > 0 THEN
 						IF cur.fills > 0 THEN INC (expand[d], cur.fills); INC (nodefills, cur.fills); INC (fills, cur.fills) END;
 						NEW (fillList, fills); m := 0;
@@ -844,7 +836,6 @@ BEGIN
 			FOR col := 0 TO cols-1 DO
 				FOR d := 1 TO expand[col] DO fillList[m] := col; INC (m) END
 			END;
-			IF debug THEN FOR d := 0 TO fills-1 DO Out.Int (fillList[d], 3) END; Out.Ln END;
 			col := 0;
 			WHILE space > 0 DO	d := fillList [col MOD fills];
 				IF max[d] < (col DIV fills) * expand[d] THEN INC (max[d]); DEC (space) END;
@@ -869,13 +860,7 @@ VAR dsc, objnode : Node;
 		break : BOOLEAN;
 BEGIN
 	IF node.made THEN Reset (node); RETURN END;
-	IF debug THEN
-		Out.String ("w, h: "); Out.Int (node.w, 4); Out.Int (node.h, 4); Out.Ln;
-		Out.String ("minw, minh: "); Out.Int (node.minw, 4); Out.Int (node.minh, 4); Out.Ln;
-		Out.String ("hfill, vfill: "); Out.Int (hfill, 4); Out.Int (vfill, 4); Out.Ln
-	END;
 	MakeNew (node, hfill, vfill);
-	IF debug THEN Out.String ("back from MakeNew"); Out.Int (node.rows, 3); Out.Int (node.cols, 3); Out.Ln END;
 	IF node.cols * node.rows = 0 THEN Settings (node); RETURN END;
 	FillCols (node.w-node.minw, node.cols, node.hfill, node.hexpand, node.gmaxw, node.format*{sameWidth, hstatic} # {});
 	FillCols (node.h-node.minh, node.rows, node.vfill, node.vexpand, node.gmaxh, node.format*{sameHeight, vstatic} # {});
@@ -883,7 +868,6 @@ BEGIN
 	SetOffset (node.rows, node.vborder, node.vdist, node.gmaxh, voffset);
 
 	NEW (last); obj := last; obj.slink := NIL; dsc := node.dsc; break := FALSE;
-	IF debug THEN Out.String ("Contents: "); Out.Ln END;
 	WHILE dsc # NIL DO
 		objnode := GetNode (dsc, FALSE);
 		IF (objnode # NIL) & (objnode IS ObjNode) THEN WITH objnode : ObjNode DO
@@ -963,7 +947,6 @@ BEGIN
 		IF (assign # NIL) & (assign.id = Def) THEN
 			NEW (def); def^ := assign(AssignNode)^;
 			def.link := node.def; node.def := def;
-			IF debug THEN Out.String ("DEF "); Out.String (def.name); Out.Ln END;
 		END;
 		dsc := dsc.next;
 	END;
@@ -982,7 +965,6 @@ BEGIN
 			WHILE cur # NIL DO
 				assign := GetNode (cur, TRUE);
 				IF (assign # NIL) & (assign.id = Set) THEN WITH assign : AssignNode DO
-					IF debug THEN Out.String ("replacing "); Out.String (assign.name); Out.Ln END;
 					def := node.def;
 					WHILE (def # NIL) & (def.name # assign.name) DO def := def.link END;
 					IF def # NIL THEN def.dsc := assign.dsc; def.last := assign.last

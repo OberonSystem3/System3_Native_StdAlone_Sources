@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
+MODULE Finder;	(** portable *) (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 
 	IMPORT
 		Input,  Objects, Fonts, Display, Printer, Display3, Printer3, Pictures, Viewers, Texts, Oberon, Effects,
@@ -31,7 +30,7 @@ MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 		TemplateDesc = RECORD
 			next: Template;
 			name: ARRAY 32 OF CHAR;
-			docName: ARRAY 64 OF CHAR
+			docName: ARRAY 128 OF CHAR
 		END;
 
 		Separator = POINTER TO SeparatorDesc;
@@ -247,7 +246,7 @@ MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 	END PopupList;
 
 	PROCEDURE Consume (doc: Desktops.DocGadget);
-	VAR D: Objects.Object; t: Template; name: ARRAY 32 OF CHAR;
+	VAR D: Objects.Object; t: Template; name: ARRAY 128 OF CHAR;
 	BEGIN
 		D := Desktops.Main(doc);
 		IF D # NIL THEN
@@ -292,7 +291,7 @@ MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 		VAR w, h: INTEGER; Q: Display3.Mask;
 	
 		PROCEDURE P(X: INTEGER): INTEGER;
-		BEGIN RETURN SHORT(LONG(10000)*X DIV Printer.Unit)
+		BEGIN RETURN SHORT(Display.Unit*X DIV Printer.Unit)
 		END P;
 
 	BEGIN
@@ -540,7 +539,7 @@ MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 			Texts.WriteString(W, "Oberon.Text - Gadgets.FinderTemplates not found");  Texts.WriteLn(W);
 			Texts.Append(Oberon.Log, W.buf)
 		END;
-		WHILE s.class = Texts.Name DO
+		WHILE s.class IN {Texts.Name, Texts.String} DO
 			i := 0;
 			WHILE s.s[i] # 0X DO
 				IF s.s[i] = ":" THEN name[i] := " " ELSE name[i] := s.s[i] END;
@@ -559,13 +558,13 @@ MODULE Finder; (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 	END UpdateTemplates;
 	
 BEGIN
+	Texts.OpenWriter(W);
 	NEW(pict); Pictures.Create(pict, 16, 16, 8);
 	UpdateTemplates;
 	NEW(methods);
 	methods^ := ListGadgets.methods^;
 	methods.Format := FormatLine; methods.Display := DisplayLine;
-	methods.PrintFormat := ListGadgets. PrintFormatLine; methods.Print := ListGadgets.PrintLine;
-	Texts.OpenWriter(W)
+	methods.PrintFormat := ListGadgets. PrintFormatLine; methods.Print := ListGadgets.PrintLine
 END Finder.
 
 (** A Finder is used to quickly find a document among the many documents piled in a desktop and to place it on top of all others, open and ready. Moving the mouse focus to the finder and pressing the middle mouse key opens the Finder showing a list of document names from which one can be selected by moving the mouse focus up or down. When the mouse key is released, the selected document is brought to the front of the desktop and the finder is closed. Note however, if an open document is only partially visible it can be brought to the front by a simple left mouse click.

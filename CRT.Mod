@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE CRT; (* Cocol-R Tables *)
+MODULE CRT;	(** portable *) (* Cocol-R Tables *)
 
-IMPORT Texts, Oberon, Sets;
+IMPORT SYSTEM (* force native compilation *), Texts, Oberon, Sets;
 
 CONST
 	maxSymbols* = 300;	(*max nr of t, nt, and pragmas*)
@@ -43,7 +42,7 @@ TYPE
 	Name* = ARRAY 16 OF CHAR;  (*symbol name*)
 	Position*   = RECORD     (*position of stretch of source text*)
 		beg*: LONGINT;  (*start relative to beginning of file*)
-		len*: INTEGER;  (*length*)
+		len*: LONGINT;  (*length*)
 		col*: INTEGER;  (*column number of start position*)
 	END ;
 
@@ -319,10 +318,10 @@ PROCEDURE CompFollowSets;
 		WHILE j <= lastNt - firstNt DO (* for all nonterminals *)
 			IF Sets.In(follow[i].nts, j) THEN
 				Complete(j); Sets.Unite(follow[i].ts, follow[j].ts);
-				Sets.Excl(follow[i].nts, j)
+				IF i = curSy THEN Sets.Excl(follow[i].nts, j) END
 			END ;
 			INC(j)
-		END ;
+		END
 	END Complete;
 
 BEGIN (* CompFollowSets *)

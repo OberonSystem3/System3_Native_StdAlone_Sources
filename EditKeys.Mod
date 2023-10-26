@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
+MODULE EditKeys;	(** portable *)	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	IMPORT
-		Objects, Files, Oberon, Input, Fonts, Display, Texts, Documents, 
+		Objects, Oberon, Input, Fonts, Display, Texts, Documents, 
 		TextGadgets0, TextGadgets, TextDocs, Desktops;
 
 	CONST
@@ -31,9 +30,6 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 			keepCmd = "5"; pickCmd = "6"; caretCmd = "7"; indentCmd = "8"; freezeCmd = "9";
 		(*preset.set*)
 			fntPreset = 0; pickPreset = 1; voffPreset = 2; caretPreset = 3; freezePreset = 4;
-
-		Menu = "System.Close  System.Copy  System.Grow  Edit.Search  Edit.Replace  Edit.Parcs  Edit.Store ";
-		SysMenu = "System.Close  System.Copy  System.Grow  Edit.Store ";
 
 	TYPE
 		Ident = ARRAY IdentLen OF CHAR;
@@ -142,7 +138,7 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	(* table handler *)
 
 	PROCEDURE Find (VAR name, trig: Ident; insert: BOOLEAN): Definition;
-		VAR p, q, d, x: Definition; i, j: INTEGER;
+		VAR p, q, d, x: Definition; i: INTEGER;
 	BEGIN Flip(name, trig); p := defs; d := p.right; q := NIL; x := NIL;
 		WHILE d # NIL DO i := 0;
 			WHILE (trig[i] # 0X) & (trig[i] = d.trig[i]) DO INC(i) END;
@@ -267,7 +263,7 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	END GetSym;
 
 	PROCEDURE ParseText;
-		VAR def: Definition; beg, seq: Sequence; f: BOOLEAN;
+		VAR def: Definition; beg, seq: Sequence;
 	BEGIN GetSym;
 		IF sym = bslash THEN
 			GetSym; IF sym = nameSym THEN hotKey := name[0]; GetSym ELSE Mark("hot-key code expected") END
@@ -296,8 +292,8 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 
 	PROCEDURE ReadText (name: ARRAY OF CHAR; beg: LONGINT);
 	BEGIN Texts.OpenReader(R, T, beg); GetCh;
-		IF ~R.eot THEN Str("  reading "); Str(name); WLog; errs := 0; errpos := -10; ParseText;
-			IF errs = 0 THEN Str(" done") ELSE ResetDefs END;
+		IF ~R.eot THEN Str("EditKeys reading "); Str(name); WLog; errs := 0; errpos := -10; ParseText;
+			IF errs = 0 THEN (*Str(" done")*) ELSE Str(" error"); ResetDefs END;
 			Ln; WLog
 		END
 	END ReadText;
@@ -331,7 +327,7 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	END PopArg;
 
 	PROCEDURE PushArg (buf: Texts.Buffer; VAR stack: Sequence);
-		VAR B: Texts.Buffer; u: Sequence;
+		VAR u: Sequence;
 	BEGIN NEW(u); u.next := stack; stack := u; u.stretch := buf
 	END PushArg;
 
@@ -474,9 +470,8 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	(* editor interface *)
 
 	PROCEDURE Key (frame: TextGadgets.Frame; ch: CHAR; VAR handled: BOOLEAN);
-		CONST BS = 8X; TAB = 9X; LF = 0AX; CR = 0DX; DEL = 7FX;
-			BRK = 0ACX; ShiftBRK = 0ADX; CRSL = 0C4X; CRSR = 0C3X;
-		VAR del, pos, beg: LONGINT; i: INTEGER; voff: SHORTINT; fnt: Fonts.Font; ch1: CHAR; didPreset: BOOLEAN;
+		CONST TAB = 9X; LF = 0AX; CR = 0DX; DEL = 7FX;
+		VAR del, pos, beg: LONGINT; voff: SHORTINT; fnt: Fonts.Font; ch1: CHAR;
 	BEGIN handled := TRUE; pos := frame.carpos.pos;
 		IF frame.text.len > 0 THEN
 			IF pos < frame.text.len THEN Texts.OpenReader(R, frame.text, pos); Texts.Read(R, ch1) END;
@@ -527,7 +522,6 @@ MODULE EditKeys;	(* CAS/MH 27 Jan 93 / jm 2.5.95 *)
 	END Key;
 
 	PROCEDURE Handle* (F: Objects.Object; VAR msg: Objects.ObjMsg);
-		CONST InvalMsg = -1;
 		VAR frame: TextGadgets.Frame; handled: BOOLEAN;
 	BEGIN
 		IF msg IS Oberon.InputMsg THEN
@@ -641,4 +635,6 @@ BEGIN
 	ResetDefs;
 	NEW(T); Texts.Open(T, DefaultFile); ReadText(DefaultFile, 0); T := NIL;
 	InitialExec(InstallMacro);
-END EditKeys.GetKeyCode
+END EditKeys.
+
+EditKeys.GetKeyCode

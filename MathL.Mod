@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,20 +13,21 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE MathL;
-
-(* Math.Functions of the 387 *)
-(* ARD, 21. 9. 92 *)
-(* ARD, 10. 6. 94 diff between sin and cos of 386 and 486??? --> 1.0 not on tos *)
-(* pm 29.01.96  modifications for OP2 compiler *)
+MODULE MathL;	(** portable *)
 
 IMPORT S := SYSTEM, Kernel;
 
-CONST e* = 2.718281828459045D0;
+(**
+	Commonly needed Math for LONGREALs.
+*)
+
+CONST
+	e* = 2.7182818284590452354D0;
+	pi* = 3.14159265358979323846D0;
 		(* little-endian: *) L = 0; H = 4;
 		(* big-endian: *) (* H = 0; L = 4; *)
 
-VAR pi*: LONGREAL;
+VAR
 		(* sqrt: *) c11, p10: LONGREAL;
 		(* exp: *) c21, p22, p21, p20, q21, q20: LONGREAL;
 		(* ln: *) c42, p42, p41, p40, q42, q41, q40: LONGREAL;
@@ -35,7 +35,7 @@ VAR pi*: LONGREAL;
 		(* atan: *) c51, s51, c52, s52, c53, s53, p53, p52, p51, p50, q52, q51, q50: LONGREAL;
 
 PROCEDURE -Sin(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0DDH, 004H, 024H	(* FLD qword [ESP] *)
 	DB 0D9H, 0FEH	(* FSIN *)
 	DB 058H	(* POP EAX *)
@@ -43,7 +43,7 @@ CODE
 END Sin;
 
 PROCEDURE -Cos(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0DDH, 004H, 024H	(* FLD qword [ESP] *)
 	DB 0D9H, 0FFH	(* FCOS *)
 	DB 058H	(* POP EAX *)
@@ -51,7 +51,7 @@ CODE
 END Cos;
 
 PROCEDURE -Arctan(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0DDH, 004H, 024H	(* FLD qword [ESP] *)
 	DB 0D9H, 0E8H	(* FLD1 *)
 	DB 0D9H, 0F3H	(* FPATAN ST(1)/ST(0) *)
@@ -60,7 +60,7 @@ CODE
 END Arctan;
 
 PROCEDURE -Sqrt(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0DDH, 004H, 024H	(* FLD qword [ESP] *)
 	DB 0D9H, 0FAH	(* FSQRT ST(0) *)
 	DB 058H	(* POP EAX *)
@@ -68,7 +68,7 @@ CODE
 END Sqrt;
 
 PROCEDURE -Ln(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0D9H, 0E8H				(* FLD1 *)
 	DB 0D9H, 0EAH				(* FLDL2E *)
 	DB 0DEH, 0F9H				(* FDIVP ST(1)/ST(0) *)
@@ -78,13 +78,8 @@ CODE
 	DB 058H	(* POP EAX *)
 END Ln;
 
-PROCEDURE -Pi():LONGREAL;
-CODE
-	DB 0D9H, 0EBH	(* FLDPI *)
-END Pi;
-
 PROCEDURE -Exp(x: LONGREAL):LONGREAL;
-CODE
+CODE {SYSTEM.i386, SYSTEM.FPU}
 	DB 0DDH, 004H, 024H	(* FLD qword [ESP] *)
 	DB 0D9H, 0EAH	(* FLDL2E *)
 	DB 0DEH, 0C9H	(* FMULP ST(1), ST(0) *)
@@ -217,7 +212,6 @@ BEGIN
 END exp;
 
 BEGIN 
-	IF Kernel.copro THEN pi := Pi() ELSE S.PUT(S.ADR(pi)+L, 54442D18H); S.PUT(S.ADR(pi)+H, 400921FBH) (* pi *) END;
 	S.PUT(S.ADR(c11)+L, 0667F3BCDH); S.PUT(S.ADR(c11)+H, 03FE6A09EH);	(* 1/sqrt(2) *)
 	S.PUT(S.ADR(p10)+L, 08F2FCF79H); S.PUT(S.ADR(p10)+H, 03FE2E29BH);
 	S.PUT(S.ADR(c21)+L, 0652B82FEH); S.PUT(S.ADR(c21)+H, 03FF71547H);	(* 1/ln(2) *)

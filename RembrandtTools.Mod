@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,12 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE RembrandtTools;
+MODULE RembrandtTools;	(** portable *)
 (** Enthält alle Operationen zum Rembrandt-Editor *)
 
 IMPORT
-	D3:= Display3, Display, Oberon, Pictures, Effects, Input, Rembrandt, Gadgets, Texts, Rembrandt0,
-	Math, RembrandtDocs, Objects;
+	D3:= Display3, Display, Oberon, Pictures, Effects, Input, Rembrandt, Gadgets, Texts, Rembrandt0, Math, RembrandtDocs,
+		Objects;
 
 CONST
 	(* Symmetrien *)
@@ -225,7 +224,7 @@ TYPE Stack=POINTER TO StackDesc;
 		END;
 
 VAR  st: Stack;
-	bg : INTEGER; 
+	bg: INTEGER; 
 	x, y, 	
 	l, r, 		(*left and right border of actual line*)
 	l0, r0, 	(*left and right border of previous line*)
@@ -561,7 +560,7 @@ END Rot;
 
 PROCEDURE HandleRotate(F: Rembrandt.Frame; VAR M: Oberon.InputMsg; x, y: INTEGER);
 CONST dispw=40; disph=16;
-VAR keysum: SET; ox, oy, px, py, dphi, phi, px0, py0 : INTEGER; Q: D3.Mask;
+VAR keysum: SET; ox, oy, px, py, dphi, phi: INTEGER; Q: D3.Mask;
 		orx1, ory1, orx2, ory2, orx3, ory3, orx4, ory4, cmx, cmy: INTEGER; S, D, P: Pictures.Picture;
 		ox1, oy1, ox2, oy2, ox3, oy3, ox4, oy4, selx, sely, selw, selh, zoom: INTEGER;
 		disptext: ARRAY 8 OF CHAR;
@@ -672,7 +671,6 @@ BEGIN
 	Rembrandt.PicttoScreen(F, x, y, F.sx, F.sy, ox, oy);
 	IF F.selection=Rembrandt.No THEN RETURN END;
 	Gadgets.MakeMask(F, x, y, M.dlink, Q);
-	px0:= F.sx; py0:= F.sy; Rembrandt.GetZoom(F, zoom);
 	orx1:= ox; ory1:= oy; orx2:= (ox+F.sw*zoom); ory2:= oy; orx3:= orx2; ory3:= (oy+F.sh*zoom); orx4:= ox; ory4:= ory3;
 	ox1:= orx1; oy1:= ory1; ox2:= orx2; oy2:= ory2; ox3:= orx3; oy3:= ory3; ox4:= orx4; oy4:= ory4;
 	cmx:= orx1+(orx2-orx1+1) DIV 2;

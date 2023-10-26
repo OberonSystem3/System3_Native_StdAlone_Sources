@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Texts; (*JG 23.8.94*)
+MODULE Texts; (** portable *)	(*JG 23.8.94*)
 
 (** The Texts module implements the text abstract data type. Texts are sequences of 
 characters and objects, with different colors, different fonts, and vertical offsets.
@@ -32,9 +31,9 @@ characters and objects, with different colors, different fonts, and vertical off
     Real* = 4;          (** Real number x. *)
     LongReal* = 5;  (** Long real number y. *)
     Char* = 6;          (** Special character c. *)
-	Object* = 7;      (** Object obj *)
+	Object* = 7;      (** Object obj. *)
 
-    TAB = 9X; CR = 0DX;
+    TAB = 9X; CR = 0DX; LF = 0AX;
     OldTextBlockId = 1X; OldTextSpex = 0F0X;
 
     (* TextBlock = TextBlockId type hlen run {run} 0 tlen {AsciiCode} [font block].
@@ -122,7 +121,8 @@ TYPE
 	nameChars: ARRAY 256 OF BOOLEAN; 
 	obs: Objects.Library;
 	
-  PROCEDURE GenAscii (T: Text; f: Files.File);
+(** Load text block from ASCII file f to text T. *)
+  PROCEDURE LoadAscii* (T: Text; f: Files.File);
     VAR Q, q: Piece; len: LONGINT;
   BEGIN len := Files.Length(f);
     NEW(Q); Q.f := Wfile; Q.off := 0; Q.len := 1; Q.ref := MIN(INTEGER);
@@ -133,7 +133,7 @@ TYPE
     T.handle := H; T.obs := NIL;
     T.trailer := Q; T.len := len;
     T.org := -1; T.pce := T.trailer (*init cache*)
-  END GenAscii;
+  END LoadAscii;
 
   PROCEDURE ReadDocHeader (VAR R: Files.Rider);
     VAR ch: CHAR; x, y, w, h: INTEGER; name: ARRAY 32 OF CHAR;
@@ -143,7 +143,7 @@ TYPE
     Files.ReadInt(R, w); Files.ReadInt(R, h)
   END ReadDocHeader;
 
-(** Load text block from file f at position pos to text T (assumes that the text id has been read already). *)
+(** Load text block from file f at position pos to text T (assumes that the text id has been read already). len returns length. *)
   PROCEDURE Load* (T: Text; f: Files.File; pos: LONGINT; VAR len: LONGINT);
     VAR
       R, S: Files.Rider;
@@ -191,7 +191,7 @@ TYPE
         Files.Read(R, q.voff);
         Files.ReadLInt(R, q.len);
         IF q.len < 0 THEN
-          GenAscii (T, f); RETURN
+          LoadAscii (T, f); RETURN
         END;
        q.f := f; q.off := off;
         off := off + q.len;
@@ -226,6 +226,18 @@ TYPE
       len := hlen - 1 + tlen + flen
   END Load;
 
+	PROCEDURE SyncPiece(T: Text; p: Piece);
+		VAR
+			R: Files.Rider;
+			ch: CHAR;
+	BEGIN
+		IF (p.ref >= 0) & (p.obj = NIL) & ~(p.lib IS Fonts.Font) THEN
+			T.obs.GetObj(T.obs, p.ref, p.obj);
+			Files.Set(R, p.f, p.off); Files.Read(R, ch);
+			p.lib.PutObj(p.lib, ORD(ch), p.obj)
+		END
+	END SyncPiece;
+
 (** Store text T on disk file f at position pos. Writes the first id character too. len is the number of bytes written. *)
   PROCEDURE Store* (T: Text; f: Files.File; pos: LONGINT; VAR len: LONGINT);
 	TYPE
@@ -237,7 +249,7 @@ TYPE
     VAR
       p, q: Piece;
       R, W: Files.Rider;
-      hlen, flen, rlen, m: LONGINT;
+      hlen, flen, rlen, m, po: LONGINT;
       id, i: INTEGER;
       N, n: SHORTINT;
       type, ch: CHAR;
@@ -248,8 +260,8 @@ TYPE
   BEGIN
     Files.Set(W, f, pos);
     Files.Write(W, TextBlockId);
-    Files.Write(W, type); (*place holder*)
-    Files.WriteLInt(W, hlen); (*place holder*)
+    Files.Write(W, 0X (*type*)); (*place holder*)
+    Files.WriteLInt(W, 0 (*hlen*)); (*place holder*)
     Dict[0] := "";
     N := 1;
     p := T.trailer.next;
@@ -270,7 +282,7 @@ TYPE
       Files.WriteLInt(W, rlen);
       p := q
     END;
-    Files.Write(W, 0); Files.WriteLInt(W, T.len);
+    Files.Write(W, 0X); Files.WriteLInt(W, T.len);
     NEW(allObjs);
     allObjs.next := NIL;
     curObjs := allObjs;
@@ -280,7 +292,10 @@ TYPE
       Files.Set(R, p.f, p.off); m := p.len;
       WHILE m # 0 DO Files.Read(R, ch);
         IF p.lib.name[0] = 0X THEN
+          SyncPiece(T, p);
           p.lib.GetObj(p.lib, ORD(ch), obj); p.obj := obj;
+          po := Files.Pos(R);
+          ASSERT(obj # NIL);
           curObjs.objs[id MOD 256] := obj;
           i := 0; objs := allObjs;
           WHILE objs.objs[i MOD 256] # obj DO
@@ -374,7 +389,7 @@ TYPE
       	END 
       END;
       IF (ch = TextBlockId) OR (ch = OldTextBlockId) THEN Load(T, f, Files.Pos(R), len)
-        ELSE GenAscii(T, f)
+        ELSE LoadAscii(T, f)
       END
     ELSE GenNew(T)
     END
@@ -485,18 +500,6 @@ TYPE
     END
   END Replace;
 
-	PROCEDURE SyncPiece(T: Text; p: Piece);
-		VAR
-			R: Files.Rider;
-			ch: CHAR;
-	BEGIN
-		IF (p.ref >= 0) & (p.obj = NIL) & ~(p.lib IS Fonts.Font) THEN
-			T.obs.GetObj(T.obs, p.ref, p.obj);
-			Files.Set(R, p.f, p.off); Files.Read(R, ch);
-			p.lib.PutObj(p.lib, ORD(ch), p.obj);
-		END
-	END SyncPiece;
-
 (** Change character attributes within stretch [beg, end[ of text T. sel selects the attributes to be changed: 0, 1, 2 IN sel = fnt, col, voff selected. *)
   PROCEDURE ChangeLooks* (T: Text; beg, end: LONGINT; sel: SET; lib: Objects.Library; col, voff: SHORTINT);
     VAR pb, pe, p: Piece; org: LONGINT; M: UpdateMsg; A: Objects.AttrMsg;
@@ -516,7 +519,7 @@ TYPE
 					A.id := Objects.get; A.name := "Color"; A.class := Objects.Inval; A.res := -1;
 					p.obj.handle(p.obj, A);
 					IF A.res = 0 THEN
-						A.id := Objects.set; A.class := Objects.Int; A.i := col;
+						A.id := Objects.set; A.class := Objects.Int; A.i := LONG(col) MOD 256;
 						p.obj.handle(p.obj, A)
 					END
 				END;
@@ -589,7 +592,7 @@ TYPE
     WITH obj: Text DO
       IF M IS Objects.AttrMsg THEN
         WITH M: Objects.AttrMsg DO
-          IF M.name = "Gen" THEN M.s := "Texts.New" END
+          IF M.name = "Gen" THEN M.class := Objects.String; M.s := "Texts.New"; M.res := 0 END
         END
       ELSIF M IS Objects.CopyMsg THEN
         WITH M: Objects.CopyMsg DO
@@ -664,7 +667,7 @@ information about the last character read. *)
     Files.Read(R.R, ch);
     R.lib := R.ref.lib; R.col := R.ref.col; R.voff := R.ref.voff;
     INC(R.off);
-    IF R.off >= R.ref.len THEN	(* ejz 27.02.96, was = *)
+    IF R.off >= R.ref.len THEN
       IF R.ref.f = Wfile THEN R.eot := TRUE END;
       R.org := R.org + R.ref.len; R.ref := R.ref.next; R.off := 0;
       IF R.ref.ref >= 0 THEN (* load object *)
@@ -684,7 +687,7 @@ information about the last character read. *)
   BEGIN OpenReader(S, T, pos); S.line := 0; Read(S, S.nextCh)
   END OpenScanner;
 
-  (* Scanners *)
+  (* Scanners --------------- NW --------------- *)
 
   (*IEEE floating-point formats  (BM 1992.1.1): (-1)^s * 1.m * 2^(e-e0), where
    
@@ -706,7 +709,7 @@ information about the last character read. *)
     LOOP
       IF (S.lib = NIL) OR ~(S.lib IS Fonts.Font) THEN EXIT
       ELSIF ch = CR THEN INC(S.line)
-      ELSIF (ch # " ") & (ch # TAB) THEN EXIT
+      ELSIF (ch # " ") & (ch # TAB) & (ch # LF) THEN EXIT
       END ;
       Read(S, ch)
     END;
@@ -714,11 +717,16 @@ information about the last character read. *)
       S.class := Inval; S.eot := TRUE; Read(S, ch)
     ELSIF ~(S.lib IS Fonts.Font) THEN
       S.class := Object; S.lib.GetObj(S.lib, ORD(ch), S.obj); Read(S, ch)
-    ELSIF ("A" <= CAP(ch)) & (CAP(ch) <= "Z") THEN (*name*)
-      REPEAT 
+    ELSIF ("A" <= CAP(ch)) & (CAP(ch) <= "Z") OR (ch = ".") OR (ch = "/") OR (ch = ":") THEN (*name*)
+      REPEAT
         S.s[i] := ch; INC(i); Read(S, ch)
       UNTIL ~(nameChars[ORD(ch)]) OR ~(S.lib IS Fonts.Font) OR (i = LEN(S.s)-1);
-      S.s[i] := 0X; S.len := i; S.class := Name
+      S.s[i] := 0X;
+      IF (i = 1) & ((CAP(S.s[0]) < "A") OR (CAP(S.s[0]) > "Z")) THEN
+      	S.c := S.s[0]; S.class := Char
+      ELSE
+      	S.len := i; S.class := Name
+      END
     ELSIF ch = 22X THEN (*literal string*)
       Read(S, ch); 
       WHILE (ch # 22X) & (ch >= " ") & (S.lib IS Fonts.Font) & (i # LEN(S.s)-1) DO
@@ -921,7 +929,11 @@ BEGIN
   e:= Reals.Expo(x);
   IF e = 255 THEN
     WHILE n > 8 DO Write(W, " "); DEC(n) END;
-    WriteString(W, "     NaN")
+    h := Reals.NaNCode(x);
+    IF h # 0 THEN WriteString(W, "     NaN")
+    ELSIF x < 0 THEN WriteString(W, "    -INF")
+    ELSE WriteString(W, "      INF")
+    END
   ELSE
     IF n <= 8 THEN n := 1 ELSE DEC(n, 7) END;
     REPEAT Write(W, " "); DEC(n) UNTIL n <= 7; (* 0 <= n <= 7 fraction digits *)
@@ -956,7 +968,11 @@ BEGIN
   e := Reals.Expo(x);
   IF (e = 255) OR (ABS(E) > 38) THEN
     WHILE n > 8 DO Write(W, " "); DEC(n) END;
-    WriteString(W, "     NaN")
+    h := Reals.NaNCode(x);
+    IF h # 0 THEN WriteString(W, "     NaN")
+    ELSIF x < 0 THEN WriteString(W, "    -INF")
+    ELSE WriteString(W, "      INF")
+    END
   ELSE
     IF E = 0 THEN DEC(n, 2) ELSE DEC(n, 6) END;
     IF f < 0 THEN f := 0 END;
@@ -1011,7 +1027,11 @@ BEGIN
   e:= Reals.ExpoL(x);
   IF e = 2047 THEN
     WHILE n > 9 DO Write(W, " "); DEC(n) END;
-    WriteString(W, "      NaN")
+    Reals.NaNCodeL(x, h, l);
+    IF (h # 0) OR (l # 0) THEN WriteString(W, "      NaN")
+    ELSIF x < 0 THEN WriteString(W, "     -INF")
+    ELSE WriteString(W, "      INF")
+    END
   ELSE
     IF n <= 9 THEN n:= 1 ELSE DEC(n, 8) END;
     REPEAT Write(W, " "); DEC(n) UNTIL n <= 15; (* 0 <= n <= 15 fraction digits *)
@@ -1043,7 +1063,11 @@ BEGIN
   e := Reals.ExpoL(x);
   IF (e = 2047) OR (ABS(D) > 308) THEN
     WHILE n > 9 DO Write(W, " "); DEC(n) END;
-    WriteString(W, "      NaN")
+    Reals.NaNCodeL(x, h, l);
+    IF (h # 0) OR (l # 0) THEN WriteString(W, "      NaN")
+    ELSIF x < 0 THEN WriteString(W, "     -INF")
+    ELSE WriteString(W, "      INF")
+    END
   ELSE
     IF D = 0 THEN DEC(n, 2) ELSE DEC(n, 7) END;
     IF n < 2 THEN n := 2 END;
@@ -1101,7 +1125,8 @@ END WriteLongRealFix;
   END WritePair;
 
   BEGIN
-    WritePair(" ", d MOD 32); WritePair(".", d DIV 32 MOD 16); WritePair(".", d DIV 512 MOD 128);
+    WritePair(" ", d MOD 32); WritePair(".", d DIV 32 MOD 16);
+    Write(W, ".");  WriteInt(W, 1900 + d DIV 512, 1);
     WritePair(" ", t DIV 4096 MOD 32); WritePair(":", t DIV 64 MOD 64); WritePair(":", t MOD 64)
   END WriteDate;
 
@@ -1138,7 +1163,7 @@ END WriteSet;
 	PROCEDURE WriteObj*(VAR W: Writer; obj: Objects.Object);
 		VAR lib: Objects.Library;
 	BEGIN
-		IF (obj.lib = NIL) OR (obj.ref < 0) THEN
+		IF (obj.lib = NIL) OR (obj.ref < 0) OR (obj.lib.name = "") THEN (* free or private *)
 			IF obs = NIL THEN
 				NEW(obs); Objects.OpenLibrary(obs)
 			END;
@@ -1148,32 +1173,33 @@ END WriteSet;
 				obs.GenRef(obs, obj.ref)
 			END;
 			obs.PutObj(obs, obj.ref, obj)
-		ELSIF obj.ref >= 256 THEN
-			HALT(99)
 		END;
+		ASSERT(obj.ref < 256);
 		lib := W.lib;
 		SetFont(W, obj.lib);
 		Write(W, CHR(obj.ref));
 		SetFont(W, lib)
 	END WriteObj;
 
-	PROCEDURE InitScan;
-		VAR i: INTEGER;
+	PROCEDURE InitScan();
+		VAR i: LONGINT;
 	BEGIN
 		FOR i := 0 TO 255 DO nameChars[i] := FALSE END;
+		FOR i := 80H TO 96H DO nameChars[i] := TRUE END;  (* german characters *) 
 		FOR i := ORD("0") TO ORD("9") DO nameChars[i] := TRUE END;
 		FOR i := ORD("A") TO ORD("Z") DO nameChars[i] := TRUE END;
 		FOR i := ORD("a") TO ORD("z") DO nameChars[i] := TRUE END;
 		nameChars[ORD("@")] := TRUE;	(* mail, compiler *)
 		nameChars[ORD(".")] := TRUE;	(* mail, filenames, compiler *)
 		nameChars[ORD("/")] := TRUE;	(* filenames *)
-		nameChars[ORD(":")] := TRUE	(* filenames *)
+		nameChars[ORD(":")] := TRUE;	(* filenames (Mac) *)
+		nameChars[ORD("_")] := TRUE
 	END InitScan;
 
 BEGIN
   TextBlockId := 0F0X; DocBlockId := 0F7X; NoSpex := 0X; TextSpex := 1X; NoSpex2 := 2X;
   H := Handle; Wfile := Files.New(""); Files.Set(R, Wfile, 0); Files.Write(R, 0X);
-  NEW(DelBuf); OpenBuf(DelBuf); InitScan; obs := NIL
+  NEW(DelBuf); OpenBuf(DelBuf); InitScan(); obs := NIL
 END Texts.
 
 (** Remarks:

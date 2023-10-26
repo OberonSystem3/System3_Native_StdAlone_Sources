@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Views; (* jm 19.1.95 *)
+MODULE Views;	(** portable *) (* jm 19.1.95 *)
 
 (** Implementation of camera-views with adjustable viewpoints.
  *)
@@ -41,7 +40,6 @@ IMPORT
 
 CONST
 	VersionNo = 2;
-	DisplayUnit = LONG(10000);
 	
 TYPE
 	View* = POINTER TO ViewDesc;
@@ -75,7 +73,7 @@ BEGIN IF x < y THEN RETURN x; ELSE RETURN y; END;
 END Min;
 
 (* background drawing procedure *)
-PROCEDURE ReplConst(F: View; X, Y: INTEGER; M: Display3.Mask; col, x, y, w, h, mode: INTEGER);
+PROCEDURE ReplConst(F: View; X, Y: INTEGER; M: Display3.Mask; col, x, y, w, h: INTEGER);
 VAR cx, cy, cw, ch, t: INTEGER;
 BEGIN
 	(* Display3.ReplConst(M, col, x, y, w, h, Display.replace) *)
@@ -129,7 +127,7 @@ PROCEDURE CutoutBack(F: View; R: Display3.Mask; x, y, w, h, X, Y, W, H: INTEGER)
 VAR B, T, nH: INTEGER;
 	
 	PROCEDURE Enum(x1, y1, w1, h1: INTEGER);
-	BEGIN IF (w1 > 0) & (h1 > 0) THEN ReplConst(F, X, Y , R, background, x1, y1, w1, h1, Display.replace) END;
+	BEGIN IF (w1 > 0) & (h1 > 0) THEN ReplConst(F, X, Y , R, background, x1, y1, w1, h1) END;
 	END Enum;
 	
 BEGIN
@@ -152,7 +150,7 @@ BEGIN
 	IF (F.obj # NIL) & (F.obj IS Display.Frame) THEN
 		f := F.obj(Display.Frame);
 		IF (f IS Gadgets.Frame) & (Gadgets.transparent IN f(Gadgets.Frame).state) THEN
-			ReplConst(F, x, y, R, col, x, y, w, h, Display.replace);
+			ReplConst(F, x, y, R, col, x, y, w, h);
 		ELSE
 			cx := x + F.vx; cy := y + F.H + F.vy - f.H; cw := f.W; ch := f.H; (* area of child frame *)
 			ClipAgainst(cx, cy, cw, ch, x + F.border, y + F.border, w - F.border * 2, h - F.border * 2);
@@ -161,11 +159,11 @@ BEGIN
 		M.device := Display.screen; M.id := Display.full; M.F := NIL; M.dlink := dlink; M.res := -1;
 		ToFrame(F, x, y + h - 1, M)
 	ELSE
-		ReplConst(F, x, y, R, col, x, y, w, h, Display.replace);
+		ReplConst(F, x, y, R, col, x, y, w, h);
 		Display3.CenterString(R, Display3.FG, x, y, w, h, Fonts.Default, "Empty View", Display3.textmode);
 	END;
-	IF Gadgets.selected IN F.state THEN 
-		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint) 
+	IF Gadgets.selected IN F.state THEN
+		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
 	END
 END RestoreView;
 
@@ -180,7 +178,7 @@ BEGIN
 	IF (F.obj # NIL) & (F.obj IS Display.Frame) THEN
 		f := F.obj(Display.Frame);
 		IF (f IS Gadgets.Frame) & (Gadgets.transparent IN f(Gadgets.Frame).state) THEN
-			ReplConst(F, x, y, R, col, x, y, w, h, Display.replace)
+			ReplConst(F, x, y, R, col, x, y, w, h)
 		ELSE
 			cx := x + F.vx; cy := y + F.H + F.vy - f.H; cw := f.W; ch := f.H; (* area of child frame *)
 			ClipAgainst(cx, cy, cw, ch, x + F.border, y + F.border, w - F.border * 2, h - F.border * 2);
@@ -191,7 +189,7 @@ BEGIN
 		M.device := Display.screen; M.id := Display.area; M.F := f; M.dlink := dlink; M.res := -1;
 		ToFrame(F, x, y + h - 1, M)
 	ELSE
-		ReplConst(F, x, y, R, col, x, y, w, h, Display.replace);
+		ReplConst(F, x, y, R, col, x, y, w, h);
 		Display3.CenterString(R, Display3.FG, x, y, w, h, Fonts.Default, "Empty View", Display3.textmode);
 	END;
 	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint) END;
@@ -233,7 +231,7 @@ BEGIN
 				Display3.Subtract(R, F.vx, F.vy - M.H + 1, M.W, M.H)
 			END;
 			R.x := x; R.y := y + h - 1;
-			ReplConst(F, x, y, R, background, x+F.border, y+F.border, w-F.border*2, h-F.border*2, Display.replace);
+			ReplConst(F, x, y, R, background, x+F.border, y+F.border, w-F.border*2, h-F.border*2);
 			AdjustToFrame(F, x, y + h - 1, M);
 			IF Gadgets.selected IN F.state THEN
 				Display3.FillPattern(RM, 15, Display3.selectpat, x, y, x, y, w, h, Display.paint)
@@ -246,7 +244,7 @@ BEGIN
 				Display3.Subtract(R, F.vx, F.vy - M.H + 1, M.W, M.H)
 			END;
 			R.x := x; R.y := y + h - 1;
-			ReplConst(F, x, y, R, background, x+F.border, y+F.border, w-F.border*2, h-F.border*2, Display.replace);
+			ReplConst(F, x, y, R, background, x+F.border, y+F.border, w-F.border*2, h-F.border*2);
 			AdjustToFrame(F, x, y + h - 1, M);
 			IF Gadgets.selected IN F.state THEN
 				Display3.FillPattern(RM, 15, Display3.selectpat, x, y, x, y, w, h, Display.paint)
@@ -292,9 +290,25 @@ END LoadView;
 
 PROCEDURE ViewAttr(F: View; VAR M: Objects.AttrMsg);
 BEGIN
-	IF (M.id = Objects.get) & (M.name = "Gen") THEN
-		COPY("Views.NewView", M.s); M.class := Objects.String; M.res := 0
-	ELSE Gadgets.framehandle(F, M)
+	IF M.id = Objects.get THEN
+		IF M.name = "Gen" THEN M.s := "Views.NewView"; M.class := Objects.String; M.res := 0
+		ELSIF M.name = "Locked" THEN M.class := Objects.Bool; M.b := Gadgets.lockedcontents IN F.state; M.res := 0
+		ELSE Gadgets.framehandle(F, M)
+		END
+	ELSIF M.id = Objects.set THEN
+		IF M.name = "Locked" THEN
+			IF M.class = Objects.Bool THEN
+				IF M.b THEN
+					F.state := F.state + {Gadgets.lockedcontents}
+				ELSE
+					F.state := F.state - { Gadgets.lockedcontents}
+				END;
+				M.res := 0
+			END
+		ELSE Gadgets.framehandle(F, M)
+		END
+	ELSIF M.id = Objects.enum THEN
+		M.Enum("Locked"); Gadgets.framehandle(F, M)
 	END
 END ViewAttr;
 
@@ -388,7 +402,7 @@ PROCEDURE PrintView(F: View; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; u, v: INTEGER; f: Display.Frame;
 
 	PROCEDURE PP(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * DisplayUnit DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END PP;
 
 BEGIN
@@ -502,7 +516,8 @@ CONST size = 10; GravQ = 4; MinGrav = 2;
 	VAR hg, vg: INTEGER;
 	BEGIN
 		IF (W <= Effects.gravity*3) OR (H <= Effects.gravity*3) THEN
-			hg := Min(Effects.gravity, Max(W DIV GravQ, MinGrav)); vg := Min(Effects.gravity, Max(H DIV GravQ, MinGrav));
+			hg := Min(Effects.gravity, Max(W DIV GravQ, MinGrav));
+			vg := Min(Effects.gravity, Max(H DIV GravQ, MinGrav));
 			RETURN Effects.Inside(mx, my, X + hg, Y, 1, H) OR
 			 Effects.Inside(mx, my, X, Y + vg, W, 1) OR
 			 Effects.Inside(mx, my, X+W-hg - 1, Y, 1, H) OR
@@ -583,7 +598,7 @@ BEGIN
 END TrackMouse;
 
 PROCEDURE *ViewHandler(F: Objects.Object; VAR M: Objects.ObjMsg);
-VAR x, y, w, h, u, v: INTEGER; F0: View; R: Display3.Mask;
+VAR x, y, w, h, u, v: INTEGER; F0: View;
 BEGIN
 	WITH F: View DO
 		IF M IS Objects.AttrMsg THEN ViewAttr(F, M(Objects.AttrMsg))
@@ -686,7 +701,7 @@ END ViewOf;
 
 (** Save a description of a rectangular area on the display. RestoreBlock will issue a DisplayMsg to redraw this part of the display. Note that the mask of the Block must be used to draw in the area X, Y, W, H as the camera-view might be clipping parts away. These two procedures provide a portable, safe and memory efficient way of "storing" parts of the display while drawing temporarily. A low level way of saving and restoring areas on the display is provided by Effects, or by module Bitmaps. *)
 PROCEDURE GetBlock*(X, Y, W, H: INTEGER; dlink: Objects.Object; VAR b: Block);
-VAR obj: Objects.Object; F: Gadgets.Frame; cx, cy, cw, ch, dX: INTEGER;
+VAR obj: Objects.Object; F: Gadgets.Frame;
 BEGIN
 	b.view := NIL; b.mask := NIL;
 	obj := dlink;
@@ -722,7 +737,7 @@ END GetBlock;
 
 (** Restore previously "saved" display area. *)
 PROCEDURE RestoreBlock*(b: Block);
-VAR M: Display.DisplayMsg; cx, cy, cw, ch, dX: INTEGER;
+VAR M: Display.DisplayMsg;
 BEGIN
 	IF b.view # NIL THEN
 		M.device := Display.screen; M.id := Display.area; M.F := b.view; M.u := b.x; M.v := b.y; M.w := b.w; M.h := b.h;

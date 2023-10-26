@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,16 +13,16 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
+MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 
-	IMPORT OPT, OPS, OPM, Files, Objects, Texts, Oberon, Gadgets, Out;
+	IMPORT Modules, OPT, OPS, OPM, Files, Objects, Texts, Oberon, Gadgets, Out;
 
 	CONST
 	(* CONST used to read symbol file *)
-		symFileId = 0F7X;	symFileExt = ".Sym"; 
+		symFileId = 0BBX; 
 		
 		(*object modes *)
-		Var = 1; VarPar = (*3*)2; Con = 3; Fld = 4; Typ = 5; LProc = 6; XProc = 7;
+		Var = 1; VarPar = 2; Con = 3; Fld = 4; Typ = 5; LProc = 6; XProc = 7;
 		SProc = 8; CProc = 9; IProc = 10; Mod = 11; TProc = 13; Head = 12;
 	
 		(* structure forms *)
@@ -32,24 +31,22 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 		Pointer = 13; ProcTyp = 14; Comp = 15;
 			
 		(* composite structure forms *)
-		Basic = 1; Array = 2; DynArr = 4; Record = 5;
+		Basic = 1; StaticArr = 2; SDynArr = 3; DynArr = 4; OpenArr = 5; Record = 6;
 
 		(* visibility of objects *)
 		internal = 0; external = 1; externalR = 2;
 	
 
 	(* CONST used to read object file *)
-		objFileExt = ".Obj"; 
-
 		(* block ids *)
-		objFileId = 0F8X; EntryId = 082X; CmdId = 083X; PtrId = 084X; ImpId = 085X;
+		objFileId = 0BBX; EntryId = 082X; CmdId = 083X; PtrId = 084X; ImpId = 085X;
 		LinkId = 086X; DataId = 087X; CodeId = 088X; TypeId = 089X; RefId = 08BX;
 		VarEntryId = 08CX;
 
 		HeaderSize = 34;
 
 		(* obj-file version *)
-		Version	=	036X;
+		Version	=	0AFX;
 
 
 	(* other CONST *)
@@ -261,10 +258,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 				IF showAdr THEN
 					Ch("["); Num(obj.adr MOD 10000H); Str(", "); Num(obj.adr DIV 10000H); Str("] ")
 				END;
-				Str("PROCEDURE (");
-				firstpar := obj.link;
-				IF firstpar.mode = VarPar THEN Str("VAR ") END;
-				Str(firstpar.name); Str(": "); Str(firstpar.typ.strobj.name); Str(") ");
+				Str("PROCEDURE "); firstpar := obj.link;
+				IF firstpar.typ.strobj.link2 = obj THEN Str("& ")  END;
 				Str(obj.name);
 				WriteParams(firstpar^.link, obj.typ);
 				Ch(";"); Ln;
@@ -287,7 +282,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 		IF typ # NIL THEN
 			IF expandTypes & (extlev > 0) THEN
 				WriteInstVars(typ.BaseTyp, i, extlev);
-				Indent(i); Str("(* "); Str(OPT.GlbMod[typ.mno-1].name); Ch("."); Str(typ.strobj.name); Str(" *)"); Ln
+				Indent(i); Str("(* "); Str(OPT.modules[typ.mno-1].name); Ch("."); Str(typ.strobj.name); Str(" *)"); Ln
 			END;
 			WriteFieldList(typ.link, i);
 			WriteTProcs(typ.link, i)
@@ -301,12 +296,15 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 			IF showAdr THEN Str(" [size = "); Num( typ.size); Ch("]") END;
 			IF typ.link # NIL THEN Ln; WriteInstVars(typ, i, typ.extlev); Indent(i - 1) ELSE Ch(" ") END;
 			Str("END")
-		ELSIF (typ.form = Comp) & (typ.comp = Array) THEN
+		ELSIF (typ.form = Comp) & (typ.comp = StaticArr) THEN
 			Str("ARRAY "); Num(typ.n); Str(" OF "); WriteType(typ.BaseTyp, i)
-		ELSIF (typ.form = Comp) & (typ.comp = DynArr) THEN
+		ELSIF (typ.form = Comp) & (typ.comp = OpenArr) THEN
 			Str("ARRAY OF "); WriteType(typ.BaseTyp, i)
+		ELSIF (typ.form = Comp) & (typ.comp = DynArr) THEN
+			Str("ARRAY * OF "); WriteType(typ.BaseTyp, i)
 		ELSIF typ.form = Pointer THEN
-			Str("POINTER TO "); WriteType(typ.BaseTyp, i);
+			Str("POINTER TO ");
+			IF typ.BaseTyp.ptr = typ THEN  WriteForm(typ.BaseTyp, i)  ELSE  WriteType(typ.BaseTyp, i)  END
 		ELSIF typ.form = ProcTyp THEN
 			Str("PROCEDURE");
 			WriteParams(typ.link, typ.BaseTyp)
@@ -316,31 +314,31 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	PROCEDURE WriteType(typ: OPT.Struct; i: INTEGER);	(* writes a type declaration *)
 		VAR cmd, par: ARRAY 32 OF CHAR; makeLink: BOOLEAN; ch: CHAR;
 	BEGIN
-		IF typ.strobj # NIL THEN
+		IF (typ.strobj # NIL) & (typ.strobj.name # "") THEN
 			makeLink:= FALSE;
-			IF (typ = OPT.bytetyp) OR (typ = OPT.sysptrtyp) THEN
+			IF (typ = OPT.bytetyp) (*OR (typ = OPT.sysptrtyp)*) THEN
 				Str("SYSTEM."); sysImported := TRUE;
 			ELSIF (typ.mno >= 1) & (ABS(typ.strobj.vis) > internal) THEN
 				(* type def. is in an other module or is visible within this module => make a link *)
 				makeLink:= TRUE;
 				Texts.SetColor(W, LinkCol);
-				IF (typ.mno > 1) OR showObj THEN
+				IF (typ.mno >= 1) OR showObj THEN
 					(* write module qualifier because object is not in cur. module or showObj option is on *)
-					Str(OPT.GlbMod[typ.mno-1].name); Ch(".")
+					Str(OPT.modules[typ.mno(*-1*)].name); Ch(".")
 				END 
 			END;
 			Str(typ.strobj.name);
 			IF makeLink THEN
-				IF (typ.mno > 1) THEN	(* definition is in an other module *)
+				IF (typ.mno >= 1) THEN	(* definition is in an other module *)
 					cmd:= ObjCmd;
-					COPY(OPT.GlbMod[typ.mno-1].name, par); AppendCh(par, "."); Append(par, typ.strobj.name)
+					COPY(OPT.modules[typ.mno(*-1*)].name, par); AppendCh(par, "."); Append(par, typ.strobj.name)
 				ELSE
 					IF ~showObj OR (curObj.link = typ.strobj) OR (curObj = typ.strobj) THEN
 						(* type def. is in the same text *)
 						cmd:= GotoCmd; par:= ""
 					ELSE
 						cmd:= ObjCmd;
-						COPY(OPT.GlbMod[typ.mno-1].name, par); AppendCh(par, ".")
+						COPY(OPT.modules[typ.mno(*-1*)].name, par); AppendCh(par, ".")
 					END;
 					Append(par, typ.strobj.name)
 				END;
@@ -351,7 +349,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	END WriteType;
 	
 	PROCEDURE WriteObject(obj: OPT.Object; mode: INTEGER);	(* writes any object as given mode *)
-		VAR h: OPT.Object; name: ARRAY 32 OF CHAR;
+		VAR h: OPT.Object; name: ARRAY 64 OF CHAR;
 	BEGIN
 		curObj:= obj;	(* set cur. object in process *)
 		IF mode = Con THEN
@@ -371,7 +369,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 		ELSIF (mode = Typ) & (obj.vis > internal) THEN	(* write a type object just if it is vivible *)
 			IF first THEN Indent(1); Str("TYPE"); Ln; first := FALSE END;
 			Indent(2);
-			IF showObj THEN COPY(OPT.GlbMod[obj.typ.mno -1].name, name); AppendCh(name, ".") 
+			IF showObj THEN COPY(OPT.modules[obj.typ.mno (*-1*)].name, name); AppendCh(name, ".") 
 			ELSE name:= ""
 			END;
 			Append(name, obj.name);
@@ -385,7 +383,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 				h:= obj.link;
 				IF ABS(h^.vis) > internal THEN
 					Indent(2);
-					IF showObj THEN COPY(OPT.GlbMod[h.typ.mno -1].name, name); AppendCh(name, ".") 
+					IF showObj THEN COPY(OPT.modules[h.typ.mno (*-1*)].name, name); AppendCh(name, ".") 
 					ELSE name:= ""
 					END;
 					Append(name, h.name);
@@ -400,16 +398,16 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	PROCEDURE WriteImports;	(* write imported modules *)
 		VAR i: INTEGER;
 	BEGIN
-		i:= 1; (* assume that OPT.GlbMod[0] is "self" *)
+		i:= 1; (* assume that OPT.modules[0] is "self" *)
 		first := TRUE;
-		WHILE i < OPT.nofGmod DO
+		WHILE i < OPT.nofmod DO
 			IF first THEN Indent(1); Str("IMPORT "); first := FALSE; syspos := W.buf.len ELSE Str(", ") END;
 			IF i MOD 11 = 0 THEN Ln; Indent(2) END;
 			Texts.SetColor(W, ImportCol);
-			Str(OPT.GlbMod[i].name);
+			Str(OPT.modules[i].name);
 			Texts.SetColor(W, TextCol);
-			Control("", ModCmd, OPT.GlbMod[i].name);
-			IF showAdr THEN Str(" ["); Texts.WriteHex(W, OPT.GlbMod[i]^.adr); Ch("]"); END;
+			Control("", ModCmd, OPT.modules[i].name);
+			IF showAdr THEN Str(" ["); Texts.WriteHex(W, OPT.modules[i]^.adr); Ch("]"); END;
 			INC(i)
 		END;
 		IF ~first THEN Ch(";"); Ln; Ln END;
@@ -434,7 +432,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	BEGIN sysImported:= FALSE;
 		anchor:= OPT.topScope.right;
 		Str("DEFINITION "); Str(anchor.name);
-		IF showAdr THEN Str(" ["); Texts.WriteHex(W, OPT.GlbMod[0].adr); Ch("]") END;
+		IF showAdr THEN Str(" ["); Texts.WriteHex(W, OPT.modules[0].adr); Ch("]") END;
 		Ch(";"); Ln; Ln;
 		syspos := W.buf.len;
 		WriteImports;
@@ -449,7 +447,7 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	BEGIN
 		Texts.Append(T, W.buf);
 		IF sysImported & ~showObj THEN
-			IF OPT.nofGmod > 1 THEN Str("SYSTEM, ") ELSE Ch(09X); Str("IMPORT SYSTEM;"); Ln; Ln END;
+			IF OPT.nofmod > 1 THEN Str("SYSTEM, ") ELSE Ch(09X); Str("IMPORT SYSTEM;"); Ln; Ln END;
 			Texts.Insert(T, syspos, W.buf);
 		END
 	END MakeText;
@@ -518,8 +516,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 			END;
 			IF ch = symFileId THEN
 				NEW(T); Texts.Open(T, ""); Texts.OpenReader(RR, T, 0); OPM.Init({}, RR, Oberon.Log);
-				OPS.Init; OPT.Init; OPT.OpenScope(0, NIL);
 				COPY(mod, selfname); COPY(fileName, file);
+				OPS.Init; OPT.Init(selfname, {}); OPT.OpenScope(0, NIL);
 				OPT.Import(selfname, selfname, file);
 				GroupTypes(OPT.topScope.right.scope);
 				RETURN TRUE
@@ -539,8 +537,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	(* ---------------------- write object info ----------------------- *)
 	
 	PROCEDURE Commands(F: Files.File; VAR modName: ARRAY OF CHAR);	(* writes all commands of this module  *)
-	VAR R: Files.Rider; name: ARRAY 32 OF CHAR; ve, key, ref: LONGINT;
-			i, c, e, nofventry, nofentry, nofcmds: INTEGER; ch: CHAR;
+	VAR R: Files.Rider; name: ARRAY 32 OF CHAR; ve, key, ref, symSize: LONGINT;
+			i, c, e, nofentry, nofcmds: INTEGER; ch: CHAR;
 	BEGIN Files.Set(R, F, 0);
 		(* check if it is an object file *)
 		Files.Read(R, ch);
@@ -550,18 +548,14 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 		Files.Read(R, ch);
 		IF ch # Version THEN Out.String("object file has wrong version"); RETURN END;
 
+		Files.ReadNum(R, symSize); Files.Set(R, F, Files.Pos(R) + symSize); (* skip symbol file *)
+		
 		Files.ReadBytes(R, ref, 4);	(* ref block pos *)
-		Files.ReadBytes(R, nofventry, 2);	(* # var entries *)
 		Files.ReadBytes(R, nofentry, 2);	(* # entries *)
 		Files.ReadBytes(R, nofcmds, 2);	(* # commands *)
 
-		Files.Set(R, F, HeaderSize-4);	(* skip rest *)
-		Files.ReadBytes(R, key, 4);	(* key of module *)
+		Files.Set(R, F, Files.Pos(R)+18);	(* skip rest *)
 		REPEAT Files.Read(R, ch) UNTIL ch = 0X;	(* skip module name *)
-
-		(* skip var entry block *)
-		Files.Read(R, ch); IF ch # VarEntryId THEN Out.String("corrunpted object file"); RETURN END;
-		WHILE nofventry > 0 DO Files.ReadBytes(R, ve, 4); DEC(nofventry) END;
 
 		(* skip entry block *)
 		Files.Read(R, ch); IF ch # EntryId THEN Out.String("corrunpted object file"); RETURN END;
@@ -602,7 +596,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	PROCEDURE ShowDef*(VAR mod: ARRAY OF CHAR; T: Texts.Text);
 		VAR file: ARRAY 64 OF CHAR;
 	BEGIN
-		SetOptions; COPY(mod, file); Append(file, symFileExt);
+		COPY(Modules.extension, OPM.extension);
+		SetOptions; COPY(mod, file); Append(file, Modules.extension);
 		Out.String("reading "); Out.String(file); Out.Ln;
 		IF ReadSym(mod, file) THEN COPY(mod, file);
 			showObj := FALSE;
@@ -614,7 +609,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	PROCEDURE ShowObj*(VAR mod, objName: ARRAY OF CHAR; T: Texts.Text);
 		VAR obj, pObj: OPT.Object; file: ARRAY 64 OF CHAR;
 	BEGIN
-		SetOptions; COPY(mod, file); Append(file, symFileExt);
+		COPY(Modules.extension, OPM.extension);
+		SetOptions; COPY(mod, file); Append(file, Modules.extension);
 		Out.String("reading "); Out.String(file); Out.Ln;
 		IF ReadSym(mod, file) THEN
 			Find(objName, obj);
@@ -634,7 +630,8 @@ MODULE Watson0;	(** PS	/	 	/	OP2-Version *)
 	PROCEDURE ShowCmd*(VAR file: ARRAY OF CHAR;  T: Texts.Text);
 		VAR F: Files.File; fileName: ARRAY 64 OF CHAR;
 	BEGIN
-		SetOptions; COPY(file, fileName); Append(fileName, objFileExt);
+		COPY(Modules.extension, OPM.extension);
+		SetOptions; COPY(file, fileName); Append(fileName, Modules.extension);
 		F:= Files.Old(fileName);
 		IF F # NIL THEN
 			Out.String("reading "); Out.String(fileName); Out.Ln;

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,11 +13,11 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Dim3Engine;	(* David Ulrich Nov  95 - März 96 *)
+MODULE Dim3Engine;	(** portable *)	(* David Ulrich Nov  95 - März 96 *)
 (** This module contains a 3D Engine to draw 3D worlds consisting of polygons **)
 
 IMPORT
-	Attributes, Display3, Display, Files, Gadgets, Math, Oberon, Objects, Pictures, Texts, Dim3Paint, Fonts, Dim3Base;
+	Attributes, Display, Files, Gadgets, Math, Oberon, Objects, Pictures, Texts, Dim3Paint, Fonts, Dim3Base;
 
 
 CONST
@@ -813,7 +812,7 @@ END InitPolygon;
 
 (* compute iteratively the normals of the shape points *)
 PROCEDURE CalcPointNormals(normal: Vector; contour: PointRef);
-VAR p: Point; ref: PointRef;
+VAR ref: PointRef;
 BEGIN
 	ref := contour;
 	IF contour = NIL THEN RETURN END;
@@ -1067,7 +1066,7 @@ END FrontPolygon;
 
 (* calculate specular reflection for a polygon*)
 PROCEDURE CalcSpecularReflection (poly: Polygon; N: Matrix);
-VAR	s: Shape; l: Light; ref: PointRef; lightRef: LightRef; V, R: Vector; t:REAL;
+VAR ref: PointRef; lightRef: LightRef; V, R: Vector; t:REAL;
 BEGIN
 	(* initialize point intensities *)
 	ref := poly.contour;
@@ -2040,7 +2039,7 @@ END SelectShape;
 
 (** shade shape polygons according to shape base color and light sources (shades subshapes, too) **)
 PROCEDURE ShadeShape* (w: World; shape: Shape);
-VAR point: Point; s: Shape; l: Light; k, sum, dist, d: REAL; i: INTEGER;
+VAR s: Shape; l: Light; k, sum, d: REAL; i: INTEGER;
 	  poly: Polygon; color: ARRAY 3 OF REAL; dir, normal: Vector; ref: PointRef; lightRef: LightRef;
 BEGIN
 	(* shade subshapes *)
@@ -2360,7 +2359,7 @@ BEGIN
 END WorldHandler;
 
 PROCEDURE NewWorld*;
-VAR w: World;col: ARRAY 3 OF REAL;
+VAR w: World;
 BEGIN
 	NEW(w);
 	w.state := {};

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Curves;  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
+MODULE Curves;	(** portable *)  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
 	IMPORT Display, Files, Printer, Oberon, Graphics, GraphicFrames;
 
 	TYPE
@@ -28,11 +27,11 @@ MODULE Curves;  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
 
 	VAR method*: Graphics.Method;
 
-	PROCEDURE mark(f: GraphicFrames.Frame; col, x, y: INTEGER);
+	PROCEDURE mark(col, x, y: INTEGER);
 	BEGIN Display.ReplConst(col, x, y, 4, 4, 0)
 	END mark;
 
-	PROCEDURE line(f: GraphicFrames.Frame; col: INTEGER; x, y, w, h, d: LONGINT);
+	PROCEDURE line(col: INTEGER; x, y, w, h, d: LONGINT);
 		VAR x1, y1, u: LONGINT;
 	BEGIN
 		IF h < w THEN
@@ -51,7 +50,7 @@ MODULE Curves;  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
 		END
 	END line;
 
-	PROCEDURE circle(f: GraphicFrames.Frame; col: INTEGER; x0, y0, r: LONGINT);
+	PROCEDURE circle(col: INTEGER; x0, y0, r: LONGINT);
 		VAR x, y, u: LONGINT;
 	BEGIN u := 1 - r; x := r; y := 0;
 		WHILE y <= x DO
@@ -68,7 +67,7 @@ MODULE Curves;  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
 		END
 	END circle;
 
-	PROCEDURE ellipse(f: GraphicFrames.Frame; col: INTEGER; x0, y0, a, b: LONGINT);
+	PROCEDURE ellipse(col: INTEGER; x0, y0, a, b: LONGINT);
 		VAR x, y, y1, aa, bb, d, g, h: LONGINT;
 	BEGIN aa := a*a; bb := b*b;
 		h := (aa DIV 4) - b*aa + bb; g := (9*aa DIV 4) - 3*b*aa + bb; x := 0; y := b;
@@ -113,37 +112,37 @@ MODULE Curves;  (*NW 8.11.90 / 1.2.91 / JG 14.6.94 ported to System 3*)
 				Display.SetClip(f.X, f.Y, f.W, f.H);
 				IF obj(Curve).kind = 0 THEN  (*up-line*)
 					IF M.mode = 0 THEN
-						IF obj.selected THEN mark(f, Display.FG, x, y) END ;
-						line(f, col, x, y, w, h, 1)
-					ELSIF M.mode = 1 THEN mark(f, Display.FG, x, y)
-					ELSIF M.mode = 2 THEN mark(f, f.col, x, y)
-					ELSE mark(f, f.col, x, y); line(f, f.col, x, y, w, h, 1)
+						IF obj.selected THEN mark(Display.FG, x, y) END ;
+						line(col, x, y, w, h, 1)
+					ELSIF M.mode = 1 THEN mark(Display.FG, x, y)
+					ELSIF M.mode = 2 THEN mark(f.col, x, y)
+					ELSE mark(f.col, x, y); line(f.col, x, y, w, h, 1)
 					END
 				ELSIF obj(Curve).kind = 1 THEN  (*down-line*)
 					IF M.mode = 0 THEN
-						IF obj.selected THEN mark(f, Display.FG, x, y+h) END ;
-						line(f, col, x, y, w, h, -1)
-					ELSIF M.mode = 1 THEN mark(f, Display.FG, x, y+h)
-					ELSIF M.mode = 2 THEN mark(f, f.col, x, y+h)
-					ELSE mark(f, f.col, x, y+h); line(f, f.col, x, y, w, h, -1)
+						IF obj.selected THEN mark(Display.FG, x, y+h) END ;
+						line(col, x, y, w, h, -1)
+					ELSIF M.mode = 1 THEN mark(Display.FG, x, y+h)
+					ELSIF M.mode = 2 THEN mark(f.col, x, y+h)
+					ELSE mark(f.col, x, y+h); line(f.col, x, y, w, h, -1)
 					END
 				ELSIF obj(Curve).kind = 2 THEN  (*circle*)
 					w := w DIV 2;
 					IF M.mode = 0 THEN
-						IF obj.selected THEN mark(f, Display.FG, x+w, y-4) END ;
-						circle(f, col, x+w, y+w, w)
-					ELSIF M.mode = 1 THEN mark(f, Display.FG, x+w, y-4)
-					ELSIF M.mode = 2 THEN mark(f, f.col, x+w, y-4)
-					ELSE mark(f, f.col, x+w, y-4); circle(f, f.col, x+w, y+w, w)
+						IF obj.selected THEN mark(Display.FG, x+w, y-4) END ;
+						circle(col, x+w, y+w, w)
+					ELSIF M.mode = 1 THEN mark(Display.FG, x+w, y-4)
+					ELSIF M.mode = 2 THEN mark(f.col, x+w, y-4)
+					ELSE mark(f.col, x+w, y-4); circle(f.col, x+w, y+w, w)
 					END
 				ELSIF obj(Curve).kind = 3 THEN  (*ellipse*)
 					w := w DIV 2; h := h DIV 2;
 					IF M.mode = 0 THEN
-						IF obj.selected THEN mark(f, Display.FG, x+w, y-4) END ;
-						ellipse(f, col, x+w, y+h, w, h)
-					ELSIF M.mode = 1 THEN mark(f, Display.FG, x+w, y-4)
-					ELSIF M.mode = 2 THEN mark(f, f.col, x+w, y-4)
-					ELSE mark(f, f.col, x+w, y-4); ellipse(f, f.col, x+w, y+h, w, h)
+						IF obj.selected THEN mark(Display.FG, x+w, y-4) END ;
+						ellipse(col, x+w, y+h, w, h)
+					ELSIF M.mode = 1 THEN mark(Display.FG, x+w, y-4)
+					ELSIF M.mode = 2 THEN mark(f.col, x+w, y-4)
+					ELSE mark(f.col, x+w, y-4); ellipse(f.col, x+w, y+h, w, h)
 					END
 				END;
 				Display.ResetClip

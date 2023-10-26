@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,35 +13,28 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE LayLaDemo;
+MODULE LayLaDemo;	(** portable *)
 
-IMPORT Gadgets, Texts, Objects, LayLa, LayLa2, Layouts, Out, Oberon, Viewers, TextFrames,
-				PanelDocs, Documents, Desktops, Display, TextGadgets;
+IMPORT Gadgets, Texts, Objects, LayLa, LayLa2, Layouts, Out, Oberon,
+				PanelDocs, Documents, Desktops, Display;
 				
 PROCEDURE GetText (VAR T : Texts.Text; VAR beg : LONGINT);
 VAR s : Texts.Scanner;
 		end, time : LONGINT;
-		V : Viewers.Viewer;
 		Name : ARRAY 64 OF CHAR;
-		X, Y, u, v : INTEGER;
-		obj : Display.Frame;
 BEGIN
 	Texts.OpenScanner (s, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan (s);
 	IF (s.class = Texts.Char) & (s.c = '^') THEN Oberon.GetSelection (T, beg, end, time);
 		IF time < 0 THEN Out.String ("no selection"); Out.Ln; RETURN END
-	ELSIF (s.class = Texts.Char) & (s.c = '*') THEN V := Oberon.MarkedViewer ();
-		IF V = NIL THEN Out.String ("no marked Viewer"); Out.Ln; RETURN END;
-		IF V.dsc.next IS TextFrames.Frame THEN T := V.dsc.next(TextFrames.Frame).text; beg := 0
-		ELSE X := Oberon.Pointer.X; Y := Oberon.Pointer.Y; Gadgets.ThisFrame (X, Y, obj, u, v);
-			IF obj IS TextGadgets.Frame THEN T := obj(TextGadgets.Frame).text; beg := 0 END
-		END;
+	ELSIF (s.class = Texts.Char) & (s.c = '*') THEN 
+		T := Oberon.MarkedText(); beg := 0
 	ELSIF (s.class = Texts.Char) & (s.c = '@') THEN	Texts.Scan (s);
 		IF (s.class = Texts.Name) THEN COPY (s.s, Name)
 		ELSE Out.String ("filename missing"); COPY ("Demo.Config", Name) END;
 		NEW (T); Texts.Open (T, Name); beg := 0;
 	ELSE T := Oberon.Par.text; beg := Oberon.Par.pos
-	END;
+	END
 END GetText;
 
 PROCEDURE Insert*;

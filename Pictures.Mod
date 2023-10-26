@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE Pictures; (* tn, 1992 *)
+MODULE Pictures;	(** portable, except where noted *) (* tn, 1992 *)
 
 (** Module Pictures implement an abstract data type (and object type) for manipulating colored bitmaps of various color depths.
 *)
@@ -43,7 +42,7 @@ TYPE
 		width*, height*, depth*: INTEGER;	(** Width, height in pixels, and depth in bits per pixel (1, 4, or 8). *)
 		wth: LONGINT;
 		bitmap: Bitmaps.Bitmap;
-		address*: LONGINT;	(** Pointer to bitmap data. *)
+		address*: LONGINT;	(** non-portable *) (** Pointer to bitmap data. *)
 		ct: ColorTable;
 		refr : Addr
 	END;
@@ -58,7 +57,7 @@ VAR
 	first: BOOLEAN;
 
 PROCEDURE InBoundaries(x, y, w, h: INTEGER): BOOLEAN;
-CODE
+CODE {SYSTEM.i386}
 	MOV AX, x[EBP]
 	MOV BX, y[EBP]
 	CMP AX, 0
@@ -99,7 +98,7 @@ BEGIN
 	END
 END GetRun;
 
-(* Copy a the block sx, sy, w, h from picture sP to position dx, dy in destination picture dP. Source and destination picture may be the same. *)
+(** Copy a the block sx, sy, w, h from picture sP to position dx, dy in destination picture dP. Source and destination picture may be the same. *)
 PROCEDURE CopyBlock* (sP,dP: Picture; SX, SY, W, H, DX, DY, mode: INTEGER); 
 BEGIN
 	IF InBoundaries(SX, SY, sP.width, sP.height) THEN
@@ -228,7 +227,7 @@ BEGIN
 		IF InBoundaries(X, Y, P.width, P.height) THEN
 			IF X+W > P.width THEN W := P.width-X END;
 			IF Y+H > P.height THEN H := P.height-Y END;
-			Bitmaps.DisplayBlock(P.bitmap,X, Y, W, H, L, B-1, mode)
+			Bitmaps.DisplayBlock(P.bitmap,X, Y, W, H, L, B, mode)
 		END
 	END
 END DisplayBlock;
@@ -261,8 +260,10 @@ BEGIN
 	New(P,width,height,depth,0);
 	Clear(P);
 	i := 0;
-	WHILE i < 16 DO Display.GetColor(i, r, g, b); SetColor(P, i, r, g, b); INC(i) END;
+	WHILE i < 256 DO Display.GetColor(i, r, g, b); SetColor(P, i, r, g, b); INC(i) END;
 END Create;
+
+(** Like Dot, for a line of pixels. *)
 
 PROCEDURE PutLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
 VAR i: INTEGER;
@@ -273,6 +274,8 @@ BEGIN
 		INC(i);  INC(x)
 	END
 END PutLine;
+
+(** Like Get, for a line of pixels. *)
 
 PROCEDURE GetLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
 VAR i: INTEGER;
@@ -331,8 +334,8 @@ PROCEDURE LoadRLE(P: Picture; VAR R: Files.Rider; rv: BOOLEAN);
 	(* load run length encoded picture *)
 	VAR ch: CHAR; k,d,h: INTEGER; a, b,c,ce: LONGINT; cL,cH: CHAR;
 BEGIN
-	a := P.address; 
-	c := P.wth; 
+	a := P.address;
+	c := P.wth;
 	b := P.height;
 	c := c*(b-1);
 	b := a + c;
@@ -380,7 +383,7 @@ BEGIN
 		P.address := SYSTEM.VAL(LONGINT,P.refr); 
 		NEW(P.bitmap); 
 		Bitmaps.Define(P.bitmap,P.width,P.height,P.depth,P.address); 
-		LoadRLE(P,R,P.depth = 1)		(* <-- ARD *)
+		LoadRLE(P,R,P.depth = 1)
 	ELSE err := "This file is not a picture "; HALT(42) END;
 	P.handle := handler;
 	len := Files.Pos(R) - pos
@@ -481,11 +484,13 @@ BEGIN
 END Open;
 
 (** Returns the address of the bitmap data of a picture. *)
-PROCEDURE Address*(P: Picture): LONGINT;
+PROCEDURE Address*(P: Picture): LONGINT;	(** non-portable *)
 VAR val, x, i, j: INTEGER; w: LONGINT;
 BEGIN 
 	HALT(99)	(* should not be used *)
 END Address;
+
+(** Default picture object handler. *)
 
 PROCEDURE Handle*(obj: Objects.Object; VAR msg: Objects.ObjMsg);
 	VAR len: LONGINT; P2: Picture; ref: INTEGER;

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,13 +13,14 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
+MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 
 	IMPORT FileDir, Files, Texts, TextFrames, Oberon, Viewers, MenuViewers, NS := NetSystem, Display, Fonts, Strings;
 	
 	CONST POP = 110; SMTP = 25; TAB = 9X; CR = 0DX; LF = 0AX; maxlen = 32;
 		StandardMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
-
+		CopySelf = TRUE;
+		
 	VAR
 		res*: INTEGER; M, fpos: INTEGER;
         W: Texts.Writer;
@@ -257,11 +257,9 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 			mails, k: INTEGER;
 	BEGIN
 		IF OpenPop(Mail, host, mails) THEN
-			k := 1; arg := "nnn 0";	(*nn will be replaced by number*)
+			k := 1;
 			WHILE k <= mails DO
-				IF k > 99 THEN arg[0] := CHR(k DIV 100 MOD 10 + 30H) ELSE arg[0] := " " END;
-				IF k > 9 THEN arg[1] := CHR(k DIV 10 MOD 10 + 30H) ELSE arg[1] := " " END;
-				arg[2] := CHR(k MOD 10 + 30H);
+				Strings.IntToStr(k, arg);  Strings.Append(arg, " 0");
 				SendCmd(Mail, "top", arg);
 				ReceiveHead(Mail, TRUE, FALSE);
 				Body(Mail);	(*should be empty*)
@@ -306,11 +304,9 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 	END MailNo;
 
 	PROCEDURE DeleteMail(S: NS.Connection; mailno: INTEGER; VAR done: BOOLEAN);
-	  VAR s: ARRAY 256 OF CHAR; arg: ARRAY 5 OF CHAR;
+	  VAR s: ARRAY 256 OF CHAR; arg: ARRAY 8 OF CHAR;
 	BEGIN
-		IF mailno > 99 THEN arg[0] := CHR(mailno DIV 100 MOD 10 + 30H) ELSE arg[0] := " " END;
-		IF mailno > 9 THEN arg[1] := CHR(mailno DIV 10 MOD 10 + 30H) ELSE arg[1] := " " END;
-		arg[2] := CHR(mailno MOD 10 + 30H); arg[3] := 0X;
+		Strings.IntToStr(mailno, arg);
 		SendCmd(S, "dele", arg); NS.ReadString(S, s);
 		done := (s[0] = "+")
 	END DeleteMail;
@@ -366,11 +362,9 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 	END DeleteAll;
 
 	PROCEDURE ReceiveMail(S: NS.Connection; mailno: INTEGER; VAR text: Texts.Text);
-	VAR arg: ARRAY 5 OF CHAR;
+	VAR arg: ARRAY 8 OF CHAR;
 	BEGIN
-		IF mailno > 99 THEN arg[0] := CHR(mailno DIV 100 MOD 10 + 30H) ELSE arg[0] := " " END;
-		IF mailno > 9 THEN arg[1] := CHR(mailno DIV 10 MOD 10 + 30H) ELSE arg[1] := " " END;
-		arg[2] := CHR(mailno MOD 10 + 30H); arg[3] := 0X;
+		Strings.IntToStr(mailno, arg);
 		SendCmd(S, "retr", arg); ReceiveHead(S, FALSE, TRUE);
 		Texts.WriteLn(W);
 		Body(S);
@@ -577,7 +571,7 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 		rcpt[j] := 0X
 	END Recipient;
 
-	PROCEDURE SendText(S: NS.Connection; VAR R: Texts.Reader);
+	PROCEDURE SendText(S: NS.Connection; VAR R: Texts.Reader; user: ARRAY OF CHAR);
 	VAR s: ARRAY 512 OF CHAR; t: ARRAY 32 OF CHAR; i, j: INTEGER;
 	BEGIN
 		s := "Mime-Version: 1.0"; NS.WriteString(S, s);
@@ -588,6 +582,9 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 		NS.WriteString(S, s);
 		s := "Content-Transfer-Encoding: 8bit"; NS.WriteString(S, s);
 		s := "X-Mailer: Original Oberon-mailer by RS/ARD"; NS.WriteString(S, s);
+		IF CopySelf THEN
+			s := "Bcc: "; Strings.Append(s, user); NS.WriteString(S, s)
+		END;
 		REPEAT
 			ReadStringO2I(R, s, FALSE);
 			IF (s[0] = ".") & (s[1] = 0X) THEN s[1] := "."; s[2] := 0X END;	(*safety*)
@@ -625,9 +622,13 @@ MODULE TextMail;	(*RS/ARD/JG, 12.10.97*)
 									END;
 									ReadStringO2I(R, t, FALSE)
 								UNTIL ~Prefix("To:", t) & ~Prefix("Cc:", t) & ~Prefix("cc:", t);
+								IF CopySelf THEN
+									SendCmd(Mail, "RCPT TO:", user); Response(Mail, s);
+									IF s[0] # "2" THEN String(user); String(" not found"); Ln END
+								END;
 								SendCmd(Mail, "DATA", ""); Response(Mail, s);
 								IF s[0] = "3" THEN
-									Texts.OpenReader(R, text, 0); SendText(Mail, R); Response(Mail, s);
+									Texts.OpenReader(R, text, 0); SendText(Mail, R, user); Response(Mail, s);
 									IF s[0] = "2" THEN String(" done") ELSE String(" not done") END;
 									Ln
 								END
@@ -680,5 +681,6 @@ TextMail.GetAll Mail.TDB
 TextMail.Store Mail.TDB
 TextMail.Open
 
+System.Free TextMail ~
 
-
+TextMail.Send *

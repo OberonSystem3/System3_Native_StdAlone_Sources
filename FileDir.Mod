@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE FileDir;   (*NW 12.1.86 / 23.8.90 / pjm 09.02.96 *)
+MODULE FileDir; (** non-portable *)   (*NW 12.1.86 / 23.8.90 / pjm 09.02.96 *)
 	IMPORT SYSTEM, Disk, Kernel;
 
 (* Note: InstFileDir module contains copy of this module *)
@@ -396,29 +395,21 @@ be set to FALSE to stop the Enumerate operation mid-way. *)
 		END
 	END enumerate;
 
-	PROCEDURE Enumerate*(prefix: ARRAY OF CHAR; detail: BOOLEAN; proc: EntryHandler);
+	PROCEDURE Enumerate*(mask: ARRAY OF CHAR; detail: BOOLEAN; proc: EntryHandler);
 		VAR b: BOOLEAN;
 	BEGIN
 		IF ~init THEN HALT(99) END;
-		COPY(prefix, pat);
+		COPY(mask, pat);
 		pos := 0;  WHILE (pat[pos] # 0X) & (pat[pos] # "*") DO INC(pos) END;
 		IF pat[pos] # "*" THEN	(* no * found *)
 			pos := -1
 		ELSIF (pat[pos] = "*") & (pat[pos+1] = 0X) THEN	(* found * at end *)
-			prefix[pos] := 0X;  pos := -1
+			mask[pos] := 0X;  pos := -1
 		ELSE
-			prefix[pos] := 0X
+			mask[pos] := 0X
 		END;
-		b := TRUE; enumerate(prefix, DirRootAdr, detail, proc, b)
+		b := TRUE; enumerate(mask, DirRootAdr, detail, proc, b)
 	END Enumerate;
-
-(* Indicates if a character is part of a valid Texts.Name (i.e. filename). The letters a-z, A-Z, ., 0-9 are always part of a valid
-	filename and should NOT be tested with this function. SpecialChars are those needed in addition to the normal ones above,
-	and are by convention the directory separators allowed by the underlying filesystem. *)
-	PROCEDURE SpecialChar*(ch: CHAR): BOOLEAN;
-	BEGIN
-		RETURN (ch = "/") OR (ch = ":") OR (ch = "_")
-	END SpecialChar;
 
 	PROCEDURE ^Startup;
 	
@@ -512,7 +503,7 @@ be set to FALSE to stop the Enumerate operation mid-way. *)
 			Disk.ResetDisk; k := 0;
 			Startup;
 			IF ~init THEN
-				files := 0;  Kernel.WriteString("Scanning...");
+				files := 0;  Kernel.WriteString("FileDir: Scanning...");
 				TraverseDir(DirRootAdr); MarkSectors; init := TRUE;
 				Kernel.WriteInt(files, 6); Kernel.WriteString(" files");  Kernel.WriteLn
 			END
@@ -520,48 +511,56 @@ be set to FALSE to stop the Enumerate operation mid-way. *)
 	END Init;
 
 PROCEDURE Startup;
-VAR j, sec, size, q, thres: LONGINT;  mi: MapIndex;  ms: MapSector;  s: ARRAY 10 OF CHAR;
+VAR
+	j, sec, size, q, free, thres: LONGINT;  mi: MapIndex;  ms: MapSector;
+	s: ARRAY 10 OF CHAR;  found: BOOLEAN;
 BEGIN
-	size := Disk.Size();
+	size := Disk.Size();  found := FALSE;
 	IF (Disk.Available() = size) & (size # 0) THEN	(* all sectors available *)
 		Disk.GetSector(size*29, mi);
 		IF mi.mark = MapMark THEN
-			FOR j := 0 TO MapIndexSize-1 DO	(* check consistency of index *)
-				IF (mi.index[j] < 0) OR (mi.index[j] MOD 29 # 0) THEN RETURN END
-			END;
-			mi.mark := 0;  Disk.PutSector(size*29, mi);	(* invalidate index *)
-			Kernel.WriteString("Valid index found");  Kernel.WriteLn;
-			j := 0;  sec := 1;  q := 0;
-			LOOP
-				IF (j = MapIndexSize) OR (mi.index[j] = 0) THEN EXIT END;
-				Disk.GetSector(mi.index[j], ms);
-				REPEAT
-					IF (sec MOD 32) IN ms.map[sec DIV 32 MOD MapSize] THEN
-						Disk.MarkSector(sec*29);
-						INC(q)
-					END;
-					IF sec = size THEN EXIT END;
-					INC(sec)
-				UNTIL sec MOD (MapSize*32) = 0;
+			j := 0;	(* check consistency of index *)
+			WHILE (j # MapIndexSize) & (mi.index[j] >= 0) & (mi.index[j] MOD 29 = 0) DO
 				INC(j)
 			END;
-			Kernel.GetConfig("DiskGC", s);
-			thres := 0;  j := 0;
-			WHILE s[j] # 0X DO thres := thres*10+(ORD(s[j])-48); INC(j) END;
-			IF thres < 10 THEN thres := 10
-			ELSIF thres > 100 THEN thres := 100
-			END;
-			ASSERT(q = size-Disk.Available());
-			IF (Disk.Available()*100 DIV size > thres) & (Disk.Available()*SectorSize > 100000H) THEN
-				init := TRUE;
-				Kernel.WriteString("Disk map recovered");  Kernel.WriteLn
-			ELSE	(* undo *)
-				FOR j := 29 TO size*29 BY 29 DO
-					IF Disk.Marked(j) THEN Disk.FreeSector(j) END
+			IF j = MapIndexSize THEN
+				found := TRUE;
+				mi.mark := 0;  Disk.PutSector(size*29, mi);	(* invalidate index *)
+				j := 0;  sec := 1;  q := 0;
+				LOOP
+					IF (j = MapIndexSize) OR (mi.index[j] = 0) THEN EXIT END;
+					Disk.GetSector(mi.index[j], ms);
+					REPEAT
+						IF (sec MOD 32) IN ms.map[sec DIV 32 MOD MapSize] THEN
+							Disk.MarkSector(sec*29);
+							INC(q)
+						END;
+						IF sec = size THEN EXIT END;
+						INC(sec)
+					UNTIL sec MOD (MapSize*32) = 0;
+					INC(j)
 				END;
-				ASSERT(Disk.Available() = size)
+				Kernel.GetConfig("DiskGC", s);
+				thres := 0;  j := 0;
+				WHILE s[j] # 0X DO thres := thres*10+(ORD(s[j])-48); INC(j) END;
+				IF thres < 10 THEN thres := 10
+				ELSIF thres > 100 THEN thres := 100
+				END;
+				ASSERT(q = size-Disk.Available());
+				free := Disk.Available()*100 DIV size;
+				IF (free > thres) & (Disk.Available()*SectorSize > 100000H) THEN
+					init := TRUE
+				ELSE	(* undo *)
+					FOR j := 29 TO size*29 BY 29 DO
+						IF Disk.Marked(j) THEN Disk.FreeSector(j) END
+					END;
+					ASSERT(Disk.Available() = size);
+					Kernel.WriteString("FileDir: ");  Kernel.WriteInt(free, 1);
+					Kernel.WriteString("% free, forcing disk GC");  Kernel.WriteLn
+				END
 			END
-		END
+		END;
+		IF ~found THEN Kernel.WriteString("FileDir: Index not found");  Kernel.WriteLn END
 	END
 END Startup;
 
@@ -592,11 +591,11 @@ BEGIN
 		WHILE j # MapIndexSize DO mi.index[j] := 0; INC(j) END;
 		mi.mark := MapMark;
 		Disk.PutSector(size*29, mi);	(* commit *)
-		Kernel.WriteString("Disk map saved");  Kernel.WriteLn
+		Kernel.WriteString("FileDir: Map saved");  Kernel.WriteLn
 	END
 END Cleanup;
 
 BEGIN
-	Kernel.GetConfig("Prefix", prefix);  init := FALSE;  PathChar := 0X;  NEW(hp);
+	Kernel.GetConfig("Prefix", prefix);  init := FALSE;  PathChar := "/";  NEW(hp);
 	Kernel.InstallTermHandler(Cleanup)
 END FileDir.

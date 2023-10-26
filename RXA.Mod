@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE RXA;	(* Andreas Margelisch, 1990 *)
+MODULE RXA;	(** portable *)	(* Andreas Margelisch, 1990 *)
 
 IMPORT  Texts;
 
@@ -107,10 +106,9 @@ TYPE PosSet = ARRAY (mult) OF SET;
 			trans : ARRAY (nofstates),(nofchar+1) OF TransDesc;
 			accepted : ARRAY (nofstates) OF BOOLEAN;
 			sub : ARRAY (nofsubexpr) OF DFASubExprDesc
-	   END;
+		END;
 
 		Line = ARRAY MAX( INTEGER ) OF CHAR;
-		LinePtr = POINTER TO Line;
 
 
 VAR

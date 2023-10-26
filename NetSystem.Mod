@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,12 +13,15 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE NetSystem;	(* mg 16.08.96 *)
+MODULE NetSystem;	(** portable *)	(* mg 16.08.96 *)
 
-IMPORT Oberon, SYSTEM, Input, Texts, DNS, TCP, UDP, Ports, NetBase, Kernel, Strings, Fonts, Ip := IP, TextFrames;
+(* A Portable Oberon Interface to Internet Protocols *)
+
+IMPORT SYSTEM, Kernel, NetBase, NetPorts, NetIP, NetUDP, NetTCP, NetDNS, 
+	Input, Texts, Oberon, TextFrames, Strings, Fonts;
 
 CONST
-	anyport* = 0;	(** "NIL" port value *)
+	anyport* = 0;	(** any port value *)
 
 (** result values *)
 	done* = 0;	(** everything went ok *)
@@ -31,16 +33,17 @@ CONST
 	in* = 2;	(** receiving only *)
 	out* = 3;	(** sending only *)
 	inout* = 4;	(** sending and receiving is possible *)
-	waitCon * =  5;	(** still waiting to be connected *)
-	errorCon* =  6;	(** connecting failed *)
+	waitCon* =  5;	(** still waiting to be connected *)
+	errorCon* =  6;	(** connecting failed *)
 
-	CR = 0DX;
-	LF = 0AX;
+	CR = 0DX;  LF = 0AX;
+	
+	Trace = FALSE;
 
 TYPE
 	Connection* = POINTER TO ConnectionDesc;	(** handle for TCP connections *)
 	ConnectionDesc* = RECORD
-		port: Ports.Port;
+		port: NetPorts.Port;
 		res*: INTEGER;	(** result of last operation on a connection (error indication) *)
 		state: INTEGER;
 		Available: PROCEDURE (C: Connection; VAR res: INTEGER): LONGINT;
@@ -52,7 +55,7 @@ TYPE
 
 	Socket* = POINTER TO SocketDesc;	(** handle for UDP "connections" *)
 	SocketDesc* = RECORD
-		C: UDP.Connection;
+		C: NetUDP.Connection;
 		res*: INTEGER;	(** result of last operation on a connection (error indication) *)
 		state: INTEGER
 	END;
@@ -71,6 +74,8 @@ VAR
 	started: BOOLEAN;
 	W: Texts.Writer;
 	passwords: Password;
+	hex: ARRAY 17 OF CHAR;
+	task: Oberon.Task;
 
 PROCEDURE GetEntry (key, name: ARRAY OF CHAR; VAR arg0, arg1: ARRAY OF CHAR);
 VAR
@@ -93,21 +98,20 @@ BEGIN COPY(key, key0);
 	END
 END GetEntry;
 	
-PROCEDURE GetEntry0 (key, name: ARRAY OF CHAR; VAR arg: ARRAY OF CHAR);
-VAR
-	S: Texts.Scanner;
-	key0: ARRAY 64 OF CHAR;
-	i, j: INTEGER;
-BEGIN COPY(key, key0);
+PROCEDURE GetEntry0 (key, name: ARRAY OF CHAR;  VAR arg: ARRAY OF CHAR);
+VAR S: Texts.Scanner;  key0: ARRAY 64 OF CHAR;  i, j: INTEGER;
+BEGIN
+	COPY(key, key0);
 	i := 0; WHILE key0[i] # 0X DO INC(i) END;
 	j := 0; WHILE name[j] # 0X DO key0[i] := name[j]; INC(i); INC(j) END;
 	key0[i] := 0X; Oberon.OpenScanner(S, key0);
 	IF S.class IN {Texts.Name, Texts.String} THEN
 		COPY(S.s, arg); Texts.Scan(S)
-	ELSE COPY("", arg)
+	ELSE
+		COPY("", arg)
 	END
 END GetEntry0;
-	
+
 PROCEDURE ToNum0 (num: ARRAY OF CHAR; VAR n: INTEGER; VAR done: BOOLEAN);
 VAR
 	i: INTEGER;
@@ -118,7 +122,7 @@ BEGIN n := 0; i := 0;
 	done := num[i] = 0X
 END ToNum0;
 
-PROCEDURE ToHost0 (num: ARRAY OF CHAR; VAR adr: Ip.Adr; VAR done: BOOLEAN);
+PROCEDURE ToHost0 (num: ARRAY OF CHAR; VAR adr: NetIP.Adr; VAR done: BOOLEAN);
 VAR
 	addr: LONGINT;
 	buf: ARRAY 32 OF CHAR;
@@ -135,20 +139,72 @@ BEGIN done := TRUE;
 		IF num[i] = "." THEN INC(i) END;
 		INC(j)
 	END;
-	NetBase.Copy(addr, adr, Ip.AdrLen); NetBase.HostLToNet(adr);
+	NetBase.Copy(addr, adr, NetIP.AdrLen); NetBase.HostLToNet(adr);
 	done := done & (j = 4) & (num[i] = 0X)
 END ToHost0;
+
+PROCEDURE AdrToStr(netAdr: ARRAY OF SYSTEM.BYTE;  VAR net: ARRAY OF CHAR);
+VAR i, j: LONGINT;
+BEGIN
+	j := 0;
+	FOR i := 0 TO NetBase.AdrLen-1 DO
+		net[j] := hex[ORD(netAdr[i]) DIV 10H MOD 10H];
+		net[j+1] := hex[ORD(netAdr[i]) MOD 10H];
+		net[j+2] := ":";  INC(j, 3)
+	END;
+	DEC(j);  net[j] := 0X
+END AdrToStr;
+
+(* Look up an ethernet address to find ip address and hostname. *)
+
+PROCEDURE FindAddress(key: ARRAY OF CHAR;  netAdr: ARRAY OF SYSTEM.BYTE;  VAR hostname, num: ARRAY OF CHAR);
+VAR net: ARRAY 20 OF CHAR;  s: Texts.Scanner;  found: BOOLEAN;
+BEGIN
+	AdrToStr(netAdr, net);
+	num[0] := 0X;  hostname[0] := 0X;
+	IF net # "00:00:00:00:00:00" THEN
+		Oberon.OpenScanner(s, key);  found := FALSE;
+		WHILE (s.class = Texts.String) & ~found DO
+			found := s.s = net;
+			Texts.Scan(s);
+			IF (s.class = Texts.Char) & (s.c = ",") THEN
+				Texts.Scan(s);
+				IF s.class = Texts.String THEN
+					COPY(s.s, hostname);
+					Texts.Scan(s);
+					IF (s.class = Texts.Char) & (s.c = ",") THEN
+						Texts.Scan(s);
+						IF s.class = Texts.String THEN
+							IF found THEN COPY(s.s, num) END;
+							Texts.Scan(s)
+						END
+					ELSE
+						s.class := Texts.Inval
+					END
+				END
+			ELSE
+				s.class := Texts.Inval
+			END
+		END;
+		IF num[0] = 0X THEN
+			hostname[0] := 0X;
+			Texts.WriteString(W, net);  Texts.WriteString(W, " not found in ");
+			Texts.WriteString(W, key);  Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+		END
+	ELSE (* MAC adr all zero, ignore *)
+	END
+END FindAddress;
 
 (** -- Adressing/Naming section. *)
 
 (** Convert a dotted IP address string (e.g. "1.2.3.4") to an IPAdr value. *)
 
 PROCEDURE ToHost* (num: ARRAY OF CHAR; VAR adr: IPAdr; VAR done: BOOLEAN);
-VAR a: Ip.Adr;
+VAR a: NetIP.Adr;
 BEGIN
 	ToHost0(num, a, done);
-	IF done THEN NetBase.Copy(a, adr, Ip.AdrLen)
-	ELSE NetBase.Copy(anyIP, adr, Ip.AdrLen)
+	IF done THEN NetBase.Copy(a, adr, NetIP.AdrLen)
+	ELSE NetBase.Copy(anyIP, adr, NetIP.AdrLen)
 	END
 END ToHost;
 
@@ -181,7 +237,7 @@ END ToNum;
 PROCEDURE GetIP* (name: ARRAY OF CHAR; VAR IP: IPAdr);
 VAR
 	hostName, hostIP: ARRAY 64 OF CHAR;
-	adr: Ip.Adr;
+	adr: NetIP.Adr;
 	res: INTEGER;
 	done: BOOLEAN;
 BEGIN
@@ -192,10 +248,10 @@ BEGIN
 		ELSE
 			IF started THEN
 				IF hostName # "" THEN
-					DNS.HostByName(hostName, adr, res)
-				ELSE DNS.HostByName(name, adr, res)
+					NetDNS.HostByName(hostName, adr, res)
+				ELSE NetDNS.HostByName(name, adr, res)
 				END;
-				done := (res = DNS.Done)
+				done := (res = NetDNS.Done)
 			ELSE
 				done := FALSE
 			END
@@ -205,7 +261,7 @@ BEGIN
 	ELSE done := FALSE
 	END;
 	IF ~done THEN IP := anyIP
-	ELSE NetBase.Copy(adr, IP, Ip.AdrLen)
+	ELSE NetBase.Copy(adr, IP, NetIP.AdrLen)
 	END
 END GetIP;
 
@@ -213,14 +269,14 @@ END GetIP;
 
 PROCEDURE GetName* (IP: IPAdr; VAR name: ARRAY OF CHAR);
 VAR
-	adr: Ip.Adr;
+	adr: NetIP.Adr;
 	res: INTEGER;
 BEGIN
 	IF started THEN
-		NetBase.Copy(IP, adr, Ip.AdrLen);
-		DNS.HostByNumber(adr, name, res)
+		NetBase.Copy(IP, adr, NetIP.AdrLen);
+		NetDNS.HostByNumber(adr, name, res)
 	END;
-	IF ~started OR (res # DNS.Done) THEN COPY("", name) END
+	IF ~started OR (res # NetDNS.Done) THEN COPY("", name) END
 END GetName;
 
 (** -- TCP section. *)
@@ -229,7 +285,7 @@ END GetName;
 
 PROCEDURE TCPSetState (C: Connection);
 BEGIN
-	IF ~TCP.Connected(C.port(TCP.Connection)) THEN
+	IF ~NetTCP.Connected(C.port(NetTCP.Connection)) THEN
 		IF C.state = inout THEN C.state := out
 		ELSIF C.state = in THEN C.state := closed
 		END
@@ -239,7 +295,7 @@ END TCPSetState;
 PROCEDURE TCPAvailable (C: Connection; VAR res: INTEGER): LONGINT;
 VAR
 	len: LONGINT;
-BEGIN len := TCP.Available(C.port(TCP.Connection));
+BEGIN len := NetTCP.Available(C.port(NetTCP.Connection));
 	IF len < 0 THEN len := 0; res := error ELSE res := done END;
 	TCPSetState(C); RETURN len
 END TCPAvailable;
@@ -249,7 +305,7 @@ VAR
 	l: LONGINT;
 BEGIN l := 0;
 	REPEAT l := len;
-		TCP.Receive(C.port(TCP.Connection), buf, beg, l);
+		NetTCP.Receive(C.port(NetTCP.Connection), buf, beg, l);
 		IF l > 0 THEN beg := beg + l; len := len - l END
 	UNTIL (len = 0) OR (l < 0);
 	IF l < 0 THEN res := error ELSE res := done END;
@@ -257,7 +313,7 @@ BEGIN l := 0;
 END TCPReceive;
 
 PROCEDURE TCPSend (C: Connection; VAR buf: ARRAY OF SYSTEM.BYTE; beg, len: LONGINT; VAR res: INTEGER);
-BEGIN TCP.Send(C.port(TCP.Connection), buf, beg, len);
+BEGIN NetTCP.Send(C.port(NetTCP.Connection), buf, beg, len);
 	IF len < 0 THEN res := error ELSE res := done END;
 	TCPSetState(C)
 END TCPSend;
@@ -283,28 +339,28 @@ PROCEDURE ^Cleanup(c: SYSTEM.PTR);
 
 PROCEDURE OpenConnection* (VAR C: Connection; locPort: INTEGER; remIP: IPAdr; remPort: INTEGER; VAR res: INTEGER);
 VAR
-	conC: TCP.Connection;
-	listC: TCP.Listener;
-	remAdr: Ip.Adr;
+	conC: NetTCP.Connection;
+	listC: NetTCP.Listener;
+	remAdr: NetIP.Adr;
 BEGIN
 	IF started THEN
-		NetBase.Copy(remIP, remAdr, Ip.AdrLen); NEW(C);
-		IF NetBase.Equal(remIP, Ip.IPany, Ip.AdrLen) OR (remPort = Ports.anyport) THEN
-			TCP.Listen(listC, locPort, remAdr, remPort, C.res);
-			IF C.res = TCP.Done THEN C.port := listC;
+		NetBase.Copy(remIP, remAdr, NetIP.AdrLen); NEW(C);
+		IF NetBase.Equal(remIP, NetIP.IPany, NetIP.AdrLen) OR (remPort = NetPorts.anyport) THEN
+			NetTCP.Listen(listC, locPort, remAdr, remPort, C.res);
+			IF C.res = NetTCP.Done THEN C.port := listC;
 				C.state := listening; C.Available := DmyAvailable;
 				C.Send := DmySend; C.Receive := DmyReceive;
 				Kernel.RegisterObject(C, Cleanup, FALSE)
-			ELSIF C.res # TCP.Timeout THEN C.res := error
+			ELSIF C.res # NetTCP.Timeout THEN C.res := error
 			END;
 			res := C.res
-		ELSIF ~Ip.Broadcast(remAdr) THEN
-			TCP.Connect(conC, locPort, remAdr, remPort, C.res);
-			IF C.res = TCP.Done THEN C.port := conC;
+		ELSIF ~NetIP.IsBroadcast(remAdr) THEN
+			NetTCP.Connect(conC, locPort, remAdr, remPort, C.res);
+			IF C.res = NetTCP.Done THEN C.port := conC;
 				C.state := inout; C.Available := TCPAvailable;
 				C.Send := TCPSend; C.Receive := TCPReceive;
 				Kernel.RegisterObject(C, Cleanup, FALSE)
-			ELSIF C.res # TCP.Timeout THEN C.res := error
+			ELSIF C.res # NetTCP.Timeout THEN C.res := error
 			END;
 			res := C.res
 		ELSE res := error
@@ -326,13 +382,13 @@ END AsyncOpenConnection;
 PROCEDURE CloseConnection* (C: Connection);
 BEGIN
 	IF C # NIL THEN
-		IF C.port IS TCP.Listener THEN C.state := closed;
-			TCP.Close(C.port(TCP.Listener))
-		ELSIF C.port IS TCP.Connection THEN
+		IF C.port IS NetTCP.Listener THEN C.state := closed;
+			NetTCP.Close(C.port(NetTCP.Listener))
+		ELSIF C.port IS NetTCP.Connection THEN
 			IF C.state = inout THEN C.state := in
 			ELSIF C.state = out THEN C.state := closed
 			END;
-			TCP.Disconnect(C.port(TCP.Connection))
+			NetTCP.Disconnect(C.port(NetTCP.Connection))
 		ELSE HALT(99)
 		END;
 		C.res := done
@@ -340,19 +396,26 @@ BEGIN
 END CloseConnection;
 
 PROCEDURE Cleanup(c: SYSTEM.PTR);
+VAR s: ARRAY 20 OF CHAR;
 BEGIN
 	WITH c: Connection DO
 		IF c.state # closed THEN
+			IF Trace THEN
+				Kernel.WriteString("NetSystem: Cleanup ");
+				ToNum(SYSTEM.VAL(IPAdr, c.port.rip), s);  Kernel.WriteString(s);
+				Kernel.WriteChar(":");  Kernel.WriteInt(c.port.rport, 1);
+				Kernel.WriteLn
+			END;
 			CloseConnection(c)
 		END
 	END
 END Cleanup;
 
-(** Indicates whether there exists a remote machine which wants to connect to the local one. This Procedure is only usefully
-	defined on passive connections. For active connections (State(C) # listen), it always delivers FALSE. *)
+(** Indicates whether there exists a remote machine which wants to connect to the local one. This Procedure is only useful
+	on passive connections. For active connections (State(C) # listen), it always delivers FALSE. *)
 
 PROCEDURE Requested* (C: Connection): BOOLEAN;
-BEGIN RETURN (C.port IS TCP.Listener) & TCP.Requested(C.port(TCP.Listener))
+BEGIN RETURN (C.port IS NetTCP.Listener) & NetTCP.Requested(C.port(NetTCP.Listener))
 END Requested;
 
 (** Procedure accepts a new waiting, active connection (newC) on a passive one (State(C) = listen). If no connection is 
@@ -361,11 +424,11 @@ END Requested;
 
 PROCEDURE Accept* (C: Connection; VAR newC: Connection; VAR res: INTEGER);
 VAR
-	conC: TCP.Connection;
-BEGIN res := TCP.NotDone;
-	IF C.port IS TCP.Listener THEN
-		TCP.Accept(C.port(TCP.Listener), conC, res);
-		IF res = TCP.Done THEN NEW(newC);
+	conC: NetTCP.Connection;
+BEGIN res := NetTCP.NotDone;
+	IF C.port IS NetTCP.Listener THEN
+		NetTCP.Accept(C.port(NetTCP.Listener), conC, res);
+		IF res = NetTCP.Done THEN NEW(newC);
 			newC.port := conC; newC.state := inout;
 			newC.Available := TCPAvailable;
 			newC.Send := TCPSend; newC.Receive := TCPReceive
@@ -465,7 +528,7 @@ END WriteString;
 (** Procedure delivers the ip-number and port number of a connection's remote partner. *)
 
 PROCEDURE GetPartner* (C: Connection; VAR remIP: IPAdr; VAR remPort: INTEGER);
-BEGIN remPort := C.port.rport; NetBase.Copy(C.port.rip, remIP, Ip.AdrLen)
+BEGIN remPort := C.port.rport; NetBase.Copy(C.port.rip, remIP, NetIP.AdrLen)
 END GetPartner;
 
 (** -- UDP section. *)
@@ -478,8 +541,8 @@ END GetPartner;
 PROCEDURE OpenSocket* (VAR S: Socket; locPort: INTEGER; VAR res: INTEGER);
 BEGIN
 	IF started THEN NEW(S);
-		UDP.Open(S.C, locPort, Ip.IPany, Ports.anyport, S.res);
-		IF S.res = UDP.Done THEN S.state := inout
+		NetUDP.Open(S.C, locPort, NetIP.IPany, NetPorts.anyport, S.res);
+		IF S.res = NetUDP.Done THEN S.state := inout
 		ELSE S.C := NIL; S.res := error
 		END;
 		res := S.res
@@ -490,16 +553,16 @@ END OpenSocket;
 (** Closes the socket. You can not receive datagrams anymore. *)
 
 PROCEDURE CloseSocket* (S: Socket);
-BEGIN S.state := closed; UDP.Close(S.C); S.C := NIL; S.res := done
+BEGIN S.state := closed; NetUDP.Close(S.C); S.C := NIL; S.res := done
 END CloseSocket;
 
 (** Sends len bytes of data (beginning at pos in buf) to the host specified by remIP and remPort. *)
 
 PROCEDURE SendDG* (S: Socket; remIP: IPAdr; remPort: INTEGER; pos, len: LONGINT; VAR buf: ARRAY OF SYSTEM.BYTE);
 VAR
-	radr: Ip.Adr;
-BEGIN NetBase.Copy(remIP, radr, Ip.AdrLen);
-	UDP.Send(S.C, radr, remPort, buf, pos, len); S.res := done
+	radr: NetIP.Adr;
+BEGIN NetBase.Copy(remIP, radr, NetIP.AdrLen);
+	NetUDP.Send(S.C, radr, remPort, buf, pos, len); S.res := done
 END SendDG;
 
 (** Stores an entire datagram in buf beginning at pos. On success (S.res = done), remIP and remPort indicate the sender,
@@ -508,15 +571,15 @@ END SendDG;
 PROCEDURE ReceiveDG*(S: Socket; VAR remIP: IPAdr; VAR remPort: INTEGER; pos: LONGINT; VAR len: LONGINT;
 	VAR buf: ARRAY OF SYSTEM.BYTE);
 VAR
-	radr: Ip.Adr;
-BEGIN UDP.Receive(S.C, radr, remPort, buf, pos, len);
-	IF len >= 0 THEN NetBase.Copy(radr, remIP, Ip.AdrLen); S.res := done ELSE S.res := error END
+	radr: NetIP.Adr;
+BEGIN NetUDP.Receive(S.C, radr, remPort, buf, pos, len);
+	IF len >= 0 THEN NetBase.Copy(radr, remIP, NetIP.AdrLen); S.res := done ELSE S.res := error END
 END ReceiveDG;
 
-(** Returns the number of available datagrams, that were received on the socket. *)
+(** Returns the size of the first available datagram on the socket. *)
 
 PROCEDURE AvailableDG* (S: Socket): LONGINT;
-BEGIN RETURN UDP.Available(S.C)
+BEGIN RETURN NetUDP.Available(S.C)
 END AvailableDG;
 
 (* Conversions *)
@@ -551,6 +614,13 @@ END GetLInt;
 
 (** -- Passwords section. *)
 
+PROCEDURE WriteURL(VAR service, user, host: ARRAY OF CHAR);
+BEGIN
+	Texts.WriteString(W, "NetSystem.SetUser ");  Texts.WriteString(W, service);  
+	Texts.Write(W, ":");  Texts.WriteString(W, user);  Texts.Write(W, "@");  
+	Texts.WriteString(W, host);  Texts.WriteString(W, " ~"); Texts.WriteLn(W)
+END WriteURL;
+
 (** Retrieve the password for user using service on host.  Parameters service, host and user must be specified. 
 Parameter user is in/out.  If empty, it returns the first (user,password) pair found, otherwise it returns the
 specified user's password. *)
@@ -572,13 +642,7 @@ BEGIN
 				Texts.Read(r, ch);
 				IF ch # CHR(13) THEN Texts.WriteLn(W) END
 			END;
-			Texts.WriteString(W, "NetSystem.SetUser ");
-			IF service # "" THEN Texts.WriteString(W, service) ELSE Texts.WriteString(W, "<service>") END;
-			Texts.Write(W, ":");
-			IF user # "" THEN Texts.WriteString(W, user) ELSE Texts.WriteString(W, "<user>") END;
-			Texts.Write(W, "@");
-			Texts.WriteString(W, host);  Texts.WriteString(W, " ~"); Texts.WriteLn(W);
-			Texts.Append(Oberon.Log, W.buf)
+			WriteURL(service, user, host);  Texts.Append(Oberon.Log, W.buf)
 		END;
 		COPY("", user); COPY("", password)
 	END
@@ -652,24 +716,27 @@ PROCEDURE SetUser*;
 	END ReadPwd;
 		
 	PROCEDURE Replace(p: Password);
-	VAR q: Password;
+	VAR q, prev: Password;  msg: ARRAY 12 OF CHAR;
 	BEGIN
-		q := passwords;
+		q := passwords;  prev := NIL;
 		WHILE (q # NIL) & ~((q.service = p.service) & (q.host = p.host) & (q.user = p.user)) DO
-			q := q.next
+			prev := q;  q := q.next
 		END;
+		IF q # NIL THEN	(* password exists, delete old one first *)
+			IF prev = NIL THEN passwords := passwords.next
+			ELSE prev.next := q.next
+			END;
+			msg := "replaced"
+		ELSE
+			msg := "set"
+		END;
+		p.next := passwords;  passwords := p;
 		IF verbose THEN
 			Texts.WriteString(W, p.service);  Texts.Write(W, ":");  
-			Texts.WriteString(W, p.user);  Texts.Write(W, "@");  Texts.WriteString(W, p.host)
-		END;
-		IF q = NIL THEN
-			p.next := passwords;  passwords := p;
-			IF verbose THEN Texts.WriteString(W, " password set") END
-		ELSE
-			COPY(p.passwd, q.passwd);
-			IF verbose THEN Texts.WriteString(W, " password replaced") END
-		END;
-		IF verbose THEN Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf) END
+			Texts.WriteString(W, p.user);  Texts.Write(W, "@");  Texts.WriteString(W, p.host);
+			Texts.WriteString(W, " password ");  Texts.WriteString(W, msg);
+			Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+		END
 	END Replace;
 	
 BEGIN
@@ -691,7 +758,7 @@ BEGIN
 			ELSIF ch = ":" THEN	(* password specified in-line *)
 				Next(pwd);
 				IF ch = "@" THEN
-					Next(host);
+					Next(host);  Strings.Lower(host, host);
 					IF host # "" THEN
 						NEW(pass);  COPY(service, pass.service); COPY(host, pass.host); 
 						COPY(usr, pass.user);  COPY(pwd, pass.passwd);
@@ -722,21 +789,16 @@ END ClearUser;
 
 PROCEDURE SetDevices;
 VAR
-	T: Texts.Text;
-	device, name, arg: ARRAY 32 OF CHAR;
-	i, res: INTEGER;
-	par: Oberon.ParList;
+	T: Texts.Text;  device, name, arg: ARRAY 32 OF CHAR;  i: INTEGER;
 	F: TextFrames.Frame;
-BEGIN NEW(T);
+BEGIN
+	NEW(T);
 	i := 0; device := "Device0"; GetEntry("NetSystem.Hosts.", device, name, arg);
-	WHILE (i < NetBase.MaxDevices) & (name # "") DO Texts.Open(T, "");
-		Texts.WriteString(W, name);  Texts.Write(W, " ");
-		Texts.WriteString(W, arg); Texts.WriteLn(W); Texts.Append(T, W.buf);
-		IF Oberon.Par = NIL THEN par := NIL
-		ELSE NEW(par); par^ := Oberon.Par^
-		END;
+	WHILE (i < NetBase.MaxDevices) & (name # "") & (name[0] # "<") DO
+		Texts.Open(T, "");
+		Texts.WriteString(W, name);  Texts.Write(W, " ");  Texts.WriteString(W, arg);
+		Texts.WriteLn(W);  Texts.Append(T, W.buf);
 		F := TextFrames.NewText(T, 0);  TextFrames.Call(F, 0, FALSE);
-		IF (par # NIL) & (Oberon.Par # NIL) THEN Oberon.Par^ := par^ END;
 		INC(i); device[6] := CHR(i+ORD("0"));
 		GetEntry("NetSystem.Hosts.", device, name, arg)
 	END
@@ -744,39 +806,77 @@ END SetDevices;
 
 PROCEDURE SetRoutes;
 VAR
-	route: Ip.Route;
-	key, rname: ARRAY 64 OF CHAR;
+	route: NetIP.Route;
+	key: ARRAY 64 OF CHAR;
 	hostname, num, device, arp, dmy, gateway: ARRAY 64 OF CHAR;
-	i: INTEGER;
+	i, j, devnum: LONGINT;  s: ARRAY 32 OF CHAR;
 	done: BOOLEAN;
-BEGIN key := "NetSystem.Hosts.Route0.";
-	COPY("Route0", rname); GetEntry0(key, "Device", device); i := 0;
-	WHILE (i < Ip.MaxRoutes) & (device # "") DO NEW(route);
-		route.dev := NetBase.FindDevice(device);
-		IF route.dev # NIL THEN GetEntry0(key, "Mode", arp);
-			IF arp = "arp" THEN INCL(route.options, Ip.arpopt) END;
+	dev: NetBase.Device;
+BEGIN
+	key := "NetSystem.Hosts.Route0.";
+	i := 0;  GetEntry0(key, "Device", device);
+	WHILE (i < NetIP.MaxRoutes) & (device # "") DO
+		Strings.Lower(device, device);
+		IF device = "default" THEN devnum := 0
+		ELSIF Strings.Prefix("device", device) & (device[6] >= "0") & (device[6] <= "9") & (device[7] = 0X) THEN
+			devnum := ORD(device[6])-ORD("0")
+		ELSE devnum := -1
+		END;
+		dev := NetBase.FindDevice(devnum);
+		IF dev # NIL THEN
+			NEW(route);  route.dev := dev;  (*log := FALSE;*)
+			GetEntry0(key, "Mode", arp);
+			IF arp = "arp" THEN INCL(route.options, NetIP.arpopt) END;
 			GetEntry(key, "Host", hostname, num); ToHost0(num, route.adr, done);
-			IF ~done THEN (*Texts.WriteString(W, "Host not found");
-				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)*)
+			IF ~done THEN	(* try using table *)
+				FindAddress("NetSystem.Hosts.Table", route.dev.hostAdr, hostname, num);
+				ToHost0(num, route.adr, done);  (*log := log OR done*)
+			END;
+			IF ~done THEN
+				(* ok if still to be assigned, e.g. PPP *)
+				NetBase.Copy(anyIP, route.adr, NetIP.AdrLen)	(* must be assigned later *)
 			ELSE
-				IF i = 0 THEN
+				IF i = 0 THEN	(* first host *)
 					COPY(hostname, hostName);
-					NetBase.Copy(route.adr, hostIP, Ip.AdrLen)
+					NetBase.Copy(route.adr, hostIP, NetIP.AdrLen)
 				END
 			END;
 			GetEntry(key, "Gateway", gateway, num); ToHost0(num, route.gway, done);
-			IF ~done THEN (*Texts.WriteString(W, "Gateway not found");
-				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)*)
+			IF ~done THEN	(* ok if not arp, e.g. SLIP or PPP *)
+				NetBase.Copy(anyIP, route.gway, NetIP.AdrLen)
 			END;
 			GetEntry(key, "Netmask", dmy, num); ToHost0(num, route.subnet, done);
-			IF done THEN Ip.InstallRoute(route, rname, device);
-				(*Texts.WriteString(W, "Route installed"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)*)
-			ELSE (*Texts.WriteString(W, "Netmask not found"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)*)
-			END
-		ELSE Texts.WriteString(W, "Device not found"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+			IF ~done THEN	(* ok if not arp, e.g. SLIP or PPP *)
+				NetBase.Copy(anyIP, route.subnet, NetIP.AdrLen)	(* all destinations local *)
+			END;
+			IF NetBase.Equal(anyIP, route.gway, NetIP.AdrLen) & ~NetBase.Equal(anyIP, route.adr, NetIP.AdrLen) THEN
+					(* gateway not set, but host adr set - attempt auto setting *)
+				FOR j := 0 TO NetIP.AdrLen-1 DO	(* take host address AND subnet mask *)
+					route.gway[j] := SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, route.adr[j]) * 
+							SYSTEM.VAL(SET, route.subnet[j]))
+				END;
+					(* add .1 at end (common convention) *)
+				route.gway[3] := SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, route.gway[3]) + {0});
+				(*log := TRUE*)
+			END;
+(*
+			IF log THEN
+				ToNum(SYSTEM.VAL(IPAdr, route.adr), s);
+				Texts.WriteString(W, "IP: ");  Texts.WriteString(W, s);
+				ToNum(SYSTEM.VAL(IPAdr, route.subnet), s);
+				Texts.WriteString(W, ", Subnet: ");  Texts.WriteString(W, s);
+				ToNum(SYSTEM.VAL(IPAdr, route.gway), s);
+				Texts.WriteString(W, ", Gateway: ");  Texts.WriteString(W, s);
+				Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+			END;
+*)
+			NetIP.InstallRoute(route)
+		ELSE
+			Texts.WriteString(W, "Device [");  Texts.WriteString(W, device);  
+			Texts.WriteString(W, "] not found"); Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf)
 		END;
 		INC(i); key[21] := CHR(i+ORD("0"));
-		rname[5] := CHR(i+ORD("0"));
 		GetEntry0(key, "Device", device)
 	END
 END SetRoutes;
@@ -785,68 +885,211 @@ PROCEDURE SetDns;
 VAR
 	name, num, dns: ARRAY 64 OF CHAR;
 	i, nodns: INTEGER;
-	adr: Ip.Adr;
+	adr: NetIP.Adr;
 	done: BOOLEAN;
 BEGIN nodns := 0;
-	i := 1; dns := "DNS1"; GetEntry("NetSystem.Hosts.", dns, name, num);
-	WHILE num # "" DO ToHost0(num, adr, done);
-		IF done THEN
-			DNS.InstallDNS(name, adr); INC(nodns)
-		ELSE (*Texts.WriteString(W, dns);
-			Texts.Write(W, " "); Texts.WriteString(W, name);
-			Texts.WriteString(W, " no ip-number");  Texts.WriteLn(W)*)
-		END;
-		INC(i); dns[3] := CHR(i + ORD("0"));
-		GetEntry("NetSystem.Hosts.", dns, name, num)
+	dns := "DNS0";
+	FOR i := 0 TO 3 DO
+		dns[3] := CHR(i + ORD("0"));
+		GetEntry("NetSystem.Hosts.", dns, name, num);
+		IF (num # "") & (num[0] # "<") THEN ToHost0(num, adr, done);
+			IF done THEN
+				NetDNS.InstallDNS(name, adr); INC(nodns)
+			END
+		END
 	END;
 	IF nodns = 0 THEN
-		ToHost0("129.132.1.11", adr, done); DNS.InstallDNS("dns1.ethz.ch", adr);
-		ToHost0("129.132.98.12", adr, done); DNS.InstallDNS("dns2.ethz.ch", adr)
+		ToHost0("129.132.98.12", adr, done); NetDNS.InstallDNS("dns1.ethz.ch", adr)
 	END;
 END SetDns;
+
+PROCEDURE PollDevices(me: Oberon.Task);
+BEGIN
+	NetBase.Poll
+END PollDevices;
 
 (** Command NetSystem.Start ~  Start up NetSystem. *)
 
 PROCEDURE Start*;
-VAR
-	name, num: ARRAY 64 OF CHAR;
+VAR name, num: ARRAY 64 OF CHAR;  pos: LONGINT;  ch: CHAR;
 BEGIN
 	IF ~started THEN
 		SetDevices;
-		SetRoutes; DNS.Init; GetEntry("NetSystem.Hosts.", "Domain", name, num);
-		IF name # "" THEN DNS.InstallDom(name) ELSE DNS.InstallDom("ethz.ch") END;
-		SetDns; started := Ip.nofRoutes > 0;
-		IF started THEN Ip.SetDirectedCast(Ip.routes[0]);
-			Texts.WriteString(W, "NetSystem started / mg");
-			Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+		IF NetBase.FindDevice(0) # NIL THEN
+			SetRoutes; NetDNS.Init; GetEntry("NetSystem.Hosts.", "Domain", name, num);
+			IF name # "" THEN
+				IF hostName # "" THEN	(* check hostname *)
+					pos := 0;  Strings.Search(".", hostName, pos);
+					IF pos = -1 THEN	(* append domain name *)
+						Strings.AppendCh(hostName, ".");
+						Strings.Append(hostName, name)
+					END
+				END;
+				NetDNS.InstallDom(name);
+			ELSE NetDNS.InstallDom("ethz.ch")
+			END;
+			SetDns; started := NetIP.nofRoutes > 0;
+			IF started THEN NetIP.SetDirectedCast(NetIP.routes[0]);
+				NetBase.Start; NetIP.StartIP; NetPorts.Init; NetUDP.Start; NetTCP.Start;
+				NEW(task);  task.safe := TRUE; task.time := Oberon.Time();  task.handle := PollDevices;
+				Oberon.Install(task);
+				IF (hostName = "") & ~(NetBase.Equal(anyIP, hostIP, NetIP.AdrLen)) THEN
+					(*Texts.WriteString(W, "Host: ");  Texts.Append(Oberon.Log, W.buf);*)
+					GetName(hostIP, hostName);
+					pos := 0;
+					LOOP
+						ch := hostName[pos];
+						IF ch = 0X THEN EXIT END;
+						IF (ch >= "A") & (ch <= "Z") THEN ch := CHR(ORD(ch)+32) END;
+						hostName[pos] := ch;
+						INC(pos)
+					END;
+					IF pos = 0 THEN hostName := "x.oberon.ethz.ch" END;
+					(*Texts.WriteString(W, hostName);  Texts.WriteLn(W)*)
+				END;
+				Texts.WriteString(W, "NetSystem started");
+				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+			ELSE
+				Texts.WriteString(W, "Oberon.Text - NetSystem not configured");
+				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+			END
 		ELSE
-			Texts.WriteString(W, "Oberon.Text - NetSystem not configured");
+			Texts.WriteString(W, "Oberon.Text - No network driver configured");
 			Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-		END;
-		NetBase.Start; Ip.StartTimer; Ip.StartIP; Ports.Init; UDP.Start; TCP.Start
+		END
 	END
 END Start;
 
 (** Command NetSystem.Stop ~  Shut down NetSystem. *)
 
 PROCEDURE Stop*;
-BEGIN TCP.Stop; UDP.Stop; Ip.StopIP; Ip.StopTimer; NetBase.Stop;
-	started := FALSE; Texts.WriteString(W, "NetSystem stopped");
+BEGIN
+	IF task # NIL THEN Oberon.Remove(task); task := NIL END;
+	NetTCP.Stop; NetUDP.Stop; NetIP.StopIP; NetBase.Stop;
+	hostName := ""; started := FALSE;
+	Texts.WriteString(W, "NetSystem stopped");
 	Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 END Stop;
 
-BEGIN NetBase.Copy(Ip.IPany, anyIP, Ip.AdrLen);
-	NetBase.Copy(Ip.IPall, allIP, Ip.AdrLen);
+(** Command NetSystem.Show ~  Display status. *)
+
+PROCEDURE Show*;
+VAR s: ARRAY 32 OF CHAR;  r: NetIP.Route;  dev: NetBase.Device;  i: LONGINT;  p: Password;
+BEGIN
+	Texts.WriteString(W, "NetSystem.Show");  Texts.WriteLn(W);
+	IF started THEN
+		Texts.WriteString(W, "  Host: ");  ToNum(hostIP, s);  Texts.WriteString(W, s);  
+		Texts.WriteString(W, " / ");  Texts.WriteString(W, hostName);
+		Texts.WriteString(W, " / ");  Texts.WriteString(W, NetDNS.dom[0]);
+		Texts.WriteLn(W);
+		i := 0;
+		LOOP
+			dev := NetBase.FindDevice(i);
+			IF dev = NIL THEN EXIT END;
+			Texts.WriteString(W, "  Device");  Texts.WriteInt(W, i, 1);
+			Texts.WriteString(W, ": ");
+			CASE dev.state OF
+				NetBase.closed: Texts.WriteString(W, "closed")
+				|NetBase.open: Texts.WriteString(W, "open")
+				|NetBase.pending: Texts.WriteString(W, "pending")
+				ELSE Texts.WriteInt(W, dev.state, 1)
+			END;
+			Texts.Write(W, " ");
+			AdrToStr(dev.hostAdr, s);  Texts.WriteString(W, s);  Texts.WriteString(W, " / ");
+			AdrToStr(dev.castAdr, s);  Texts.WriteString(W, s);
+			Texts.WriteLn(W);
+			INC(i)
+		END;
+		FOR i := 0 TO NetIP.nofRoutes-1 DO
+			r := NetIP.routes[i];
+			Texts.WriteString(W, "  Route");  Texts.WriteInt(W, i, 1);  Texts.WriteString(W, ": ");
+			ToNum(SYSTEM.VAL(IPAdr, r.adr), s);  Texts.WriteString(W, s);  Texts.WriteString(W, " / ");
+			ToNum(SYSTEM.VAL(IPAdr, r.subnet), s);  Texts.WriteString(W, s);  Texts.WriteString(W, " / ");
+			ToNum(SYSTEM.VAL(IPAdr, r.gway), s);  Texts.WriteString(W, s);  Texts.WriteString(W, " -> ");
+			Texts.WriteInt(W, r.dev.num, 1);
+			IF NetIP.arpopt IN r.options THEN Texts.WriteString(W, " arp")
+			ELSE Texts.WriteString(W, " noarp")
+			END;
+			Texts.WriteLn(W)
+		END;
+		Texts.WriteString(W, "  DNS: ");
+		FOR i := 0 TO NetDNS.nofdns-1 DO
+			ToNum(SYSTEM.VAL(IPAdr, NetDNS.server[i].adr), s);  Texts.WriteString(W, s);
+			IF i = NetDNS.dns THEN Texts.Write(W, "*") END;
+			IF i # NetDNS.nofdns-1 THEN Texts.WriteString(W, " / ") END
+		END;
+		Texts.WriteLn(W);
+		p := passwords;  WHILE p # NIL DO WriteURL(p.service, p.user, p.host); p := p.next END
+	END;
+	Texts.Append(Oberon.Log, W.buf)
+END Show;
+
+BEGIN
+	task := NIL;
+	NetBase.Copy(NetIP.IPany, anyIP, NetIP.AdrLen);
+	NetBase.Copy(NetIP.IPall, allIP, NetIP.AdrLen);
+	hostName := "";  hex := "0123456789ABCDEF";
 	Texts.OpenWriter(W); started := FALSE; passwords := NIL;
 	Start;  Kernel.InstallTermHandler(Stop)
 END NetSystem.
 
+Tasks
+	NetBase.Poll
+		for all devices, if Available then allocate item, Receive, multiplex upcall:
+			NetIP.ArpReceive - send arp queued packets & reply to arp request
+			NetIP.IPReceive - queue up to 30 packets in NetIP.ipq
+	NetIP.IPDemux
+		for all items in NetIP.ipq, check header, multiplex upcall:
+			NetUDP.Input - find connection c & put up to 20 items to c.rq
+			NetTCP.Demux - handle some items or put up to 30 items in c.rq
+	NetTCP.TcpReceive
+		one task per connection.  for all items in c.rq, call c.handle
+	NetIP.Timer
+		every 3 seconds, process arp cache
+	NetTCP.Timer
+		process events in NetTCP.sq (deleteev, sendev, retransev, persistev)
+
+Install
+	NetIP.StartTimer
+		NetBase.InstallProtocol(ArpReceive, arpid)	(* 806H *)
+		timer.handle := Timer; Oberon.Install(timer)
+	NetIP.StartIP
+		NetBase.InstallProtocol(IPReceive, ipid)	(* 800H *)
+	NetUDP.Start
+		NetIP.InstallDemux(Input, NetIP.UDP)	(* 17 *)
+	NetTCP.Start
+		NetIP.InstallDemux(Demux, NetIP.TCP)	(* 6 *)
+		timer.handle := Timer; Oberon.Install(timer)
+	NetTCP.ProcListen (from NetTCP.Demux)
+		T.handle := TcpReceive; Oberon.Install(T)
+	NetTCP.Connect
+		T.handle := TcpReceive; Oberon.Install(T)
+
+Modification
+	NetSystem.TCPSetState fold into State
+	bug: NetTCP.Poll does not check window... ?
+
+Other uses of Oberon & Texts
+	NetSystem
+		Oberon.Par, Oberon.Log, Oberon.OpenScanner, Texts.*
+	SLIP.InstallDevice
+		Oberon.Par, Texts.Scanner
+	PPPHDLC
+		Timeout task
+	PPPMain
+		Oberon.OpenScanner
+		Connect task
+		
 Dialer.Dial
 Dialer.Hangup
 
-NetSystem.Start 
 NetSystem.Stop
+System.Free NetSystem SLIP NetTCP NetDNS NetUDP NetPorts NetIP NetBase ~
+NetSystem.Start 
 
-System.Free NetSystem SLIP TCP DNS UDP Ports IP NetBase ~
+Find.All ^  Find.Domain NetBase.Mod NetIP.Mod NetPorts.Mod NetUDP.Mod NetTCP.Mod NetDNS.Mod NetSystem.Mod ~
 
-System.ShowModules
+Compiler.Compile NetBase.Mod\s NetIP.Mod\s NetPorts.Mod\s NetUDP.Mod\s NetTCP.Mod\s NetDNS.Mod\s NetSystem.Mod 
+	Net3Com509.Mod ~
+
+Compiler.Compile *\x

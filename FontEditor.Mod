@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,14 +13,14 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE FontEditor;
+MODULE FontEditor;	(** portable *)
 (** Dieses Modul enthält einen Editor für Fonts basierend auf Rembrandt-Editor *)
 
 (*
 	jm 28.6.95 - Fix ConvertStringtopos
 *)
 IMPORT SYSTEM, Files, Display, D3:=Display3, Objects, Gadgets, Input, Oberon, Rembrandt, Effects,  
-				Out, Texts, Documents, Pictures, Printer, Printer3, Desktops;
+				Fonts, Out, Texts, Documents, Pictures, Printer, Printer3, Desktops;
 
 CONST
 	border=1;		(* Randdicke für Fonttable *)
@@ -30,7 +29,6 @@ CONST
 	dbeg = 33;		(* in Original darstellbare Zeichen: Anfang/Ende *)
 	dend = 151;
 
-	default= "Oberon10.Scn.Fnt";	(* Defaultfont *)
 	dheight = 18;							(* Fläche für ein Character in der Fonttable *)
 	dwidth = 18;
 
@@ -51,14 +49,13 @@ TYPE
 
 	Font = POINTER TO FontDesc;						(* Fontdarstellung *)
 	FontDesc = RECORD 
-		name: ARRAY 64 OF CHAR;
 		type, family, variant: CHAR;
 		height, minX, maxX, minY, maxY, nofRuns: INTEGER;
 		pos: LONGINT;
 		run: ARRAY 256 OF RunRec;
 		box: ARRAY 256 OF BoxRec;
 		p: ARRAY 256 OF LONGINT;
-		raster: POINTER TO ARRAY OF CHAR;
+		raster: POINTER TO ARRAY OF CHAR
 	END;
 
 	Fonttable = POINTER TO FonttableDesc;			(* Tabelle für Charakterauswahl *)
@@ -148,9 +145,7 @@ END PostoString;
 
 PROCEDURE ConvertPostoString(pos: INTEGER; VAR s: ARRAY OF CHAR);
 (* Wandelt einen ASCII-Code in einen String um; wird als Documentname verwendet *)
-VAR hex: ARRAY 17 OF CHAR;
 BEGIN
-	COPY("0123456789ABCDEF", hex);
 	IF (pos>=dbeg) & (pos<dend) THEN
 		s[0]:= CHR(pos);
 		s[1]:= 0X
@@ -249,7 +244,7 @@ PROCEDURE DocHandler(D: Objects.Object; VAR M: Objects.ObjMsg);
 VAR P: Pictures.Picture; R: D3.Mask;
 
 	PROCEDURE PP(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END PP;
 
 BEGIN
@@ -896,13 +891,12 @@ BEGIN
 END PreviewAttributes;
 
 PROCEDURE HandlePreview(F: Objects.Object; VAR M: Objects.ObjMsg);
-  VAR x, y, w, h: INTEGER; F1: Preview;
+  VAR F1: Preview;
 BEGIN
 	WITH F: Preview DO
 	IF M IS Display.FrameMsg THEN
 		WITH M: Display.FrameMsg DO
 			IF (M.F = NIL) OR (M.F = F) THEN (* message addressed to box *)
-				x := M.x + F.X; y := M.y + F.Y; w := F.W; h := F.H;
 				IF M IS Pictures.UpdateMsg THEN
 					WITH M: Pictures.UpdateMsg DO
 						IF F.pict#M.pict THEN
@@ -1280,7 +1274,7 @@ END EditPixels;
 
 BEGIN
 	EditPixels; NEW(df); 
-	F:= Files.Old(default);
+	F:= Files.Old(Fonts.Default.name);
 	IF F # NIL THEN Files.Set(R, F, 0); LoadFont(df, R) END;
 END FontEditor.
 

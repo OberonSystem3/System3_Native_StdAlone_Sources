@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE TGA;	
+MODULE TGA;	(** portable *)
 (*
 	JJ 02.03.95	Original Version of Jack Johnson's Targa
 	PM 25.10.95	System 3 / DOS/PC-Oberon version
@@ -48,8 +47,10 @@ BEGIN
 		Files.Read(R, H.depth); Files.Read( R, H.descriptor);
 
 		IF H.type = 0 THEN Out.String("Type 0: No image data.");
-		ELSIF (H.type = 11) OR (H.type = 32) OR (H.type = 33) THEN Out.String("Targa type not supported.");
-		ELSIF (H.type # 1) & (H.type # 2) & (H.type # 3) & (H.type # 9) & (H.type # 10) THEN Out.String("Unknown Targa type.");
+		ELSIF (H.type = 11) OR (H.type = 32) OR (H.type = 33) THEN
+			Out.String("Targa type not supported.");
+		ELSIF (H.type # 1) & (H.type # 2) & (H.type # 3) & (H.type # 9) & (H.type # 10) THEN
+			(*Out.String("Unknown Targa type.");*)
 		ELSE
 			Out.String("Targa Type "); Out.Int(H.type, 0);
 			IF H.cmaplength > 256 THEN Out.String(" Palette size too large; color depth not supported.");

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE CompressTools; (* (c) ejz, first version: 14.1.92, this version: 28.7.95 *)
+MODULE CompressTools;	(** non-portable *) (* (c) ejz, first version: 14.1.92, this version: 28.7.95 *)
 	IMPORT Files, Texts, Oberon,
 		(* TextDocs
 		Objects, Gadgets, Documents, TextDocs, Desktops;
@@ -56,7 +55,8 @@ MODULE CompressTools; (* (c) ejz, first version: 14.1.92, this version: 28.7.95 
 		DirMenu = "System.Close System.Grow CompressTools.Open CompressTools.Extract CompressTools.Delete CompressTools.Add";
 		EditMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
 		(* TextFrames *)
-
+		MaxName = 32;
+		
 	TYPE
 		Node = RECORD
 			parent, smallerChild, largerChild: INTEGER
@@ -66,7 +66,7 @@ MODULE CompressTools; (* (c) ejz, first version: 14.1.92, this version: 28.7.95 
 			name*: Name;
 			length*, check: LONGINT;
 			date*, time*: LONGINT;
-			ratio: REAL
+			ratio*: REAL
 		END;
 		List = POINTER TO ListDesc;
 		ListDesc = RECORD
@@ -1816,7 +1816,7 @@ BEGIN
 	END;
 	IF j = -1 THEN j := 0 END;
 	bname[j] := 0X;
-	IF (bname = "Text") OR (bname = "Tool") OR (bname = "Mod") THEN
+	IF (bname = "Text") OR (bname = "Tool") OR (bname = "Mod") & (i+4 < MaxName) THEN
 		COPY(name, bname);
 		bname[i] := ".";  INC(i);  bname[i] := "B";  INC(i);  bname[i] := "a";  INC(i);
 		bname[i] := "k";  INC(i);  bname[i] := 0X;
@@ -1860,7 +1860,7 @@ END MustBackup;
 		Files.Set(R, ArcF, 0);
 		ReadHeader(R, h, err);
 		WHILE (h.name # EOFName) &  ~err DO
-			Texts.WriteString(W, "    ");
+			(*Texts.WriteString(W, "    ");*)
 			Texts.WriteString(W, h.name);
 			Texts.Append(Oberon.Log, W.buf);
 			pos := Files.Pos(R);
@@ -1868,7 +1868,8 @@ END MustBackup;
 			IF AddF # NIL THEN
 				Files.Close(AddF);
 				IF MustBackup(h.name, bname) THEN
-					Files.Rename(h.name, bname, res)
+					Files.Rename(h.name, bname, res);
+					IF res = 0 THEN Texts.WriteString(W, " (.Bak saved)") END
 				ELSE
 					Files.Delete(h.name, res)
 				END

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,9 +13,9 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE ColorModels;	(** by W. Ibl *)
+MODULE ColorModels;	(** portable *)	(** by W. Ibl *)
 
-IMPORT Display,Oberon,Objects,Texts,Strings;
+IMPORT Display, Objects, Texts, Oberon, Strings;
 
 CONST
 	RGBtop = 255;	(* current RGB value maximum *)
@@ -52,22 +51,19 @@ VAR
 	x,y,z: REAL;
 BEGIN
 	sym:= NIL; last:= NIL;
-	COPY("ColorSystem.",system); Strings.Append(system,model);
+	COPY("ColorSystem.", system); Strings.Append(system,model);
 	Oberon.OpenScanner(S,system);
 	IF (S.class # Texts.Inval) THEN
-		WHILE ~S.eot & ~((S.class = Texts.Char) & (S.c = "}")) DO
-			IF (S.class = Texts.Real) THEN x:= S.x; Texts.Scan(S); END;
-			IF (S.class = Texts.Real) THEN y:= S.x; Texts.Scan(S); END;
-			IF (S.class = Texts.Real) THEN z:= S.x; Texts.Scan(S); END;
-			IF (S.class = Texts.Name) THEN
-				NEW(col); COPY(S.s,col.name);
-				col.x:= x; col.y:= y; col.z:= z; col.next:= NIL;
-				IF (last = NIL) THEN sym:= col; ELSE last.next:= col; END;
-				last:= col;
-			END;
-			Texts.Scan(S);
-		END;
-	END;
+		WHILE ~S.eot & (S.class = Texts.Name) DO
+			NEW(col); COPY(S.s, col.name); Texts.Scan(S);
+			IF S.class = Texts.Real THEN x := S.x; Texts.Scan(S) END;
+			IF S.class = Texts.Real THEN y := S.x; Texts.Scan(S) END;
+			IF S.class = Texts.Real THEN z := S.x; Texts.Scan(S) END;
+			col.x := x; col.y := y; col.z := z; col.next := NIL;
+			IF last = NIL THEN sym:= col ELSE last.next:= col END;
+			last := col
+		END
+	END
 END LoadColorSymbols;
 
 PROCEDURE FindColorSymbol(sym: ColorSym; s: ARRAY OF CHAR): ColorSym;

@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE BasicGadgets; (* jm 18.1.95 *)
+MODULE BasicGadgets;	(** portable *) (* jm 18.1.95 *)
 
 (** Contains an implementation of the model gadgets Boolean, String, Integer, and Real, and of the visual gadgets Button, Checkbox and Slider. The buttons and checkboxes can also be used as radio-buttons by linking to them an Integer model gadget.
 *)
@@ -41,7 +40,7 @@ MODULE BasicGadgets; (* jm 18.1.95 *)
 *)
 
 IMPORT
-	Objects, Gadgets, Display, Display3, Effects, Oberon, Texts, Files, Attributes, Printer, Printer3, Fonts, Strings;
+	Objects, Gadgets, Display, Display3, Effects, Oberon, Texts, Files, Printer, Printer3, Fonts, Strings;
 
 CONST
 	VersionNo = 2; VersionNewButton = 4; VersionAbstract = 4;
@@ -49,8 +48,6 @@ CONST
 	
 	MaxLen = 64;
 
-	DisplayUnit = LONG(10000);
-	
 TYPE
 	(* --- Things --- *)
 	
@@ -619,7 +616,7 @@ PROCEDURE PrintButton(F: Button; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; x, y, w, h: INTEGER; D: Display.DisplayMsg; L: Gadgets.Frame; O: Display3.OverlapMsg;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * DisplayUnit DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -672,8 +669,7 @@ END CopyButton;
 
 PROCEDURE ButtonHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
 VAR F2: Button; x, y, w, h: INTEGER;   
-	keysum: SET; ver: LONGINT; f: Gadgets.Frame; B: Objects.BindMsg; R: Display3.Mask;
-	CM: Display.ControlMsg;
+	keysum: SET; ver: LONGINT; f: Gadgets.Frame; R: Display3.Mask;
 BEGIN
 	WITH F: Button DO
 		IF M IS  Objects.AttrMsg THEN
@@ -987,7 +983,7 @@ PROCEDURE PrintCheckBox(F: CheckBox; VAR M: Display.DisplayMsg);
 VAR A: Objects.AttrMsg; R: Display3.Mask; x, y, w, h, col: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * DisplayUnit DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN
@@ -1204,7 +1200,7 @@ PROCEDURE PrintSlider(F: Slider; VAR M: Display.DisplayMsg);
 VAR R: Display3.Mask; x, y, w, h, X0, Y0, B, BW: INTEGER;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * LONG(10000) DIV Printer.Unit)
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END P;
 
 BEGIN

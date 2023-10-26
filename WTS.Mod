@@ -1,11 +1,10 @@
-(* OBERON System 3, Release 2.2.
+(* OBERON System 3, Release 2.3.
 
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
+Copyright 1999 ETH Zürich Institute for Computer Systems, 
+ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
 
 This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
+System 3 license contract. The full text can be downloaded from
 
 	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
 
@@ -14,7 +13,7 @@ the interface of this module in any way that disagrees with the style
 or content of the system and (b) requested to provide all conversions
 of the source code to another platform with the name OBERON. *)
 
-MODULE WTS;
+MODULE WTS;	(** portable *)
 
 IMPORT Files, Display, Objects, Texts, Oberon, TextGadgets, BIT;
 
@@ -53,8 +52,8 @@ VAR
 	BEGIN
 		IF L = NIL THEN NEW(L); Objects.OpenLibrary(L) END;
 		style := TextGadgets.newStyle();
-		Files.ReadNum(R, x); Files.ReadNum(R, x); Files.ReadNum(R, x); style.leftM := SHORT(x DIV 10000);	(*?, first, left*)
-		Files.ReadNum(R, x); style.width := SHORT(x DIV 10000);	(*width*)
+		Files.ReadNum(R, x); Files.ReadNum(R, x); Files.ReadNum(R, x); style.leftM := SHORT(x DIV Display.Unit);	(*?, first, left*)
+		Files.ReadNum(R, x); style.width := SHORT(x DIV Display.Unit);	(*width*)
 		Files.ReadNum(R, x (* style.gap *));	(*lead*)
 		Files.ReadNum(R, x (*style.lsp*)); Files.ReadNum(R, x (*style.dsr*));	(*lsp, dsr*)
 		Files.ReadNum(R, x); opts := x;	(*opts 0=grid, 1=left, 2=right, 3=break*)
@@ -68,7 +67,7 @@ VAR
 		Files.ReadNum(R, tabs);	(*tabs*)
 		style.noTabs := 0;
 		WHILE (style.noTabs < tabs) & (style.noTabs < 32) DO
-			Files.ReadNum(R, x); style.tab[style.noTabs] := SHORT(x DIV 10000); INC(style.noTabs)
+			Files.ReadNum(R, x); style.tab[style.noTabs] := SHORT(x DIV Display.Unit); INC(style.noTabs)
 		END;
 		i := 32;
 		WHILE i < tabs DO Files.ReadNum(R, x); INC(i) END;
@@ -113,26 +112,26 @@ VAR
 			pos := Files.Pos(R);
 			Objects.NewObj := NIL; cmd := "WTSFold.New"; Oberon.Call(cmd, Oberon.Par, FALSE, res);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Display.Frame) THEN
-				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV 10000), SHORT(h DIV 10000))
+				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV Display.Unit), SHORT(h DIV Display.Unit))
 			END;
 			Files.Set(R, Files.Base(R), pos+n)
 		ELSIF (elem[ORD(ch)] = "StampElems") & styleOk THEN 
 			pos := Files.Pos(R);
 			Objects.NewObj := NIL; cmd := "WTSStamp.New"; Oberon.Call(cmd, Oberon.Par, FALSE, res);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Display.Frame) THEN
-				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV 10000), SHORT(h DIV 10000))
+				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV Display.Unit), SHORT(h DIV Display.Unit))
 			END;
 			Files.Set(R, Files.Base(R), pos+n)
 		ELSIF (elem[ORD(ch)] = "PictElems") & styleOk THEN pos := Files.Pos(R);
 			Objects.NewObj := NIL; cmd := "WTSPict.New"; Oberon.Call(cmd, Oberon.Par, FALSE, res);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Display.Frame) THEN
-				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV 10000), SHORT(h DIV 10000))
+				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV Display.Unit), SHORT(h DIV Display.Unit))
 			END;
 			Files.Set(R, Files.Base(R), pos+n)
 		ELSIF (elem[ORD(ch)] = "GraphicElems") & styleOk THEN pos := Files.Pos(R);
 			Objects.NewObj := NIL; cmd := "WTSDraw.New"; Oberon.Call(cmd, Oberon.Par, FALSE, res);
 			IF (Objects.NewObj # NIL) & (Objects.NewObj IS Display.Frame) THEN
-				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV 10000), SHORT(h DIV 10000))
+				PutObj(Objects.NewObj(Display.Frame), SHORT(w DIV Display.Unit), SHORT(h DIV Display.Unit))
 			END;
 			Files.Set(R, Files.Base(R), pos+n)
 		ELSE Files.Set(R, Files.Base(R), Files.Pos(R)+n)
