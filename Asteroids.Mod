@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Asteroids;	(** portable *)	(* by W. Ibl *)
 (*
@@ -210,7 +198,6 @@ TYPE
 	Timer = POINTER TO TimerDesc;
 	TimerDesc = RECORD(Oberon.TaskDesc)
 		model: Field;
-		trigger: LONGINT;
 		tnext: Timer;
 	END;
 VAR
@@ -312,14 +299,14 @@ END Pair;
 PROCEDURE Tag(obj: SpaceObj; VAR tag: Objects.Name);
 	(* string tag for loading/storing *)
 BEGIN
-	WITH
-	  	obj: Asteroid DO COPY("Asteroid",tag);
-	|	obj: EBullet DO COPY("EBullet",tag);
-	|	obj: SBullet DO COPY("SBullet",tag);
-	|	obj: Enemy DO COPY("Enemy",tag);
-	|	obj: Ship DO COPY("Ship",tag);
-	|	obj: Detonation DO COPY("Detonation",tag);
-	END;
+	IF obj IS Asteroid THEN COPY("Asteroid",tag)
+	ELSIF obj IS EBullet THEN COPY("EBullet",tag)
+	ELSIF obj IS SBullet THEN COPY("SBullet",tag)
+	ELSIF obj IS Enemy THEN COPY("Enemy",tag)
+	ELSIF obj IS Ship THEN COPY("Ship",tag)
+	ELSIF obj IS Detonation THEN COPY("Detonation",tag)
+	ELSE HALT(99)
+	END
 END Tag;
 
 PROCEDURE ShowStatus(obj: Field; VAR status: ARRAY OF CHAR);
@@ -1001,11 +988,17 @@ BEGIN
 	END;
 	IF hit THEN
 		HitShip(F,obj);
-		WITH	(* produce a post mortal animation *)
-		  	tgt: Asteroid DO
-					Hit(F,tgt.px1[0],tgt.py1[0]); x:= SplitAsteroid(F,tgt,x,y);
-		|	tgt: Enemy DO
-					Hit(F,tgt.px1[0],tgt.py1[0]); x:= 0;
+			(* produce a post mortal animation *)
+		IF tgt IS Asteroid THEN
+			WITH tgt: Asteroid DO
+				Hit(F,tgt.px1[0],tgt.py1[0]); x:= SplitAsteroid(F,tgt(Asteroid),x,y)
+			END
+		ELSIF tgt IS Enemy THEN
+			WITH tgt: Enemy DO
+				Hit(F,tgt.px1[0],tgt.py1[0]); x:= 0
+			END
+		ELSE
+			HALT(99)
 		END;
 		Score(F,hitscore[x]); tgt.alive:= FALSE;	(* kamikaze salairy *)
 	END;
@@ -1133,13 +1126,14 @@ BEGIN
 			swp:= obj.py0; obj.py0:= obj.py1; obj.py1:= swp;
 			obj.n0:= obj.shape.n;
 			IF obj.alive THEN
-				WITH	(* various move algorithms *)
-				  	obj: Ship DO MoveShip(F,obj);
-				|	obj: SBullet DO MoveSBullet(F,obj);
-				|	obj: Enemy DO MoveEnemy(F,obj);
-				|	obj: EBullet DO MoveEBullet(F,obj);
-				|	obj: Mass DO MoveMass(obj);
-				END;
+					(* various move algorithms *)
+				IF obj IS Ship THEN MoveShip(F,obj(Ship))
+				ELSIF obj IS SBullet THEN MoveSBullet(F,obj(SBullet))
+				ELSIF obj IS Enemy THEN MoveEnemy(F,obj(Enemy))
+				ELSIF obj IS EBullet THEN MoveEBullet(F,obj(EBullet))
+				ELSIF obj IS Mass THEN MoveMass(obj)
+				ELSE HALT(99)
+				END
 			END;
 		END;
 	END;
@@ -1177,28 +1171,26 @@ BEGIN
 		model:= me.model;
 		IF ~model.paused THEN
 			time:= Oberon.Time();	(* slow down animation *)
-			IF (me.trigger <= time) THEN
-				obj:= model.objects;
-				WHILE (obj # NIL) DO Step1(model,obj); obj:= obj.next; END;
-				Gadgets.Update(model);
-				obj0:= NIL; obj:= model.objects;
-				WHILE (obj # NIL) DO
-					IF Step2(model,obj,obj0) THEN INC(amt); END;
-					obj:= obj.next;
-				END;
-				IF (amt = 0) THEN
-					INC(model.frames);
-					NewRound(model,model.frames+StartAsts);
-				ELSIF (model.ship # NIL) & model.ship.alive & (model.ufos <= model.frames) THEN
-					r1:= RandomNumbers.Uniform();	(* create a new ufo *)
-					IF (r1 < (model.frames+1)/EAppear) THEN NewEnemy(model); END;
-				END;
-				UpdateStatus(model);
-				amt:= BaseDelay - amt; IF (amt < 0) THEN amt:= 0; END;
-				me.trigger:= Oberon.Time() + amt;
+			obj:= model.objects;
+			WHILE (obj # NIL) DO Step1(model,obj); obj:= obj.next; END;
+			Gadgets.Update(model);
+			obj0:= NIL; obj:= model.objects;
+			WHILE (obj # NIL) DO
+				IF Step2(model,obj,obj0) THEN INC(amt); END;
+				obj:= obj.next;
 			END;
-		END;
-	END;
+			IF (amt = 0) THEN
+				INC(model.frames);
+				NewRound(model,model.frames+StartAsts);
+			ELSIF (model.ship # NIL) & model.ship.alive & (model.ufos <= model.frames) THEN
+				r1:= RandomNumbers.Uniform();	(* create a new ufo *)
+				IF (r1 < (model.frames+1)/EAppear) THEN NewEnemy(model); END;
+			END;
+			UpdateStatus(model);
+			amt:= BaseDelay - amt; IF (amt < 0) THEN amt:= 0; END;
+			me.time := Oberon.Time() + amt
+		END
+	END
 END TimerHandler;
 
 PROCEDURE StopTimers();
@@ -1313,10 +1305,9 @@ END FieldFile;
 PROCEDURE FieldHandler*(F: Object; VAR M: Objects.ObjMsg);
 BEGIN
 	WITH F: Field DO
-		WITH
-		  	M: AttrMsg DO FieldAttr(F,M);
-		|	M: CopyMsg DO M.obj:= F;
-		|	M: FileMsg DO FieldFile(F,M); 
+		IF M IS AttrMsg THEN FieldAttr(F,M(AttrMsg))
+		ELSIF M IS CopyMsg THEN M(CopyMsg).obj:= F
+		ELSIF M IS FileMsg THEN FieldFile(F,M(FileMsg))
 		ELSE
 			Gadgets.objecthandle(F,M);
 		END;
@@ -1473,14 +1464,13 @@ END StarfieldUpdate;
 PROCEDURE StarfieldHandler*(F: Object; VAR M: Objects.ObjMsg);
 BEGIN
 	WITH F: Starfield DO
-		WITH
-		  	M: CopyMsg DO StarfieldCopy(F,M);
-		|	M: AttrMsg DO StarfieldAttr(F,M);
-		|	M: DisplayMsg DO StarfieldDisplay(F,M);
-		|	M: FileMsg DO StarfieldFile(F,M);
-		|	M: InputMsg DO StarfieldInput(F,M);
-		|	M: ModifyMsg DO StarfieldModify(F,M);
-		|	M: UpdateMsg DO StarfieldUpdate(F,M);
+		IF M IS CopyMsg THEN StarfieldCopy(F,M(CopyMsg))
+		ELSIF M IS AttrMsg THEN StarfieldAttr(F,M(AttrMsg));
+		ELSIF M IS DisplayMsg THEN StarfieldDisplay(F,M(DisplayMsg));
+		ELSIF M IS FileMsg THEN StarfieldFile(F,M(FileMsg));
+		ELSIF M IS InputMsg THEN StarfieldInput(F,M(InputMsg));
+		ELSIF M IS ModifyMsg THEN StarfieldModify(F,M(ModifyMsg));
+		ELSIF M IS UpdateMsg THEN StarfieldUpdate(F,M(UpdateMsg));
 		ELSE
 			Panels.PanelHandler(F,M);
 		END;
@@ -1627,9 +1617,9 @@ BEGIN
 		model:= Model(frame);
 		Oberon.Defocus();
 	END;
-	NEW(T); T.model:= Model(frame); T.trigger:= 0; T.tnext:= timer;
-	T.handle:= TimerHandler; timer:= T; Oberon.Install(T);
-	Documents.Init(D,frame);
+	NEW(T); T.model:= Model(frame); T.tnext:= timer;
+	T.handle:= TimerHandler; timer:= T; T.time := Oberon.Time();
+	Oberon.Install(T); Documents.Init(D,frame)
 END LoadDocument;
 
 PROCEDURE StoreDocument(D: Document);

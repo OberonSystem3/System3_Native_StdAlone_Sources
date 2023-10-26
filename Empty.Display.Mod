@@ -1,22 +1,10 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Display;	(** portable, except where noted *)
+ MODULE Display;	(** portable, except where noted *)
 
 (**
- Module Display provides the display drawing primitives and the base type of the visual objects, called Frames.
+Module Display provides the display drawing primitives and the base type of the visual objects, called Frames.
 *)
 
 (* Native Oberon template display driver. *)
@@ -442,24 +430,26 @@ END Display.
 Oberon can either be used with white text on a black background, or inverted with black text on a white background (the so-called paper model). To reduce confusion you should use the FG and BG constants in your code.
 
 2. Screen Organization
-Oberon supports multiple displays that are placed next to each other in increasing X coordinates. The X coordinate thus uniquely determines the screen, hence the single parameter of the Depth and TransferFormat procedures. Each screen contains a set of nested frames. Historically, the first screen (at Left) is the black and white screen, and the second screen is the color screen (at ColLeft). Today Left and ColLeft are typically set to 0, as only a few computers still use black and white displays. The screen origin is located at the bottom-left corner of the display (i.e. Y decrease from the top to the bottom of the display).
+Oberon supports multiple displays that are placed next to each other in increasing X coordinates. The X coordinate thus uniquely determines the screen, hence the single parameter of the Depth and TransferFormat procedures. Each screen contains a set of nested frames. Historically, the first screen (at Left) is the black and white screen, and the second screen is the color screen (at ColLeft). Today Left and ColLeft are typically set to 0 (for compatability with older applications), as only a few computers still use black and white displays. Only the color map is supported, and it now exists at the display origin.  The screen origin is located at the bottom-left corner of the display (i.e. Y decrease from the top to the bottom of the display).
 
 3. The Frames and the Frame messages
-Frames are the visual entities of Oberon. The frames are placed in the display space to make them visible. This involves inserting frames using the dsc and next fields into a container already located in the display space. All frames of a container are linked together in priority sequence using the next field. The dsc field points to the first child frame of a container. Note that this is only a convention and certain frames might decide to manage their contents in different ways. The frame messages are used to manipulate Frames (remember that frames also respond to the object message defined in module Objects).
+Frames are the visual entities of Oberon. The frames are placed in the display space to make them visible. This involves inserting frames using the dsc and next fields into a container already located in the display space. All frames of a container are linked together in priority sequence using the next field. The dsc field points to the first child frame of a container. Note that this is only a convention and certain frames might decide to manage their contents in different ways. The frame messages are used to manipulate Frames.  Frames also respond to the object message defined in module Objects. 
 
 4. Target or Destination frames
-The Frame messages are often broadcasted into the display space rather than sending them directly to a frame. This is useful when many frames are to be informed of an event. It is also a means to determine the exact location (in coordinates and nesting) of a frame in the display space by following the message thread from the display root object to the frame itself (see module Objects). It is also possible to address a broadcasted message to a certain frame. This is called a directed broadcast. The target or destination of a broadcasted message is identified by the F field in the FrameMsg. It is set to NIL when all frames are to receive the message (true broadcast) and to a specific frame if only that frame is interested in the message (directed broadcast).
+The Frame messages are often broadcast into the display space rather than sending them directly to a frame. This is useful when many frames are to be informed of an event. It is also a means to determine the exact location (in coordinates and nesting) of a frame in the display space by following the message thread from the display root object to the frame itself (see module Objects). It is also possible to address a broadcast message to a certain frame. This is called a directed broadcast, because the message is still broadcast, but is intended for a specific target only.  The target or destination of a broadcast message is identified by the F field in the FrameMsg. It is set to NIL when all frames are to receive the message (true broadcast) and to a specific frame if only that frame is interested in the message (directed broadcast).  The exact location, in coordinates and nesting, of a frame in the display space can be determined by tracing the message thread from the display root object to the frame itself.  See module Objects.
 
 5. Frame Coordinates and Message origin
 The coordinates of a frame are specified relative to its container or parent frame. The frame messages pass the absolute position of the top-left corner of the parent frame to their children in the x and y fields (called the message origin). Thus the absolute display position of a frame F is determined when it receives a frame message M:
 
 	M.x + F.X, M.y + F.Y, F.W, F.H
-	
+
+M.x and M.y are set by the container to its absolute coordinates. refer to sections 5.5-5.7 of The Oberon Companion (in Book.Tool).
+
 6. Invalidating Messages
-Often a frame knows that a message broadcast need not pass through the remainder of display space because it has already been handled. In such cases the res field of the frame message is set to zero or positive to indicate an action has been completed and that the message should be regarded as invalidated. Setting the res field in this way is called invalidating a message and will terminate the message broadcast.
+Often a frame knows that a broadcast need not pass through the remainder of display space because it has already been handled. In such cases the res field of the frame message is set to zero or positive to indicate that an action has been completed and that the message is invalidated. Setting the res field in this way is called "invalidating a message" and will terminate the broadcast.
 
 7. Broadcasting Frame Messages
-The Broadcast procedure broadcasts a message through the display space. The procedure initializes fields in the frame message. The message origin is set to (0, 0), the message is time stamped, the res field is set to a negative value, and the dlink field is initialized to NIL. In addition, the clipping rectangle is set to the whole display area.
+The Broadcast procedure broadcasts a message through the display space. The procedure initializes fields in the frame message. The message origin is set to (0, 0), the message is time stamped, the res field is set to a negative value, and the dlink field (defined in the base type Objects.ObjMsg) is initialized to NIL. In addition, the clipping rectangle is set to the whole display area.  Refer to section 5.7 of The Oberon Companion (in Book.Tool) for a description of dlink.
 
 8. Clipping
 To prevent the clipping rectangle clipping the wrong display primitives, it is reset on each message broadcast or when a trap occurs. Clipping does not affect the drawing of cursors. The Gadget system uses "display masks" that hide the management of the clipping rectangle from the programmer.
@@ -468,29 +458,31 @@ To prevent the clipping rectangle clipping the wrong display primitives, it is r
 The NewPattern procedure allows you to define patterns in a machine portable way. The sets contain 32 bits, each specifying a single pixel, with {0} the left-most pixel of the pattern. Each pattern line must be filled with empty bits so that it is a multiple of 32 pixels long. The first SET of the array contains the bottom line of the pattern.
 
 10. ControlMsg
-The ControlMsg is primarily used to remove a frame from the display space. When id is set to remove, the destination frame should be removed from its current location. This done by the container the frame is contained in (and is thus a slight misinterpretation of F as a destination frame). More than one frame are removed if the destination is a list of frames (connected by the slink field). In this case, they should at all belong to the same parent. This message should always be broadcast.
-When the message id is set to suspend or restore it indicates that all frames from the destination downwards in the display space will be temporarily removed from the display space, or will be restored to the display space. This allow frames to update their internal data structures as they may have missed messages while suspended (this is because only those frames located in the display space receive message broadcasts). This message is sent to the top-most frame of that part of the display space involved (with the destination set to NIL).
+The ControlMsg is primarily used to remove a frame from the display space. When id is set to remove, the destination frame should be removed from its current location. This done by the container of the frame and is thus a slight misinterpretation of F as a destination frame. More than one frame is removed if the destination is a list of frames connected by the slink field. In this case, they should all belong to the same parent. This message should always be broadcast.
+When the message id is set to suspend or restore it indicates that all frames from the destination downwards in the display space will be temporarily removed from the display space, or will be restored to the display space. This allows frames to update their internal data structures as they may have missed messages while suspended. This is because only those frames located in the display space receive message broadcasts. This message is sent to the top-most frame of that part of the display space involved with the destination set to NIL.
 
 11. ModifyMsg
-The ModifyMsg broadcasts resize request to the destination frame. This allows you to move the relative position or change the size of a child in a container. When the mode is set to state, the frame should not display itself immediately but only update its size and position (possibly indicating changes to its children in turn). It is then the task of the sender to send a follow up Display message to the frame. The latter way of using the ModifyMsg allows a container to influence its children without having them draw themselves for each change made. This message must never be invalidated (i.e. it must travel throughout the whole display space). The dX, dY, dW, dH coordinates should always be set correctly to indicate the change in position and size from the original position and size. The id field of the ModifyMsg is ignored by most frames in the system.
+The ModifyMsg broadcasts a resize request to the destination frame. This allows moving the relative position or changing the size of a child in a container. When the mode is set to state, the frame should not display itself immediately but should only update its size and position and possibly indicate changes to its children. It is then the task of the sender to send a follow up Display message to the frame. The latter way of using the ModifyMsg allows a container to influence its children without having them draw themselves for each change made. This message must never be invalidated; i.e. it must travel throughout the whole display space. The dX, dY, dW, dH coordinates should always be set correctly to indicate the change in position and size from the original position and size. The id field of the ModifyMsg is ignored by most frames in the system.
 
 12. DisplayMsg
-The DisplayMsg sends either a redraw request or a print request to a destination frame, depending on the value of device (screen or printer). When the destination is NIL, a whole DAG of gadgets are implied. When id is set to area, the area u, v, w, h inside the destination frame should be redrawn. Gadgets assume that these coordinates are relative to the top left-most corner of the destination gadget (thus v is negative).
-When printing, the x, y coordinates indicate the absolute printer coordinates of the left-bottom corner of the frame on paper (and not the left-bottom corner of the container). When the id is set to full, the frame has to print itself in the form it looks on the display. When the id is set to contents it should print its complete contents (for example a multi-page text that it is displaying). The frame may assume that the printer driver has been initialized already. Readying the printer is the task of the sender, and is done by calling Printer.Open.
+The DisplayMsg sends either a redraw request or a print request to a destination frame, according to whether the value of device is screen or printer. When the destination is NIL, a whole DAG of gadgets is implied. When id is set to area, the area u, v, w, h inside the destination frame should be redrawn. Gadgets assumes that these coordinates are relative to the top left-most corner of the destination gadget. Thus v is negative.
+
+When printing, the x, y coordinates indicate the absolute printer coordinates of the left-bottom corner of the frame on paper and not the left-bottom corner of the container. When the id is set to full, the frame must print itself as it appears on the display. When the id is set to contents the frame must print its complete contents. For example, a multi-page text can be displayed and printed. The frame can assume that the printer driver has already been initialized. Readying the printer is the task of the sender and is done by calling Printer.Open.
 
 13. LocateMsg
 This message is broadcast to locate the frame positioned at the absolute coordinates X, Y on the display. The result, if any, is found in the loc field. The frame should return the relative position u, v of X, Y inside itself. Gadgets return these coordinates relative to their top-left corner (i.e. v is typically negative). By convention, the message is invalidated when the loc field is set.
 
 14. SelectMsg
-When id is set to get, the message is used to return the current object selection (a list) in obj. The parent of the selected objects is returned in the sel field. This message is broadcast with the destination set to NIL. The time of the selection is returned in the time field. Each container frame in the display space typically compares the time of its selection with the time field in the message, updating the returned selection when it is after the time set in the message field. When id is set to set or reset, the destination frame should select or unselect itself. It should never draw itself at this point. This is the task of the message sender.
+When id is set to get, the message is used to return the current object selection, a list, in obj. The parent of the selected objects is returned in the sel field. This message is broadcast with the destination set to NIL. The time of the selection is returned in the time field. Each container frame in the display space typically compares the time of its selection with the time field in the message, updating the returned selection when it is after the time set in the message field. When id is set to set or reset, the destination frame should select or unselect itself. It should never draw itself at this point. This is the task of the message sender.
 
 15. ConsumeMsg
-When the id is set to drop, the destination frame is requested to consume the list of objects found in the obj field. This is the way how objects can be added dynamically to a container. The relative u, v coordinates indicate where inside of this gadget (note that v is typically negative). When id is set to integrate, the message is broadcast to all and indicates that the frame owning the focus (caret) should consume the list of objects.
+When the id is set to drop, the destination frame is requested to consume the list of objects found in the obj field. In this way objects can be dynamically  added to a container. The relative u, v coordinates indicate the location inside the container. 
+Typically v is negative.  When id is set to integrate, the message is broadcast and indicates that the frame owning the focus (caret) should consume the list of objects.
 
-16. The Broadcast procedure is installed by module Viewers to the default message broadcasting procedure found it that module.
+16. The Broadcast procedure is installed by module Viewers to the default message broadcasting procedure found in that module.
 
 17. TransferBlock
-TransferBlock is a fast way to read or write the display in a format as close as possible to the native format of the driver.  If the driver does not directly use one of the supported formats, it must select one and translate on-the-fly.  The caller must be prepared to handle any of the supported return formats.  The value returned by TransferFormat is constant, unless the display mode is changed.  TransferBlock performs clipping using the normal clipping rectangle.  When reading from the display, the pixels falling outside the clipping rectangle have undefined values.
+TransferBlock is a fast way to read or write the display in a format as close as possible to the native format of the driver.  If the driver does not directly use one of the supported formats (defined below), it must select one and translate on-the-fly.  The caller must be prepared to handle any of the supported return formats.  The value returned by TransferFormat is constant, unless the display mode is changed.  TransferBlock performs clipping using the normal clipping rectangle.  When reading from the display, the pixels falling outside the clipping rectangle have undefined values.
 
 18. TransferFormat returns
 	unknown - TransferBlock not supported
@@ -505,7 +497,7 @@ multibyte values are stored in little-endian order in buf (least-significant byt
 color components are stored in XRGB bit order (B in least-significant bits).
 	
 19. Color
-There are two types of display drivers.  "Minimal" drivers that support only indexed color, and "full-featured" drivers that support indexed color and true color.  The TrueColor() function can be used to determine what kind of driver is active in a display region.  A minimal driver only supports color values from 0 to 255 (0 to 0FFH), which are entries into the palette, and color values outside this range produce undefined results (e.g. garbage, index out of range trap).  A full-featured driver also supports 24-bit true color values that range from MIN(LONGINT) to MIN(LONGINT)+2^24-1 (80000000H to 80FFFFFFH).  The driver translates the color values to the internal format of the display buffer on-the-fly.
+There are two types of display drivers.  "Minimal" drivers that support only indexed color, and "full-featured" drivers that support indexed color and true color.  Monochrome drivers should emulate one of the two options.  The TrueColor() function can be used to determine what kind of driver is active in a display region.  A minimal driver only supports color values from 0 to 255 (0 to 0FFH), which are entries into the palette, and color values outside this range produce undefined results (e.g. garbage, index out of range trap).  A full-featured driver also supports 24-bit true color values that range from MIN(LONGINT) to MIN(LONGINT)+2^24-1 (80000000H to 80FFFFFFH).  The driver translates the color values to the internal format of the display buffer on-the-fly.
 
 20. The RGB() function can be used to construct true color values.  The RGB components are defined as:
 	R = ASH(col, -16) MOD 256, G = ASH(col, -8) MOD 256, B = col MOD 256, and

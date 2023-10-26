@@ -1,28 +1,19 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE System; (** portable, except where noted *) (* pjm *)
 
 (* contributions: JG 3.10.90 / NW 26.11.91 / ARD 4. 2. 93 / nm / jm / ejz *)
 
-IMPORT SYSTEM, Kernel, Disk, FileDir, Files, Modules, Objects, Display, Input, Fonts, 
+IMPORT SYSTEM, Kernel, OFS, Files, Modules, Objects, Display, Input, Fonts, 
 	Viewers, Reals, Texts, Oberon, TextFrames;
 
 CONST
 	MaxString = 64;
 	MaxArray = 8;
+	
+	EnumReverse = OFS.EnumUserMin;
+	EnumFixedFont = OFS.EnumUserMin+1;
 	
 TYPE
 	Bytes = POINTER TO ARRAY OF CHAR;
@@ -35,6 +26,7 @@ VAR
 	count, total, trap: LONGINT;
 	task: Oberon.Task;
 	log: Texts.Text;
+	time0, date0: LONGINT;
 
 PROCEDURE OpenText(title: ARRAY OF CHAR; T: Texts.Text; system: BOOLEAN);
 VAR W: INTEGER;
@@ -51,7 +43,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenScanner(S, T, beg); Texts.Scan(S);
 			IF S.class = Texts.Name THEN
 				f := Fonts.This(S.s);
@@ -70,7 +62,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenReader(S, T, beg); Texts.Read(S, ch); Oberon.SetColor(S.col)
 		END
 	ELSIF S.class = Texts.Int THEN Oberon.SetColor(SHORT(SHORT(S.i)))
@@ -83,7 +75,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenReader(S, T, beg); Texts.Read(S, ch); Oberon.SetOffset(S.voff)
 		END
 	ELSIF S.class = Texts.Int THEN Oberon.SetOffset(SHORT(SHORT(S.i)))
@@ -92,6 +84,12 @@ END SetOffset;
 
 PROCEDURE Time*;
 VAR par: Oberon.ParList; S: Texts.Scanner; t, d, hr, min, sec, yr, mo, day: LONGINT;
+	
+	PROCEDURE WritePair(ch: CHAR; x: LONGINT);
+	BEGIN Texts.Write(W, ch);
+		Texts.Write(W, CHR(x DIV 10 + 30H)); Texts.Write(W, CHR(x MOD 10 + 30H))
+	END WritePair;
+
 BEGIN
 	par := Oberon.Par;
 	Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
@@ -103,7 +101,26 @@ BEGIN
 		Oberon.SetClock(t, d)
 	ELSE (*read date*)
 		Texts.WriteString(W, "System.Time");
-		Oberon.GetClock(t, d); Texts.WriteDate(W, t, d); Texts.WriteLn(W);
+		Oberon.GetClock(t, d); Texts.WriteDate(W, t, d);
+		IF (S.class = Texts.Name) & (S.s = "start") THEN
+			Texts.WriteString(W, ", started");
+			time0 := t; date0 := d
+		ELSIF (S.class = Texts.Name) & (S.s = "lap") THEN
+			hr := t DIV 4096 MOD 32; min := t DIV 64 MOD 64; sec := t MOD 64;
+			DEC(sec, time0 MOD 64);
+			IF sec < 0 THEN INC(sec, 60); DEC(min) END;
+			DEC(min, time0 DIV 64 MOD 64);
+			IF min < 0 THEN INC(min, 60); DEC(hr) END;
+			DEC(hr, time0 DIV 4096 MOD 32);
+			IF hr < 0 THEN INC(hr, 24) END;	(* assume one day passed *)
+			Texts.WriteString(W, ", "); WritePair(" ", hr);
+			WritePair(":", min); WritePair(":", sec);
+			Texts.WriteString(W, " elapsed");
+			IF d # date0 THEN
+				Texts.WriteString(W, " (may be incorrect due to date change)")
+			END
+		END;
+		Texts.WriteLn(W);
 		Texts.Append(Oberon.Log, W.buf)
 	END
 END Time;
@@ -122,9 +139,9 @@ BEGIN
 	Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") OR (S.line # 0) THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
+		IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
 	END;
-	IF S.class = Texts.Name THEN
+	IF S.class IN {Texts.Name, Texts.String} THEN
 		OpenText(S.s, TextFrames.Text(S.s), TRUE)
 	END
 END Open;
@@ -223,10 +240,13 @@ PROCEDURE Free*;
 VAR par: Oberon.ParList; S: Texts.Scanner; F: TextFrames.Frame; time, beg, end, pos: LONGINT; T: Texts.Text;
 
 	PROCEDURE FreeFile;
+	VAR i: LONGINT;
 	BEGIN
 		(*IF S.nextCh # "*" THEN Modules.Free(S.s, FALSE)
 		ELSE Modules.Free(S.s, TRUE); Texts.Scan(S)
 		END*);
+		i := 0;  WHILE (S.s[i] # 0X) & (S.s[i] # ".") DO INC(i) END;
+		S.s[i] := 0X;
 		Modules.Free(S.s, FALSE);
 		IF Modules.res = 0 THEN
 			Texts.WriteString(W, S.s); Texts.WriteString(W, " unloaded")
@@ -240,14 +260,13 @@ BEGIN
 	par := Oberon.Par;
 	Oberon.GetSelection(T, beg, end, time);
 	Texts.WriteString(W, "System.Free"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
-	IF par.vwr.dsc # par.frame THEN
+	IF (par.vwr.dsc # par.frame) OR ~(par.vwr.dsc.next IS TextFrames.Frame) THEN
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-		IF (S.class = Texts.Char) & (S.c = "^") THEN
-			IF time >= 0 THEN
+		IF (S.class = Texts.Char) & (S.c = "^") OR (S.class = Texts.Inval) THEN
+			IF time # -1 THEN
 				Texts.OpenScanner(S, T, beg); pos := Texts.Pos(S)-1; Texts.Scan(S);
 				WHILE ~S.eot & (S.class = Texts.Name) & (pos < end) DO
-					beg := 0;  WHILE (S.s[beg] # 0X) & (S.s[beg] # ".") DO INC(beg) END;
-					S.s[beg] := 0X;  FreeFile;  pos := Texts.Pos(S); Texts.Scan(S);
+					FreeFile;  pos := Texts.Pos(S); Texts.Scan(S);
 					WHILE ~S.eot & (S.class = Texts.Int) DO pos := Texts.Pos(S); Texts.Scan(S) END
 				END
 			END
@@ -312,7 +331,7 @@ BEGIN
 		Texts.WriteInt(W, n, 1); Texts.Write(W, 9X)
 	END;
 	Texts.WriteLn(W); Texts.Append(T, W.buf);
-	OpenText("Modules|System.Close System.Free Edit.Store", T, TRUE)
+	OpenText("Modules|System.Close System.Free Edit.Search Edit.Store", T, TRUE)
 END ShowModules;
 
 (* --- Toolbox for library management *)
@@ -342,7 +361,7 @@ BEGIN
 	Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S)
+		IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S)
 		ELSE S.class := Texts.Inval
 		END
 	ELSE end := MAX(LONGINT)
@@ -356,44 +375,85 @@ END FreeLibraries;
 
 (* --- Toolbox of file system *)
 
-PROCEDURE *List(name: ARRAY OF CHAR;  time, date, size: LONGINT; VAR cont: BOOLEAN);
+PROCEDURE *List(name: ARRAY OF CHAR;  time, date, size: LONGINT; VAR flags: SET);
 BEGIN
 	INC(count);
-	Texts.WriteString(W, name);
-	IF size # MIN(LONGINT) THEN
-		Texts.WriteString(W, "  "); Texts.WriteDate(W, time, date);
-		Texts.WriteString(W, "  "); Texts.WriteInt(W, size, 5); INC(total, size)
+	IF ~(EnumReverse IN flags) THEN Texts.WriteString(W, name) END;
+	IF OFS.EnumTime IN flags THEN
+		IF ~(EnumReverse IN flags) THEN Texts.Write(W, " ") END;
+		Texts.WriteDate(W, time, date)
+	END;
+	IF OFS.EnumSize IN flags THEN
+		IF flags * {EnumReverse, OFS.EnumTime} # {EnumReverse} THEN Texts.Write(W, " ") END;
+		Texts.WriteInt(W, size, 7); INC(total, size)
+	END;
+	IF EnumReverse IN flags THEN
+		IF flags * {OFS.EnumTime, OFS.EnumSize} # {} THEN Texts.WriteString(W, "  ") END;
+		Texts.WriteString(W, name)
 	END;
 	Texts.WriteLn(W)
 END List;
 
+PROCEDURE WriteK(VAR W: Texts.Writer;  k: LONGINT);
+VAR suffix: CHAR;
+BEGIN
+	IF k < 100*1024 THEN suffix := "K"
+	ELSIF k < 100*1024*1024 THEN suffix := "M"; k := k DIV 1024
+	ELSE suffix := "G"; k := k DIV (1024*1024)
+	END;
+	Texts.WriteInt(W, k, 1);  Texts.Write(W, suffix);  Texts.Write(W, "B")
+END WriteK;
+
 PROCEDURE Directory*;
 VAR
-	par: Oberon.ParList; R: Texts.Reader; T, t: Texts.Text; beg, end, time: LONGINT; i: INTEGER; 
-	diroption, ch: CHAR; pat: ARRAY 32 OF CHAR;
+	par: Oberon.ParList; R: Texts.Reader; T, t: Texts.Text; beg, end, time: LONGINT; flags: SET;
+	i: INTEGER; ch: CHAR; pat: ARRAY 64 OF CHAR;
 BEGIN
 	par := Oberon.Par; 
 	Texts.OpenReader(R, par.text, par.pos); Texts.Read(R, ch);
 	WHILE (ch <= " ") & (ch # 0DX) DO Texts.Read(R, ch) END;
 	IF (ch = "^") OR (ch = 0DX) THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenReader(R, T, beg); Texts.Read(R, ch);
 			WHILE ch <= " " DO Texts.Read(R, ch) END
 		END
 	END;
 	i := 0;
-	WHILE (ch > " ") & (ch # Oberon.OptionChar) DO pat[i] := ch; INC(i); Texts.Read(R, ch) END;
+	WHILE (ch > " ") & (ch # Oberon.OptionChar) DO
+		pat[i] := ch; INC(i); Texts.Read(R, ch)
+	END;
 	pat[i] := 0X;
-	IF ch = Oberon.OptionChar THEN Texts.Read(R, diroption) ELSE diroption := 0X END;
+	WHILE ch = " " DO Texts.Read(R, ch) END;
+	flags := {};
+	WHILE ch = Oberon.OptionChar DO
+		Texts.Read(R, ch);
+		WHILE (CAP(ch) >= "A") & (CAP(ch) <= "Z") DO
+			IF ch = "d" THEN flags := flags + {OFS.EnumTime, OFS.EnumSize}
+			ELSIF ch = "t" THEN INCL(flags, OFS.EnumTime)
+			ELSIF ch = "s" THEN INCL(flags, OFS.EnumSize)
+			ELSIF ch = "r" THEN INCL(flags, OFS.EnumRecursive)
+			ELSIF ch = "f" THEN flags := flags + {EnumFixedFont, EnumReverse}
+			(*ELSIF ch = "l" THEN flags := flags / {EnumReverse}*)
+			ELSE (* skip *)
+			END;
+			Texts.Read(R, ch)
+		END;
+		WHILE ch = " " DO Texts.Read(R, ch) END
+	END;
+	IF EnumFixedFont IN flags THEN
+		Texts.SetFont(W, Fonts.This("Courier10.Scn.Fnt"))
+	ELSE
+		Texts.SetFont(W, Fonts.Default)
+	END;
 	t := TextFrames.Text("");
 	count := 0; total := 0;
-	FileDir.Enumerate(pat, (diroption = "d"), List);
+	OFS.Enumerate(pat, flags, List);
+	Texts.SetFont(W, Fonts.Default);
 	IF count > 1 THEN
 		Texts.WriteLn(W);  Texts.WriteInt(W, count, 1); Texts.WriteString(W, " files");
-		IF diroption = "d" THEN
-			Texts.WriteString(W, " use "); Texts.WriteInt(W, (total+512) DIV 1024, 1);
-			Texts.WriteString(W, "K bytes")
+		IF OFS.EnumSize IN flags THEN
+			Texts.WriteString(W, " use "); WriteK(W, (total+1023) DIV 1024)
 		END
 	END;
 	Texts.WriteLn(W); Texts.Append(t, W.buf);
@@ -401,7 +461,7 @@ BEGIN
 END Directory;
 
 PROCEDURE CopyFile(name: ARRAY OF CHAR; VAR S: Texts.Scanner);
-CONST BufLen = 8000;
+CONST BufLen = 8192;
 VAR f, g: Files.File; Rf, Rg: Files.Rider; buf : ARRAY BufLen OF CHAR; i: LONGINT;
 BEGIN
 	Texts.Scan(S);
@@ -409,12 +469,12 @@ BEGIN
 		Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = ">") THEN
 			Texts.Scan(S);
-			IF S.class = Texts.Name THEN
+			IF S.class IN {Texts.Name, Texts.String} THEN
 				Texts.WriteString(W, name); Texts.WriteString(W, " => "); Texts.WriteString(W, S.s);
 				Texts.WriteString(W, " copying"); Texts.Append(Oberon.Log, W.buf);
 				f := Files.Old(name);
-				IF f # NIL THEN
-					g := Files.New(S.s);
+				IF f # NIL THEN g := Files.New(S.s) END;
+				IF (f # NIL) & (g # NIL) THEN
 					Files.Set(Rf, f, 0); Files.Set(Rg, g, 0); 
 					i := 0;
 					WHILE i < Files.Length(f) DIV BufLen DO
@@ -424,7 +484,7 @@ BEGIN
 					Files.WriteBytes(Rg, buf, Files.Length(f) MOD BufLen);
 					Files.Register(g)
 				ELSE
-					Texts.WriteString(W, " failed")
+					Texts.WriteString(W, " failed"); S.eot := TRUE
 				END;
 				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 			END
@@ -440,12 +500,14 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-			IF S.class = Texts.Name THEN CopyFile(S.s, S) END
+			IF S.class IN {Texts.Name, Texts.String} THEN CopyFile(S.s, S) END
 		END
 	ELSE
-		WHILE ~S.eot & (S.class = Texts.Name) DO CopyFile(S.s, S); Texts.Scan(S) END
+		WHILE ~S.eot & (S.class IN {Texts.Name, Texts.String}) DO
+			CopyFile(S.s, S); IF ~S.eot THEN Texts.Scan(S) END
+		END
 	END
 END CopyFiles;
 
@@ -457,11 +519,11 @@ BEGIN
 		Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = ">") THEN
 			Texts.Scan(S);
-			IF S.class = Texts.Name THEN
+			IF S.class IN {Texts.Name, Texts.String} THEN
 				Texts.WriteString(W, name); Texts.WriteString(W, " => "); Texts.WriteString(W, S.s);
 				Texts.WriteString(W, " renaming"); Texts.Append(Oberon.Log, W.buf);
 				Files.Rename(name, S.s, res);
-				IF res > 1 THEN Texts.WriteString(W, " failed") END;
+				IF (res < 0) OR (res > 1) THEN Texts.WriteString(W, " failed"); S.eot := TRUE END;
 				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 			END
 		END
@@ -476,61 +538,70 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-			IF S.class = Texts.Name THEN RenameFile(S.s, S) END
+			IF S.class IN {Texts.Name, Texts.String} THEN RenameFile(S.s, S) END
 		END
 	ELSE
-		WHILE ~S.eot & (S.class = Texts.Name) DO RenameFile(S.s, S); Texts.Scan(S) END
+		WHILE ~S.eot & (S.class IN {Texts.Name, Texts.String}) DO
+			RenameFile(S.s, S); IF ~S.eot THEN Texts.Scan(S) END
+		END
 	END
 END RenameFiles;
 
-PROCEDURE DeleteFile(VAR name: ARRAY OF CHAR);
+PROCEDURE DeleteFile(VAR name: ARRAY OF CHAR;  VAR S: Texts.Scanner);
 VAR res: INTEGER;
 BEGIN
 	Texts.WriteString(W, name); Texts.WriteString(W, " deleting");
 	Texts.Append(Oberon.Log, W.buf); Files.Delete(name, res);
-	IF res # 0 THEN Texts.WriteString(W, " failed") END;
+	IF res # 0 THEN Texts.WriteString(W, " failed"); S.eot := TRUE END;
 	Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 END DeleteFile;
 
 PROCEDURE DeleteFiles*;
 VAR beg, end, time: LONGINT; T: Texts.Text; S: Texts.Scanner;
 BEGIN
+	Oberon.GetSelection(T, beg, end, time);
 	Texts.WriteString(W, "System.DeleteFiles"); Texts.WriteLn(W);
 	Texts.Append(Oberon.Log, W.buf);
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
-		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN
+		IF time # -1 THEN
 			Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-			IF S.class = Texts.Name THEN DeleteFile(S.s) END
+			IF S.class IN {Texts.Name, Texts.String} THEN DeleteFile(S.s, S) END
 		END
 	ELSE
-		WHILE S.class = Texts.Name DO DeleteFile(S.s); Texts.Scan(S) END
+		WHILE ~S.eot & (S.class IN {Texts.Name, Texts.String}) DO
+			DeleteFile(S.s, S); IF ~S.eot THEN Texts.Scan(S) END
+		END
 	END
 END DeleteFiles;
 
 (* --- Toolbox for system inspection *)
 
 PROCEDURE Watch*;
-VAR free, total, largest: LONGINT;
+VAR free, total, largest: LONGINT;  fs: OFS.FileSystem;
 BEGIN
 	Texts.WriteString(W, "System.Watch");  Texts.WriteLn(W);
+	fs := OFS.First();
+	WHILE fs # NIL DO
+		Texts.Write(W, 9X);  Texts.WriteString(W, fs.prefix);  Texts.WriteString(W, ": ");
+		IF fs.vol # NIL THEN
+			free := ENTIER(fs.vol.Available(fs.vol)/1024.0D0 * fs.vol.blockSize);
+			total := ENTIER(fs.vol.size/1024.0D0 * fs.vol.blockSize);
+			WriteK(W, free);  Texts.WriteString(W, " of ");
+			WriteK(W, total);  Texts.WriteString(W, " free")
+		END;
+		Texts.WriteLn(W);
+		fs := OFS.Next(fs)
+	END;
 	free := (Kernel.Available()+512) DIV 1024;
 	total := (Kernel.Available()+Kernel.Used()+512) DIV 1024;
 	largest := (Kernel.LargestAvailable()+512) DIV 1024;
-	Texts.Write(W, 9X);  Texts.WriteInt(W, free, 1);  Texts.WriteString(W, "K of ");
-	Texts.WriteInt(W, total, 1);  Texts.WriteString(W, "K memory free");
-	Texts.WriteLn(W);
-	Texts.Write(W, 9X);  Texts.WriteInt(W, largest, 1);
-	Texts.WriteString(W, "K contiguous memory free");  Texts.WriteLn(W);
-	free := Disk.Available()*Disk.SectorSize DIV 1024;
-	total := Disk.Size()*Disk.SectorSize DIV 1024;
-	Texts.Write(W, 9X);  Texts.WriteInt(W, free, 1);  Texts.WriteString(W, "K of ");
-	Texts.WriteInt(W, total, 1);  Texts.WriteString(W, "K disk space free");
-	Texts.WriteLn(W);
-	(*IF Disk.PutBlocks = NIL THEN Texts.WriteString(W, "Write-protected disk");  Texts.WriteLn(W) END;*)
+	Texts.Write(W, 9X);  Texts.WriteString(W, "Heap has ");
+	WriteK(W, free);  Texts.WriteString(W, " of ");
+	WriteK(W, total);  Texts.WriteString(W, " free (");
+	WriteK(W, largest);  Texts.WriteString(W, " contiguous)");  Texts.WriteLn(W);
 	Texts.Append(Oberon.Log, W.buf)
 END Watch;
 
@@ -544,6 +615,57 @@ BEGIN
 	num := n + ASH(ORD(x) MOD 64 - ORD(x) DIV 64 * 64, s)
 END GetNum;
 
+(*
+	Reference = {OldRef | ProcRef} .
+	OldRef = 0F8X offset/n name/s {Variable} .
+	ProcRef = 0F9X offset/n nofPars/n RetType procLev/1 slFlag/1 name/s {Variable} .
+	RetType = 0X | Var | ArrayType | Record .
+	ArrayType = 12X | 14X | 15X .	(* static array, dynamic array, open array *)
+	Record = 16X .
+	Variable = VarMode (Var | ArrayVar | RecordVar ) offset/n name/s .
+	VarMode = 1X | 3X .	(* direct, indirect *)
+	Var = 1X .. 0FX .	(* byte, boolean, char, shortint, integer, longint, real, longreal, set, ptr, proc, string *)
+	ArrayVar = (81X .. 8EX) dim/n .	(* byte, boolean, char, shortint, integer, longint, real, longreal, set, ptr, proc *)
+	RecordVar = (16X | 1DX) tdadr/n .	(* record, recordpointer *)
+*)
+
+(* FindProc - Find a procedure in the reference block.  Return index of name, or -1 if not found. *)
+
+PROCEDURE FindProc(refs: Bytes;  ofs: LONGINT): LONGINT;
+VAR i, m, t, proc: LONGINT;  ch: CHAR;
+BEGIN
+	proc := -1;  i := 0;  m := LEN(refs^);
+	ch := refs[i];  INC(i);
+	WHILE (i < m) & ((ch = 0F8X) OR (ch = 0F9X)) DO	(* proc *)
+		GetNum(refs, i, t);	(* pofs *)
+		IF t > ofs THEN	(* previous procedure was the one *)
+			ch := 0X	(* stop search *)
+		ELSE	(* ~found *)
+			IF ch = 0F9X THEN
+				GetNum(refs, i, t);	(* nofPars *)
+				INC(i, 3)	(* RetType, procLev, slFlag *)
+			END;
+			proc := i;	(* remember this position, just before the name *)
+			REPEAT ch := refs[i];  INC(i) UNTIL ch = 0X;	(* pname *)
+			IF i < m THEN
+				ch := refs[i];  INC(i);	(* 1X | 3X | 0F8X | 0F9X *)
+				WHILE (i < m) & (ch >= 1X) & (ch <= 3X) DO	(* var *)
+					ch := refs[i];  INC(i);	(* type *)
+					IF (ch >= 81X) OR (ch = 16X) OR (ch = 1DX) THEN
+						GetNum(refs, i, t)	(* dim/tdadr *)
+					END;
+					GetNum(refs, i, t);	(* vofs *)
+					REPEAT ch := refs[i];  INC(i) UNTIL ch = 0X;	(* vname *)
+					IF i < m THEN ch := refs[i];  INC(i) END	(* 1X | 3X | 0F8X | 0F9X *)
+				END
+			END
+		END
+	END;
+	IF (proc = -1) & (i # 0) THEN proc := i END;	(* first procedure *)
+	RETURN proc
+END FindProc;
+
+(*
 (*
 	refs = { 0F8X pofs pname { mode type [ dim ] vofs vname } } 	(* use refblk length for termination *)
 	pofs = num .	(* procedure offset *)
@@ -566,7 +688,7 @@ BEGIN
 		IF t > ofs THEN	(* previous procedure was the one *)
 			ch := 0X	(* stop search *)
 		ELSE	(* ~found *)
-			proc := i;	(* remember this position *)
+			proc := i;	(* remember this position, just before the name *)
 			REPEAT ch := refs[i];  INC(i) UNTIL ch = 0X;	(* pname *)
 			IF i < m THEN
 				ch := refs[i];  INC(i);	(* 1X | 3X | 0F8X *)
@@ -583,6 +705,7 @@ BEGIN
 	IF (proc = -1) & (i # 0) THEN proc := i END;	(* first procedure *)
 	RETURN proc
 END FindProc;
+*)
 
 PROCEDURE WriteProc(mod: Modules.Module;  pc, fp: LONGINT;  VAR refs: Bytes;  VAR refpos, base: LONGINT);
 VAR ch: CHAR;
@@ -612,8 +735,8 @@ END WriteProc;
 
 PROCEDURE Variables(refs: Bytes;  i, base: LONGINT);
 VAR
-	mode, ch: CHAR;  m, adr, type, n, lval, size, tmp1, tmp2: LONGINT;  etc: BOOLEAN;
-	sval: SHORTINT;  ival: INTEGER;  mod: Modules.Module;  tmp: Bytes;  set: SET;
+	mode, ch: CHAR;  m, adr, type, n, lval, size, tmp1, tmp2, tdadr: LONGINT;  etc: BOOLEAN;
+	sval: SHORTINT;  ival: INTEGER;  tmp: Bytes;  set: SET;
 	rval: REAL;  lrval: LONGREAL;
 BEGIN
 	m := LEN(refs^);  mode := refs[i];  INC(i);
@@ -622,6 +745,8 @@ BEGIN
 		IF type > 80H THEN
 			IF type = 83H THEN type := 15 ELSE DEC(type, 80H) END;
 			GetNum(refs, i, n)
+		ELSIF (type = 16H) OR (type = 1DH) THEN
+			GetNum(refs, i, tdadr); n := 1
 		ELSE
 			IF type = 15 THEN n := MaxString (* best guess *) ELSE n := 1 END
 		END;
@@ -655,8 +780,9 @@ BEGIN
 				CASE type OF
 					1..4: size := 1
 					|5: size := 2
-					|6..7,9,13,14: size := 4
+					|6..7,9,13,14,29: size := 4
 					|8: size := 8
+					|22: size := 0; ASSERT(n <= 1)
 				ELSE
 					Texts.WriteString(W, "bad type ");  Texts.WriteInt(W, type, 1);  n := 0
 				END;
@@ -685,10 +811,15 @@ BEGIN
 							SYSTEM.GET(adr, lrval);  Texts.WriteLongReal(W, lrval, 24)
 						|9:	(* SET *)
 							SYSTEM.GET(adr, set);  Texts.WriteSet(W, set)
-						|13:	(* POINTER *)
+						|13, 29:	(* POINTER *)
 							SYSTEM.GET(adr, lval);  Texts.WriteHex(W, lval);  Texts.Write(W, "H")
+						|22:	(* RECORD *)
+							Texts.WriteHex(W, tdadr);  Texts.Write(W, "H")
 						|14:	(* PROC *)
-							SYSTEM.GET(adr, lval);  WriteProc(Kernel.GetMod(lval), lval, -1, tmp, tmp1, tmp2)
+							SYSTEM.GET(adr, lval);
+							IF lval = 0 THEN Texts.WriteString(W, "NIL")
+							ELSE WriteProc(Kernel.GetMod(lval), lval, -1, tmp, tmp1, tmp2)
+							END
 					END;
 					DEC(n);  INC(adr, size);
 					IF n > 0 THEN Texts.WriteString(W, ", ") END
@@ -730,7 +861,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
+		IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
 	END;
 	IF S.class = Texts.Name THEN
 		T := TextFrames.Text(""); OutState(S.s, T);
@@ -744,7 +875,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
+		IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
 	END;
 	IF S.class = Texts.Name THEN
 		i := 0; WHILE (S.s[i] # 0X) & (S.s[i] # ".") DO INC(i) END; S.s[i] := 0X;
@@ -813,6 +944,15 @@ BEGIN
 			|17: Texts.WriteString(W, "Disk error")
 			|18: Texts.WriteString(W, "File too large")
 			|19: Texts.WriteString(W, "Buffer overflow")
+				(* for NCFS/OFS *)
+			|20: Texts.WriteString(W, "Volume full")
+			|21: Texts.WriteString(W, "Volume write-protected")
+			|22: Texts.WriteString(W, "Volume not found")
+			|23: Texts.WriteString(W, "Illegal Access")
+			|24: Texts.WriteString(W, "Volume in use")
+			|25: Texts.WriteString(W, "Volume modified")
+			|26: Texts.WriteString(W, "Not a valid volume")
+			|27: Texts.WriteString(W, "Cannot contact server ")
 		ELSE
 			IF error = MAX(INTEGER) THEN Texts.WriteString(W, "Trace ");  Texts.WriteInt(W, trap, 1);  INC(trap)
 			ELSE Texts.WriteString(W, "HALT statement")
@@ -837,13 +977,14 @@ BEGIN
 			|35: Texts.WriteString(W, "stack fault")
 		ELSE Texts.WriteString(W, "CPU exception")
 		END
-	END
+	END;
+	Texts.WriteString(W, " ("); Texts.WriteString(W, Kernel.version); Texts.Write(W, ")")
 END WriteTrap;
 
 PROCEDURE Trap*(error, fp, pc, page: LONGINT);	(** non-portable *)	(* exported for Debug debugger *)
 VAR
-	T: Texts.Text;  refpos, limit: LONGINT;  ch, ch0: CHAR;
-	mod: Modules.Module;  procstart, lastfp, base: LONGINT;  refs: Bytes;
+	T: Texts.Text;  refpos: LONGINT;
+	mod: Modules.Module;  lastfp, base: LONGINT;  refs: Bytes;
 BEGIN
 	IF trapped = 0 THEN
 		trapped := 1;
@@ -880,15 +1021,26 @@ END Trap;
 
 PROCEDURE Quit*;
 BEGIN
+(*
 	Oberon.OpenTrack(0, Display.Width);
 	Display.ReplConst(Display.FG, 0, 0, Display.Width, Display.Height, Display.replace);
+*)
 	Kernel.Shutdown(1)
 END Quit;
 
 PROCEDURE Reboot*;	(** non-portable *)
 BEGIN
-	Kernel.Shutdown(0)
+	Kernel.Shutdown(2)
 END Reboot;
+
+PROCEDURE Cleanup;
+BEGIN
+		(* this message should really appear after shutting down all file systems, but writing it may need a file system! *)
+	IF Kernel.shutdown = 1 THEN
+		Texts.SetColor(W, 1); Texts.WriteString(W, "Please switch this computer off now");
+		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+	END
+END Cleanup;
 
 PROCEDURE LogHandler(me: Oberon.Task);
 VAR s: ARRAY 80 OF CHAR;  i: LONGINT;
@@ -921,7 +1073,8 @@ VAR
 	S: Texts.Scanner;  Wt: Texts.Writer;  ok: BOOLEAN;
 	T: Texts.Text;  F: TextFrames.Frame;
 BEGIN 
-	IF ~init THEN init := TRUE;	(* avoid user call *)
+	IF ~init THEN
+		init := TRUE;	(* avoid user call *)
 		Texts.OpenWriter(Wt);
 		Oberon.OpenScanner(S, "System.InitCommands");
 		IF S.class = Texts.Inval THEN
@@ -945,11 +1098,27 @@ BEGIN
 				END;
 				Texts.Scan(S);  Texts.Scan(S)
 			END
-		END
+		END;
+(*
+		Oberon.OpenScanner(S, "System.DefaultFont");
+		IF S.class IN {Texts.Name, Texts.String} THEN
+			f := Fonts.This(S.s);
+			IF f # NIL THEN Fonts.Default := f; Oberon.SetFont(NIL) END
+		END;
+*)
+		Oberon.Loop	(* should never return *)
 	END
 END Init;
 
-BEGIN 
+PROCEDURE Greetings;
+BEGIN
+	Oberon.GetClock(time0, date0);  Texts.WriteString(W, "System.Time");
+	Texts.WriteDate(W, time0, date0);  Texts.WriteLn(W);
+	Texts.WriteString(W, "ETH Oberon / ");
+	Texts.WriteString(W, Kernel.version);  Texts.WriteLn(W)
+END Greetings;
+
+BEGIN
 	Kernel.EnableGC;
 	Texts.OpenWriter(W);
 	init := FALSE;  trapped := 0;  trap := 0;
@@ -957,13 +1126,8 @@ BEGIN
 	Kernel.InstallLoop(Oberon.Loop);
 	Kernel.InstallTrap(Trap);
 	Oberon.Log := TextFrames.Text("");
-	Texts.WriteString(W, "ETH Oberon System 3");
-	IF Display.Width >= 800 THEN
-		Texts.WriteString(W, " / ")
-	ELSE
-		Texts.WriteLn(W)
-	END;
-	Texts.WriteString(W, Kernel.version);  Texts.WriteLn(W);
+	Modules.InstallTermHandler(Cleanup);
+	Greetings;
 	IF Kernel.copro THEN
 		resetfp := NIL
 	ELSE
@@ -974,3 +1138,11 @@ BEGIN
 	END;
     Texts.Append(Oberon.Log, W.buf)
 END System.
+
+System.Directory Oberon*
+System.Directory Oberon*\d
+System.Directory Oberon*\t
+System.Directory Oberon*\s
+System.Directory Oberon*\df
+System.Directory Oberon*\tf
+System.Directory Oberon*\sf

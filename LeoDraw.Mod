@@ -1,12 +1,19 @@
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
 MODULE LeoDraw;	(** eos   **)
 
 	(**
-		Support for loading Draw files into Leonardo
+		Support for loading Draw files as Leonardo figures
 	**)
 	
+	(*
+		- no support for colored macros
+	*)
+	
 	IMPORT
-		Files, Objects, Attributes, Strings, Documents, GfxMatrix, GfxMaps, Gfx, GfxPens, Figures,
-		LeoFrames, Leonardo, LeoBasic, LeoText, LeoPaths;
+		Files, Objects, Oberon, Strings, Attributes, Documents, Desktops, Colors, Images, PictImages, GfxMatrix, GfxFonts, Gfx,
+		Leonardo, LeoFrames, LeoTools, LeoDocs, LeoCaptions, LeoPens, LeoPaths, LeoBasic, LeoSplines;
 		
 	
 	CONST
@@ -21,7 +28,7 @@ MODULE LeoDraw;	(** eos   **)
 		
 		MacroHeadDesc = RECORD
 			name: Name;
-			first: Figures.Shape;
+			shape: Leonardo.Shape;
 			next: MacroHead;
 		END;
 		
@@ -31,37 +38,39 @@ MODULE LeoDraw;	(** eos   **)
 		END;
 		
 		Context = RECORD
-			font: ARRAY 10, 32 OF CHAR;
-			size: ARRAY 10 OF INTEGER;
+			font: ARRAY 10 OF GfxFonts.Font;
 			lib: ARRAY 4 OF Library;
 			class: ARRAY 10, 64 OF CHAR;
-			pen: ARRAY 16, 6 OF GfxPens.Pen;
 		END;
 		
 	
 	VAR
-		GreyFiller: GfxPens.Filler;
-		MacroFig: Figures.Figure;
+		Stroker: ARRAY 16, 6 OF LeoPens.Stroker;	(* 16 colors, 6 widths *)
+		Filler: ARRAY 16, 9 OF LeoPens.Filler;	(* 16 colors, 9 patterns *)
+		Pattern: ARRAY 9 OF Images.Image;
+		MacroFig: Leonardo.Figure;
 		
 	
 	PROCEDURE InitContext (VAR ctxt: Context);
-		VAR i, j: LONGINT;
+		VAR i: LONGINT;
 	BEGIN
 		ctxt.class[1] := "Graphics.NewLine";
 		ctxt.class[2] := "Graphics.NewCaption";
 		ctxt.class[3] := "Graphics.NewMacro";
-		FOR i := 4 TO 9 DO ctxt.class[i] := "" END;
-		FOR i := 0 TO 15 DO
-			FOR j := 0 TO 5 DO ctxt.pen[i, j] := NIL END
-		END
+		FOR i := 4 TO 9 DO ctxt.class[i] := "" END
 	END InitContext;
 	
-	PROCEDURE^ LoadElems (VAR r: Files.Rider; VAR ctxt: Context; VAR shapes: Figures.Shape);
+	PROCEDURE GetColor (col: INTEGER; VAR color: Gfx.Color);
+	BEGIN
+		color.r := Colors.Red[col]; color.g := Colors.Green[col]; color.b := Colors.Blue[col]
+	END GetColor;
+	
+	PROCEDURE^ LoadElems (VAR r: Files.Rider; VAR ctxt: Context): Leonardo.Shape;
 	
 	PROCEDURE ThisLibrary (VAR name: ARRAY OF CHAR): Library;
 		VAR
-			lib: Library; i, j, w, h: INTEGER; lname, fname: ARRAY 32 OF CHAR; file: Files.File; r: Files.Rider; ch: CHAR; ctxt: Context;
-			shapes: Figures.Shape; mh: MacroHead;
+			lib: Library; i, j, w, h: INTEGER; lname, fname: ARRAY 32 OF CHAR; file: Files.File; r: Files.Rider; ch: CHAR;
+			ctxt: Context; shapes, top, next: Leonardo.Shape; group: LeoBasic.Group; mh: MacroHead;
 	BEGIN
 		lib := NIL;
 		i := 0; WHILE name[i] >= "0" DO lname[i] := name[i]; INC(i) END;
@@ -77,151 +86,167 @@ MODULE LeoDraw;	(** eos   **)
 			IF ch = LibFileId THEN
 				NEW(lib); COPY(lname, lib.name); lib.first := NIL;
 				InitContext(ctxt);
-				LoadElems(r, ctxt, shapes);
+				shapes := LoadElems(r, ctxt);
 				WHILE shapes # NIL DO
-					Figures.Integrate(MacroFig, MacroFig.root, shapes);
-					NEW(mh); mh.first := shapes;
+					top := shapes;
+					WHILE top.slink # NIL DO
+						next := top.slink(Leonardo.Shape);
+						top.up := next; next.down := top; top := next
+					END;
+					NEW(group); LeoBasic.InitGroup(group, shapes, top);
+					Leonardo.Integrate(MacroFig, group);
+					NEW(mh); mh.shape := group;
 					Files.ReadInt(r, w); Files.ReadInt(r, h);
 					Files.ReadString(r, mh.name);
 					mh.next := lib.first; lib.first := mh;
-					LoadElems(r, ctxt, shapes)
+					shapes := LoadElems(r, ctxt)
 				END
 			END
 		END;
 		RETURN lib
 	END ThisLibrary;
 	
-	PROCEDURE ThisPen (VAR ctxt: Context; col, width: INTEGER): GfxPens.Pen;
-		VAR pen: GfxPens.Stroker;
+	PROCEDURE ThisStroker (col, width: INTEGER): LeoPens.Stroker;
+		VAR color: Gfx.Color; pen: LeoPens.Stroker;
 	BEGIN
-		col := col MOD 16; width := (width - 1) MOD 6;
-		IF ctxt.pen[col, width] = NIL THEN
-			NEW(pen); GfxPens.InitStroker(pen, GfxMaps.DisplayPal.col[col], width+1);
-			ctxt.pen[col, width] := pen
+		col := col MOD 16; DEC(width); IF width > 5 THEN width := 5 END;
+		IF Stroker[col, width] = NIL THEN
+			GetColor(col, color);
+			NEW(pen); LeoPens.InitStroker(pen, color, width+1);
+			Stroker[col, width] := pen
 		END;
-		RETURN ctxt.pen[col, width]
-	END ThisPen;
+		RETURN Stroker[col, width]
+	END ThisStroker;
 	
-	PROCEDURE CreateLine (VAR ctxt: Context; x0, y0, x1, y1: REAL; col, width: INTEGER; VAR shape: Figures.Shape);
-		VAR p, q: LeoPaths.Point; first, last: Figures.Reference; line: LeoPaths.Curve;
+	PROCEDURE ThisPattern (pat: INTEGER): Images.Image;
+	BEGIN
+		ASSERT((1 <= pat) & (pat <= 8), 100);
+		IF Pattern[pat] = NIL THEN
+			NEW(Pattern[pat]); PictImages.PatternToImage(pat, Pattern[pat])
+		END;
+		RETURN Pattern[pat]
+	END ThisPattern;
+	
+	PROCEDURE ThisFiller (col, pat: INTEGER): LeoPens.Filler;
+		VAR color: Gfx.Color; pen: LeoPens.Filler;
+	BEGIN
+		IF pat = 0 THEN
+			RETURN NIL
+		ELSE
+			col := col MOD 16; IF pat > 8 THEN pat := 5 END;
+			IF Filler[col, pat] = NIL THEN
+				GetColor(col, color);
+				NEW(pen); LeoPens.InitFiller(pen, color); pen.img := ThisPattern(pat);
+				Filler[col, pat] := pen
+			END;
+			RETURN Filler[col, pat]
+		END
+	END ThisFiller;
+	
+	PROCEDURE CreateLine (x0, y0, x1, y1: REAL; col, width: INTEGER): Leonardo.Shape;
+		VAR p, q: LeoPaths.Point; line: LeoPaths.Segment;
 	BEGIN
 		NEW(p); LeoPaths.InitPoint(p, x0, y0);
 		NEW(q); LeoPaths.InitPoint(q, x1, y1);
-		p.slink := q;
-		Figures.MakeRefs(p, first, last);
-		NEW(line); LeoPaths.InitCurve(line, LeoPaths.PolygonClass, first, last, ThisPen(ctxt, col, width));
-		line.handle := LeoPaths.HandlePolygon;
-		shape := line
+		p.up := q; q.down := p;
+		NEW(line); LeoPaths.InitPolyline(line, p, q, FALSE, ThisStroker(col, width));
+		RETURN line
 	END CreateLine;
 	
-	PROCEDURE CreateEllipse (VAR ctxt: Context; xc, yc, xr, yr: REAL; col, width: INTEGER; VAR shape: Figures.Shape);
-		VAR ell: LeoBasic.Shape;
+	PROCEDURE CreateEllipse (xc, yc, xr, yr: REAL; col, width: INTEGER): Leonardo.Shape;
+		VAR e: LeoBasic.Ellipse;
 	BEGIN
-		NEW(ell); LeoBasic.InitEllipse(ell, xc, yc, xr, yr, NIL, ThisPen(ctxt, col, width));
-		shape := ell
+		NEW(e); LeoBasic.InitEllipse(e, xc, yc, xr, yr, ThisStroker(col, width));
+		RETURN e
 	END CreateEllipse;
 	
-	PROCEDURE CreateRectangle (VAR ctxt: Context; x0, y0, x1, y1: REAL; col, width: INTEGER; fill: GfxPens.Pen; VAR shape: Figures.Shape);
-		VAR rect: LeoBasic.Shape;
+	PROCEDURE CreateRectangle (x0, y0, x1, y1: REAL; col, width: INTEGER; fill: LeoPens.Pen): Leonardo.Shape;
+		VAR pen: LeoPens.Pen; forker: LeoPens.Forker; rect: LeoBasic.Rectangle;
 	BEGIN
-		NEW(rect); LeoBasic.InitRect(rect, x0, y0, x1, y1, fill, ThisPen(ctxt, col, width));
-		shape := rect
+		IF fill = NIL THEN
+			pen := ThisStroker(col, width)
+		ELSE
+			NEW(forker); LeoPens.InitForker(forker, fill, ThisStroker(col, width));
+			pen := forker
+		END;
+		NEW(rect); LeoBasic.InitRect(rect, x0, y0, x1, y1, pen);
+		RETURN rect
 	END CreateRectangle;
 	
-	PROCEDURE CreateSpline (VAR ctxt: Context; closed: BOOLEAN; VAR u, v: ARRAY OF INTEGER; n, col, width: INTEGER;
-		VAR shape: Figures.Shape
-	);
-		VAR p: LeoPaths.Point; first, last, ref: Figures.Reference; i: LONGINT; spline: LeoPaths.Curve;
+	PROCEDURE CreateSpline (closed: BOOLEAN; VAR u, v: ARRAY OF INTEGER; n, col, width: INTEGER): Leonardo.Shape;
+		VAR p, bot, top: LeoPaths.Point; i: LONGINT; spline: LeoSplines.Spline;
 	BEGIN
-		NEW(p); LeoPaths.InitPoint(p, u[0] + 0.5, v[0] + 0.5);
-		NEW(first); last := first; first.shape := p;
+		NEW(p); LeoPaths.InitPoint(p, u[0] + 0.5, v[0] + 0.5); bot := p; top := p;
 		i := 1;
 		WHILE i < n DO
 			NEW(p); LeoPaths.InitPoint(p, u[i] + 0.5, v[i] + 0.5);
-			NEW(ref); ref.shape := p;
-			last.next := ref; ref.prev := last;
-			last := ref;
+			top.up := p; p.down := top; top := p;
 			INC(i)
 		END;
-		IF closed THEN
-			NEW(ref); ref.shape := first.shape;
-			last.next := ref; ref.prev := last;
-			last := ref
-		END;
-		NEW(spline); LeoPaths.InitCurve(spline, LeoPaths.SplineClass, first, last, ThisPen(ctxt, col, width));
-		spline.handle := LeoPaths.HandleSpline;
-		shape := spline
+		NEW(spline); LeoSplines.Init(spline, bot, top, closed, ThisStroker(col, width));
+		RETURN spline
 	END CreateSpline;
 	
-	PROCEDURE LoadCaption (VAR ctxt: Context; VAR r: Files.Rider; x, y, col: INTEGER; VAR shape: Figures.Shape);
-		VAR fno: SHORTINT; i: LONGINT; ch: CHAR; s: ARRAY 64 OF CHAR; cap: LeoText.Caption;
+	PROCEDURE LoadCaption (VAR ctxt: Context; VAR r: Files.Rider; x, y, col: INTEGER): Leonardo.Shape;
+		VAR fno: SHORTINT; i: LONGINT; ch: CHAR; s: ARRAY 64 OF CHAR; color: Gfx.Color; cap: LeoCaptions.Caption;
 	BEGIN
-		Files.Read(r, fno);
-		Files.Read(r, ch); i := 0;
+		Files.Read(r, fno); Files.Read(r, ch); i := 0;
 		WHILE ch > 0DX DO
 			s[i] := ch; INC(i);
 			Files.Read(r, ch)
 		END;
 		s[i] := 0X;
-		NEW(cap); LeoText.InitCaption(cap, x + 0.5, y + 0.5, s);
-		Attributes.SetString(cap, "Font", ctxt.font[fno]);
-		Attributes.SetInt(cap, "Size", ctxt.size[fno]);
-		Attributes.SetInt(cap, "Color", col);
-		shape := cap
+		GetColor(col, color);
+		NEW(cap); LeoCaptions.Init(cap, x + 0.5, y + 0.5, s, ctxt.font[fno], color);
+		RETURN cap
 	END LoadCaption;
 	
-	PROCEDURE LoadMacro (VAR ctxt: Context; VAR r: Files.Rider; x, y, col: INTEGER; VAR shape: Figures.Shape);
-		VAR
-			lno: SHORTINT; name: Name; mh: MacroHead; group: Figures.Container; copies: Figures.Shape;
-			first, last: Figures.Reference; mat: GfxMatrix.Matrix;
+	PROCEDURE LoadMacro (VAR ctxt: Context; VAR r: Files.Rider; x, y, col: INTEGER): Leonardo.Shape;
+		VAR lno: SHORTINT; name: Name; mh: MacroHead; shape: Leonardo.Shape; mat: GfxMatrix.Matrix;
 	BEGIN
 		Files.Read(r, lno); Files.ReadString(r, name);
 		IF ctxt.lib[lno] # NIL THEN
-			mh := ctxt.lib[lno].first;
-			WHILE (mh # NIL) & (mh.name # name) DO mh := mh.next END;
-			GfxMatrix.Translate(GfxMatrix.Identity, x, y, mat);
-			Figures.Transform(MacroFig, mh.first, mat);
-			Figures.CopyShapes(mh.first, copies);
-			Figures.Undo(MacroFig);
-			Figures.MakeRefs(copies, first, last);
-			NEW(group); Figures.InitGroup(group, first, last);
-			shape := group
+			mh := ctxt.lib[lno].first; WHILE (mh # NIL) & (mh.name # name) DO mh := mh.next END;
+			GfxMatrix.Init(mat, 1, 0, 0, 1, x, y);
+			Leonardo.BeginCommand(MacroFig);
+			Leonardo.Transform(MacroFig, mh.shape, mat);
+			Leonardo.Clone(MacroFig, mh.shape, shape);	(* bounding boxes are correct because of committed trafo *)
+			Leonardo.CancelCommand(MacroFig);
+			RETURN shape
 		ELSE
-			NEW(shape); shape.handle := Figures.HandleShape
+			NEW(shape); Leonardo.InitShape(shape, Leonardo.HandleShape);
+			RETURN shape
 		END
 	END LoadMacro;
 	
-	PROCEDURE LoadCurve (VAR ctxt: Context; VAR r: Files.Rider; x, y, w, h, col: INTEGER; VAR shape: Figures.Shape);
-		VAR len, kind, lw: INTEGER;
+	PROCEDURE LoadCurve (VAR r: Files.Rider; x, y, w, h, col: INTEGER): Leonardo.Shape;
+		VAR len, kind, lw: INTEGER; shape: Leonardo.Shape;
 	BEGIN
-		Files.ReadInt(r, len);
-		Files.ReadInt(r, kind);
-		Files.ReadInt(r, lw);
+		Files.ReadInt(r, len); Files.ReadInt(r, kind); Files.ReadInt(r, lw);
 		IF kind = 0 THEN	(* up_line *)
-			CreateLine(ctxt, x + 0.5, y + 0.5, x + w - 0.5, y + h - 0.5, col, lw, shape)
+			RETURN CreateLine(x + 0.5, y + 0.5, x + w - 0.5, y + h - 0.5, col, lw)
 		ELSIF kind = 1 THEN	(* down_line *)
-			CreateLine(ctxt, x + 0.5, y + h - 0.5, x + w - 0.5, y + 0.5, col, lw, shape)
+			RETURN CreateLine(x + 0.5, y + h - 0.5, x + w - 0.5, y + 0.5, col, lw)
 		ELSIF kind = 2 THEN	(* circle *)
 			w := w DIV 2;
-			CreateEllipse(ctxt, x + w + 0.5, y + w + 0.5, w, w, col, lw, shape)
+			RETURN CreateEllipse(x + w + 0.5, y + w + 0.5, w, w, col, lw)
 		ELSIF kind = 3 THEN	(* ellipse *)
 			w := w DIV 2; h := h DIV 2;
-			CreateEllipse(ctxt, x + w + 0.5, y + h + 0.5, w, h, col, lw, shape)
+			RETURN CreateEllipse(x + w + 0.5, y + h + 0.5, w, h, col, lw)
 		ELSE
-			NEW(shape); shape.handle := Figures.HandleShape
+			NEW(shape); Leonardo.InitShape(shape, Leonardo.HandleShape);
+			RETURN shape
 		END
 	END LoadCurve;
 	
-	PROCEDURE LoadRectangle (VAR ctxt: Context; VAR r: Files.Rider; x, y, w, h, col: INTEGER; VAR shape: Figures.Shape);
-		VAR len: INTEGER; width, vers: SHORTINT; fill: GfxPens.Pen;
+	PROCEDURE LoadRectangle (VAR r: Files.Rider; x, y, w, h, col: INTEGER): Leonardo.Shape;
+		VAR len: INTEGER; width, vers: SHORTINT;
 	BEGIN
-		Files.ReadInt(r, len);
-		Files.Read(r, width); Files.Read(r, vers);
-		IF vers # 0 THEN fill := GreyFiller ELSE fill := NIL END;
-		CreateRectangle(ctxt, x + 0.5, y + 0.5, x + w - 0.5, y + h - 0.5, col, width, fill, shape)
+		Files.ReadInt(r, len); Files.Read(r, width); Files.Read(r, vers);
+		RETURN CreateRectangle(x + 0.5, y + 0.5, x + w - 0.5, y + h - 0.5, col, width, ThisFiller(col, vers))
 	END LoadRectangle;
 	
-	PROCEDURE LoadSpline (VAR ctxt: Context; VAR r: Files.Rider; x, y, col: INTEGER; VAR shape: Figures.Shape);
+	PROCEDURE LoadSpline (VAR r: Files.Rider; x, y, col: INTEGER): Leonardo.Shape;
 		VAR len, n, i: INTEGER; open: SHORTINT; u, v: ARRAY 21 OF INTEGER;
 	BEGIN
 		Files.ReadInt(r, len);
@@ -229,38 +254,41 @@ MODULE LeoDraw;	(** eos   **)
 		Files.Read(r, open);
 		FOR i := 0 TO n - 1 DO Files.ReadInt(r, u[i]); INC(u[i], x) END;
 		FOR i := 0 TO n - 1 DO Files.ReadInt(r, v[i]); INC(v[i], y) END;
-		CreateSpline(ctxt, open # 1, u, v, n, col, 1, shape)
+		RETURN CreateSpline(open # 1, u, v, n, col, 1)
 	END LoadSpline;
 	
-	PROCEDURE LoadShape (VAR ctxt: Context; VAR r: Files.Rider; VAR gen: ARRAY OF CHAR; VAR shape: Figures.Shape);
-		VAR x, y, w, h, col: INTEGER;
+	PROCEDURE LoadShape (VAR ctxt: Context; VAR r: Files.Rider; VAR gen: ARRAY OF CHAR): Leonardo.Shape;
+		VAR x, y, w, h, col: INTEGER; shape: Leonardo.Shape;
 	BEGIN
-		Files.ReadInt(r, x); Files.ReadInt(r, y); INC(y, SHORT(ENTIER(Figures.A4H)));
+		Files.ReadInt(r, x); Files.ReadInt(r, y);
 		Files.ReadInt(r, w); Files.ReadInt(r, h);
 		Files.ReadInt(r, col);
 		IF gen = "Graphics.NewLine" THEN
 			IF w > h THEN
-				CreateLine(ctxt, x + 0.5, y + 0.5*h, x + w - 0.5, y + 0.5*h, col, h, shape)
+				RETURN CreateLine(x + 0.5, y + 0.5*h, x + w - 0.5, y + 0.5*h, col, h)
 			ELSE
-				CreateLine(ctxt, x + 0.5*w, y + 0.5, x + 0.5*w, y + h - 0.5, col, w, shape)
+				RETURN CreateLine(x + 0.5*w, y + 0.5, x + 0.5*w, y + h - 0.5, col, w)
 			END
 		ELSIF gen = "Graphics.NewCaption" THEN
-			LoadCaption(ctxt, r, x, y, col, shape)
+			RETURN LoadCaption(ctxt, r, x, y, col)
 		ELSIF gen = "Graphics.NewMacro" THEN
-			LoadMacro(ctxt, r, x, y - SHORT(ENTIER(Figures.A4H)), col, shape)
+			RETURN LoadMacro(ctxt, r, x, y, col)
 		ELSIF gen = "Curves.New" THEN
-			LoadCurve(ctxt, r, x, y, w, h, col, shape)
+			RETURN LoadCurve(r, x, y, w, h, col)
 		ELSIF gen = "Rectangles.New" THEN
-			LoadRectangle(ctxt, r, x, y, w, h, col, shape)
+			RETURN LoadRectangle(r, x, y, w, h, col)
 		ELSIF gen = "Splines.New" THEN
-			LoadSpline(ctxt, r, x, y, col, shape)
+			RETURN LoadSpline(r, x, y, col)
 		ELSE
-			NEW(shape); shape.handle := Figures.HandleShape
+			NEW(shape); Leonardo.InitShape(shape, Leonardo.HandleShape);
+			RETURN shape
 		END
 	END LoadShape;
 	
-	PROCEDURE LoadElems (VAR r: Files.Rider; VAR ctxt: Context; VAR shapes: Figures.Shape);
-		VAR last, new: Figures.Shape; cno, k: SHORTINT; name, cmd: ARRAY 32 OF CHAR; i, j: LONGINT; len: INTEGER;
+	PROCEDURE LoadElems (VAR r: Files.Rider; VAR ctxt: Context): Leonardo.Shape;
+		VAR
+			shapes, last, new: Leonardo.Shape; cno, k: SHORTINT; name, font, cmd: ARRAY 32 OF CHAR;
+			i, j: LONGINT; size, len: INTEGER;
 	BEGIN
 		shapes := NIL; last := NIL;
 		Files.Read(r, cno);
@@ -270,27 +298,22 @@ MODULE LeoDraw;	(** eos   **)
 				IF cno = 0 THEN
 					i := 0;
 					WHILE (name[i] # 0X) & (name[i] # ".") & ((name[i] < "0") OR ("9" < name[i])) DO
-						ctxt.font[k, i] := name[i]; INC(i)
+						font[i] := name[i]; INC(i)
 					END;
-					ctxt.font[k, i] := 0X;
+					font[i] := 0X;
 					IF ("0" <= name[i]) & (name[i] <= "9") THEN
-						ctxt.size[k] := 0;
+						size := 0;
 						REPEAT
-							ctxt.size[k] := 10*ctxt.size[k] + ORD(name[i]) - ORD("0");
-							INC(i)
+							size := 10*size + ORD(name[i]) - ORD("0"); INC(i)
 						UNTIL (name[i] < "0") OR ("9" < name[i]);
-						IF name[i] = "i" THEN
-							Strings.Append(ctxt.font[k], "-Italic")
-						ELSIF name[i] = "m" THEN
-							Strings.Append(ctxt.font[k], "-Medium")
-						ELSIF name[i] = "b" THEN
-							Strings.Append(ctxt.font[k], "-Bold")
-						ELSIF name[i] = "j" THEN
-							Strings.Append(ctxt.font[k], "-BoldItalic")
+						IF name[i] = "i" THEN Strings.Append(font, "-Italic")
+						ELSIF name[i] = "m" THEN Strings.Append(font, "-Medium")
+						ELSIF name[i] = "b" THEN Strings.Append(font, "-Bold")
+						ELSIF name[i] = "j" THEN Strings.Append(font, "-BoldItalic")
 						END
-					ELSE
-						ctxt.size[k] := 1
-					END
+					ELSE size := 10
+					END;
+					ctxt.font[k] := GfxFonts.OpenSize(font, size)
 				ELSIF cno = 1 THEN
 					ctxt.lib[k] := ThisLibrary(name)
 				ELSE
@@ -306,7 +329,7 @@ MODULE LeoDraw;	(** eos   **)
 					ctxt.class[k, i] := 0X
 				END
 			ELSIF ctxt.class[cno] # "" THEN
-				LoadShape(ctxt, r, ctxt.class[cno], new);
+				new := LoadShape(ctxt, r, ctxt.class[cno]);
 				IF last = NIL THEN shapes := new ELSE last.slink := new END;
 				last := new
 			ELSE
@@ -314,13 +337,12 @@ MODULE LeoDraw;	(** eos   **)
 				Files.Set(r, Files.Base(r), Files.Pos(r) + len)
 			END;
 			Files.Read(r, cno)
-		END
+		END;
+		RETURN shapes
 	END LoadElems;
 	
 	PROCEDURE LoadDoc (doc: Documents.Document);
-		VAR
-			fig: Figures.Figure; file: Files.File; r: Files.Rider; tag: CHAR; ctxt: Context; shapes: Figures.Shape; layer: LeoFrames.Layer;
-			main: LeoFrames.Frame; ruler: Leonardo.Ruler;
+		VAR fig: Leonardo.Figure; file: Files.File; r: Files.Rider; tag: CHAR; ctxt: Context; main: LeoFrames.Frame;
 	BEGIN
 		fig := NIL;
 		file := Files.Old(doc.name);
@@ -328,35 +350,43 @@ MODULE LeoDraw;	(** eos   **)
 			Files.Set(r, file, 0);
 			Files.Read(r, tag);
 			IF tag = GraphFileId THEN
-				NEW(MacroFig); Figures.Init(MacroFig, 0, 0);
+				NEW(MacroFig); Leonardo.InitFigure(MacroFig);
 				InitContext(ctxt);
-				LoadElems(r, ctxt, shapes);
-				NEW(fig); Figures.Init(fig, Figures.A4W, Figures.A4H);
-				Figures.Integrate(fig, fig.root, shapes);
-				Figures.ClearSelection(fig);
+				NEW(fig); Leonardo.InitFigure(fig);
+				Leonardo.Integrate(fig, LoadElems(r, ctxt));
+				Leonardo.ClearSelection(fig);
 				MacroFig := NIL
 			END
 		END;
 		IF fig = NIL THEN
-			doc.name := "No Draw file found";
-			NEW(fig); Figures.Init(fig, Figures.A4W, Figures.A4H);
-			NEW(layer); LeoFrames.InitLayer(layer, "Main", TRUE, TRUE, TRUE, TRUE);
-			Figures.Integrate(fig, fig.root, layer)
+			doc.name := "No Draw file";
+			NEW(fig); Leonardo.InitFigure(fig)
 		END;
-		NEW(main); LeoFrames.InitFrame(main, fig, Figures.cm, 10);
-		NEW(ruler); Leonardo.InitRuler(ruler, main);
-		Documents.Init(doc, ruler)
+		NEW(main); LeoTools.InitFrame(main, fig);
+		Documents.Init(doc, main)
 	END LoadDoc;
 	
 	PROCEDURE NewDoc*;
 		VAR doc: Documents.Document;
 	BEGIN
-		NEW(doc); Leonardo.InitDoc(doc);
-		doc.Load := LoadDoc;
+		NEW(doc); LeoDocs.Init(doc); doc.Load := LoadDoc;
 		Objects.NewObj := doc
 	END NewDoc;
 	
+	PROCEDURE Open*;
+		VAR s: Attributes.Scanner; doc: Documents.Document;
+	BEGIN
+		Attributes.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos); Attributes.Scan(s);
+		IF s.class IN {Attributes.Name, Attributes.String} THEN
+			NEW(doc); LeoDocs.Init(doc); doc.Load := LoadDoc;
+			COPY(s.s, doc.name); doc.Load(doc);
+			Desktops.ShowDoc(doc)
+		END
+	END Open;
+	
 
-BEGIN
-	NEW(GreyFiller); GfxPens.InitFiller(GreyFiller, Gfx.LGrey)
 END LeoDraw.
+
+
+System.Directory *.Graph
+LeoDraw.Open ^

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Reals;	(** portable *)
 
@@ -52,7 +40,6 @@ VAR
 	tene: ARRAY 23 OF LONGREAL; (* e = 0..22: exact values of 10^e *)
 	ten: ARRAY 27 OF LONGREAL;
 	eq, gr: ARRAY 20 OF SET;
-	x : ARRAY 2 OF LONGINT;
 	H, L: INTEGER;
 
 (** Returns the shifted binary exponent (0 <= e < 256). *)
@@ -109,11 +96,11 @@ PROCEDURE IntL* (x: LONGREAL; VAR h, l: LONGINT);
 BEGIN SYSTEM.GET(SYSTEM.ADR(x) + H, h); SYSTEM.GET(SYSTEM.ADR(x) + L, l)
 END IntL;
 
-(** Returns 10^e (e <= 308, 308 < e delivers NaN). *)
+(** Returns 10^e (e <= 308, 308 < e delivers IEEE-code +INF). *)
 PROCEDURE Ten* (e: LONGINT): LONGREAL;
 	VAR E: LONGINT; r: LONGREAL;
 BEGIN
-	IF e < -307 THEN RETURN 0 ELSIF 308 < e THEN RETURN RealL(-1, -1) END;
+	IF e < -307 THEN RETURN 0 ELSIF 308 < e THEN RETURN RealL(2146435072, 0) END;
 	INC(e, 307); r:= ten[e DIV 23] * tene[e MOD 23];
 	IF e MOD 32 IN eq[e DIV 32] THEN RETURN r
 	ELSE
@@ -210,7 +197,7 @@ BEGIN SYSTEM.PUT(adr + H, h); SYSTEM.PUT(adr + L, l);
 END RealX;
 
 PROCEDURE InitHL;
-	VAR i: LONGINT; ch: CHAR; dmy: INTEGER; littleEndian: BOOLEAN;
+	VAR i: LONGINT; dmy: INTEGER; littleEndian: BOOLEAN;
 BEGIN
 	DefaultFCR := (FCR() - {0,2,3,10,11}) + {0..5,8,9};
 	SetFCR(DefaultFCR);

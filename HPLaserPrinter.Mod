@@ -1,23 +1,13 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE HPLaserPrinter;	(** non-portable *)  (* L. Truszek, pjm *)
 
-IMPORT SYSTEM, Files, Display, Fonts, Texts, Oberon, Printer, Pictures, Out;
+IMPORT SYSTEM,Modules,  Files, Display, Fonts, Texts, Oberon, Printer, Pictures, Out;
 
 CONST
+	InstallCmd = "HPLaserPrinter.Install";
+	
 	(* The maximal logical HP Laserjet page size for A4 format *)
 
 	HPPageWidth = 2480;  HPPageHeight = 3508;
@@ -677,7 +667,7 @@ BEGIN
 	END
 END GetDim;
 
-PROCEDURE SetMetrics(P: Printer.Printer);
+PROCEDURE InitMetrics*(P: Printer.Printer);
 BEGIN
 	Unit := 3048;  P.Unit := Unit;
 	Depth := 1;  P.Depth := Depth;
@@ -693,18 +683,6 @@ BEGIN
 	GetDim("HPLaserPrinter.BottomMargin", 177, P.FrameY);
 	GetDim("HPLaserPrinter.TopMargin", 177, P.FrameH);
 	P.FrameH := Height-P.FrameY-P.FrameH
-END SetMetrics;
-
-PROCEDURE InitMetrics*(P: Printer.Printer);
-VAR M: Display.ControlMsg;  N: Oberon.ControlMsg;
-BEGIN
-	SetMetrics(P);
-	IF Printer.current # NIL THEN
-		N.id := Oberon.neutralize;  M.F := NIL; Display.Broadcast(N);
-		M.id := Display.newprinter;  M.F := NIL; Display.Broadcast(M);
-		M.id := Display.suspend;  M.F := NIL; Display.Broadcast(M);
-		M.id := Display.restore;  M.F := NIL; Display.Broadcast(M)
-	END
 END InitMetrics;
 
 PROCEDURE Open*(P: Printer.Printer;  printer, options: ARRAY OF CHAR);
@@ -913,7 +891,7 @@ BEGIN
 	name[i+4] := "."; name[i+5] := "F"; name[i+6] := "n"; name[i+7] := "t";
 	name[i+8] := 0X;
 	metric := Fonts.This(name);
-	IF metric.type = Fonts.substitute THEN metric := NIL END;
+	IF (metric # NIL) & (metric.type = Fonts.substitute) THEN metric := NIL END;
 	RETURN metric
 END GetMetric;
 
@@ -921,7 +899,7 @@ PROCEDURE NewPrinter*(): Printer.Printer;
 VAR P: Printer.Printer;
 BEGIN
 	NEW(P);
-	P.name := "HPLaserPrinter.Install";
+	P.name := InstallCmd;
 	P.InitMetrics := InitMetrics;
 	P.Open := Open;
 	P.Close := Close;
@@ -947,8 +925,16 @@ BEGIN
 	Printer.Install(NewPrinter());
 END Install;
 
+PROCEDURE Cleanup;
 BEGIN
-	M := NIL;  freeP := NIL
+	IF (Printer.current # NIL) & (Printer.current.name = InstallCmd) THEN
+		Printer.current := NIL
+	END
+END Cleanup;
+
+BEGIN
+	M := NIL;  freeP := NIL;
+	Modules.InstallTermHandler(Cleanup)
 END HPLaserPrinter.
 
 System.Free HPLaserPrinter ~

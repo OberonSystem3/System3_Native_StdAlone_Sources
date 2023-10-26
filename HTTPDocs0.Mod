@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE HTTPDocs0;	(** portable *)
 	IMPORT Objects, Modules, Display, Input, Texts, HyperDocs, Strings, Oberon, Attributes, Links, Documents, Rembrandt,
@@ -292,7 +280,9 @@ MODULE HTTPDocs0;	(** portable *)
 			entry.doc := doc;
 			IF entry.pos < 0 THEN
 				mainD := entry.obj(Documents.Document);
-				Links.SetLink(mainD.dsc, "Picture", doc.dsc(Rembrandt.Frame).pict);
+(* Links.SetLink(mainD.dsc, "Picture", doc.dsc(Rembrandt.Frame).pict); *)
+Links.GetLink(doc.dsc, "Model", L.obj);
+Links.SetLink(mainD.dsc, "Picture", L.obj);
 				mainD.dsc(TextGadgets.Frame).do := HyperDocs.linkPictMethods;
 				Gadgets.Update(entry.obj);
 				entry := entry.same

@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Finder;	(** portable *) (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
+ MODULE Finder;	(** portable *) (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps extended *)
 
 	IMPORT
 		Input,  Objects, Fonts, Display, Printer, Display3, Printer3, Pictures, Viewers, Texts, Oberon, Effects,
@@ -153,7 +141,7 @@ MODULE Finder;	(** portable *) (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps ext
 	BEGIN
 		ListGadgets.NewFrame;
 		list := Objects.NewObj(ListGadgets.Frame); list.do := methods;
-		list.H := 200;
+		list.H := 200; INCL(list.state0, ListGadgets.locked);
 		A.id := Objects.set; A.class := Objects.Bool;
 		A.name := "MultiSel"; list.handle(list, A);
 		A.name := "ExtendSel"; list.handle(list, A);
@@ -334,7 +322,7 @@ MODULE Finder;	(** portable *) (* ejz 3.1.95 / jm - adapted for ver 1.6 / ps ext
 							END
 						ELSIF M IS Oberon.InputMsg THEN
 							WITH M: Oberon.InputMsg DO
-								IF (M.id = Oberon.track) & (M.keys = {1}) & Gadgets.InActiveArea(F, M) & ~(Gadgets.selected IN F.state) THEN
+								IF (M.id = Oberon.track) & ((M.keys = {1}) OR (Oberon.New & (M.keys = {2}))) & Gadgets.InActiveArea(F, M) & ~(Gadgets.selected IN F.state) THEN
 									Gadgets.MakeMask(F, x, y, M.dlink, Q);
 									F.open := TRUE; Oberon.RemoveMarks(x, y, w, h);
 									PopupList(F, M);
@@ -567,7 +555,7 @@ BEGIN
 	methods.PrintFormat := ListGadgets. PrintFormatLine; methods.Print := ListGadgets.PrintLine
 END Finder.
 
-(** A Finder is used to quickly find a document among the many documents piled in a desktop and to place it on top of all others, open and ready. Moving the mouse focus to the finder and pressing the middle mouse key opens the Finder showing a list of document names from which one can be selected by moving the mouse focus up or down. When the mouse key is released, the selected document is brought to the front of the desktop and the finder is closed. Note however, if an open document is only partially visible it can be brought to the front by a simple left mouse click.
+(**A Finder is used to quickly find a document among the many documents piled in a desktop and to place it on top of all others, open and ready. Moving the mouse focus to the finder and pressing the middle mouse key opens the Finder showing a list of document names from which one can be selected by moving the mouse focus up or down. When the mouse key is released, the selected document is brought to the front of the desktop and the finder is closed. Note however, if an open document is only partially visible it can be brought to the front by a simple left mouse click.
 
 An open Finder in principle contains three sections: the top one lists the names of the open documents in blue, the middle one lists the minimized documents in green and the bottom one lists the documents contained in the Gadgets.FinderTemplates section of Oberon.Text. The names of open and minimized documents is taken from their NamePlates. The names include the full path specification and they are are preceded by a ideogram representing the document type. A document having an empty NamePlate appears as "Untitled document".
 

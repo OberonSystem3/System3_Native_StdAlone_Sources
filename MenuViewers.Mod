@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE MenuViewers;	(** portable *) (*JG 16.10.94, color version *)
 
@@ -172,8 +160,8 @@ MODULE MenuViewers;	(** portable *) (*JG 16.10.94, color version *)
     END;
     Oberon.RemoveMarks(V.X + 1, V.Y + V.H - 1 - Menu.H, V.W - 2, Menu.H);
     Display.ReplConst(FullColor, V.X + 1, V.Y + V.H - 1 - Menu.H, V.W - 2, Menu.H, invert);
-    IF ~(0 IN keysum) THEN
-      IF 1 IN keysum THEN V1 := Viewers.This(X, Y);
+    IF ~(0 IN keysum) OR Oberon.New THEN
+      IF (1 IN keysum) OR (Oberon.New & (0 IN keysum)) THEN V1 := Viewers.This(X, Y);
         IF (V1 IS Viewer) & (Y > V1.Y + V1.H - V1(Viewer).menuH) THEN
           Y := V1.Y + V1.H
         END;
@@ -246,7 +234,8 @@ MODULE MenuViewers;	(** portable *) (*JG 16.10.94, color version *)
           IF M.id = Oberon.track THEN
             IF M.Y < V.Y + 1 THEN Oberon.DrawCursor(Oberon.Mouse, Oberon.Arrow, M.X, M.Y)
             ELSIF M.Y < V.Y + V.H - V.menuH THEN Main.handle(Main, M)
-            ELSIF M.Y < V.Y + V.H - V.menuH DIV 4 * 3 THEN Menu.handle(Menu, M)
+            ELSIF Oberon.New & (M.X > V.X+20) THEN Menu.handle(Menu, M)
+            ELSIF ~Oberon.New & (M.Y < V.Y + V.H - V.menuH DIV 4 * 3) THEN Menu.handle(Menu, M)
             ELSIF M.Y < V.Y + V.H - 1 THEN
               IF 2 IN M.keys THEN Change(V, M.X, M.Y, M.keys)
                 ELSE Menu.handle(Menu, M)

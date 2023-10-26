@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetUDP;	(** non-portable *)	(* 16.08.96 mg *)
 
@@ -54,7 +42,6 @@ VAR
 	data: Data;
 	chksum: LONGINT;
 BEGIN
-	(*NetBase.Copy(iph.src, udpph.src, NetIP.AdrLen); NetBase.Copy(iph.dst, udpph.dst, NetIP.AdrLen);*)
 	udpph.src := src;  udpph.dst := dst;
 	udpph.proto := NetIP.UDP; NetBase.HostToNet(udpph.proto);
 	udpph.len := len; NetBase.HostToNet(udpph.len);
@@ -72,7 +59,8 @@ VAR
 	iph: NetIP.IPHeader;
 	com: NetPorts.Port;
 	chksum: LONGINT;
-BEGIN iph := SYSTEM.VAL(NetIP.IPHeader, SYSTEM.ADR(item.data[item.ofs]));
+BEGIN
+	iph := SYSTEM.VAL(NetIP.IPHeader, SYSTEM.ADR(item.data[item.ofs]));
 	udph := SYSTEM.VAL(Header, SYSTEM.ADR(item.data[item.ofs + NetIP.HdrLen(iph)]));
 	NetBase.NetToHost(udph.len); INC(Nreceived);
 	chksum := udph.chksum; udph.chksum := 0;
@@ -99,7 +87,7 @@ BEGIN
 	IF NetPorts.Available(NetIP.routes[0].adr, lport, radr, rport) THEN NEW(C); NetBase.Reset(C.rq);
 		IF NetPorts.Access(C, NetIP.routes[0].adr, lport, radr, rport, NetPorts.conctless) THEN res := Done
 		ELSE res := DescriptorInUse; HALT(98)
-		END 
+		END
 	ELSE res := LocalPortInUse; HALT(99)
 	END
 END Open;
@@ -125,7 +113,7 @@ BEGIN
 	IF len > 0 THEN
 		NetBase.NewItem(item);
 		DEC(item.ofs, SHORT(len)); INC(item.len, SHORT(len));
-		NetBase.FastCopy(SYSTEM.ADR(buf[beg]), SYSTEM.ADR(item.data[item.ofs]), len);
+		SYSTEM.MOVE(SYSTEM.ADR(buf[beg]), SYSTEM.ADR(item.data[item.ofs]), len);
 
 		DEC(item.ofs, HdrLen); INC(item.len, HdrLen);
 		udph := SYSTEM.VAL(Header, SYSTEM.ADR(item.data[item.ofs]));
@@ -141,31 +129,32 @@ END Send;
 
 PROCEDURE Receive* (C: Connection; VAR radr: NetIP.Adr; VAR rport: INTEGER; VAR buf: ARRAY OF SYSTEM.BYTE;
 	beg: LONGINT; VAR len: LONGINT);
-VAR
-	item: NetBase.Item;
-	udph: Header;
-	iph: NetIP.IPHeader;
+VAR item: NetBase.Item; udph: Header; iph: NetIP.IPHeader; clen: LONGINT;
 BEGIN
 	NetBase.Poll;
 	IF C.rq.len > 0 THEN NetBase.GetItem(C.rq, item);
 		iph := SYSTEM.VAL(NetIP.IPHeader, SYSTEM.ADR(item.data[item.ofs]));
 		udph := SYSTEM.VAL(Header, SYSTEM.ADR(item.data[item.ofs + NetIP.HdrLen(iph)]));
-		NetBase.Copy(iph.src, radr, NetIP.AdrLen); rport := udph.src;
+		radr := iph.src;
+		rport := udph.src;
 		len := udph.len - HdrLen;
-		ASSERT(len <= LEN(buf));
-		NetBase.FastCopy(SYSTEM.ADR(item.data[item.ofs + NetIP.HdrLen(iph) + HdrLen]), SYSTEM.ADR(buf[beg]), len)
+		(*ASSERT(len <= LEN(buf));*)
+			(* if buffer too small, only copy up to end of buffer, but always return correct length to the user *)
+		IF len <= LEN(buf)-beg THEN clen := len ELSE clen := LEN(buf)-beg END;
+		SYSTEM.MOVE(SYSTEM.ADR(item.data[item.ofs + NetIP.HdrLen(iph) + HdrLen]), SYSTEM.ADR(buf[beg]), clen)
 	ELSE len := -1
 	END
 END Receive;
 
 PROCEDURE Start*;
-BEGIN NetIP.InstallDemux(Input, NetIP.UDP);
+BEGIN
+	NetIP.InstallDemux(Input, NetIP.UDP);
 	Nreceived := 0; Nsent := 0
 END Start;
 
 PROCEDURE Stop*;
-BEGIN NetIP.RemoveDemux(NetIP.UDP)
+BEGIN
+	NetIP.RemoveDemux(NetIP.UDP)
 END Stop;
 
-BEGIN Nreceived := 0; Nsent := 0
 END NetUDP.

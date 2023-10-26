@@ -1,27 +1,14 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetTools;	(** portable *) (* ejz,   *)
 	IMPORT Input, Files, Objects, Strings, Texts, Oberon, NetSystem, Gadgets, Documents, HyperDocs, Attributes, Streams,
-		(*Threads,*) SYSTEM;
+		SYSTEM;
 
 (** NetTools is a utility module that contains procedures commonly used with TCP services. *)
 
 	CONST
 		MaxLine* = 1024; (* Mac = 1000 *)
-		MaxTry = 1000;
 		BufLen* = MaxLine;
 		ServerStrLen* = HyperDocs.ServerStrLen;
 		PathStrLen* = HyperDocs.PathStrLen;
@@ -213,15 +200,14 @@ MODULE NetTools;	(** portable *) (* ejz,   *)
 	BEGIN
 		WITH S: TCPStream DO
 			S.avail := NetSystem.Available(S.C);
-			IF S.avail > 0 THEN
-				RETURN S.avail
-			ELSE
+			IF S.avail <= 0 THEN
 				state := S.State(S);
 				IF state # Streams.inout THEN
 					S.eos := TRUE
 				END;
-				RETURN 0
-			END
+				S.avail := NetSystem.Available(S.C)
+			END;
+			RETURN S.avail
 		END
 	END TCPAvailable;
 

@@ -1,33 +1,22 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29.4.9, Windows version: jm 20.12.95 *)
+MODULE PSPrinter; (** portable *)	(*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29.4.9, Windows version: jm 20.12.95 *)
 
 	(*
+		wdm 2000-02-21 duplex printing: uses option "x"
 		jm 20.12.95 EPS support added
 		ps 4.8.96 added border to page (left, right: 2cm / top, bottom: 1.5 cm)
 	*)
 	
-	IMPORT Files, Printer, Objects, Fonts, Texts, Strings, Display, Oberon, Pictures;
+	IMPORT Files, Modules, Printer, Objects, Fonts, Texts, Strings, Oberon, Pictures;
 
 	CONST
 		N = 20;	(* max spline points *)
 		maxFonts = 64;
 		headerFileName = "PSHeader.Text";
 		bold = 0; italics = 1; medium = 2;
-		oneup = 0;  twoup = 1;  fourup = 2;
+		oneup = 0;  twoup = 1;  fourup = 2;  rotated = 3;
 		
 	TYPE
 		Name* = ARRAY 32 OF CHAR;
@@ -41,7 +30,9 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 			
 			l, t, r, b: LONGINT;
 			sx, sy: INTEGER; (* current string pos *)
-			mode, location: SHORTINT
+			mode, location: SHORTINT;
+			duplex: BOOLEAN; (* Print duplex pages *)
+			anonymous: BOOLEAN
 		END;
 		
 		FontDesc = RECORD
@@ -53,12 +44,6 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 		PolyVector = ARRAY N OF Poly;
 
 	TYPE
-		MetricDesc = RECORD
-			dx, x, y, w, h: INTEGER;
-		END;
-		Metrics = POINTER TO RECORD (Objects.IndexDesc)
-			metrics: ARRAY 256 OF MetricDesc;
-		END;
 		FontDef = POINTER TO FontDefDesc;
 		FontDefDesc = RECORD
 			name: ARRAY 64 OF CHAR;
@@ -83,9 +68,7 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 		metric: Objects.Library;
 		fontMapDict: FontDef;
 		fontMapDictN: INTEGER;
-	    theChar: Fonts.Char;
 		default: Objects.Name;
-		curRes: LONGINT;
 		
 	(* -- Output procedures -- *)
 
@@ -174,7 +157,6 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 	END SetMappedFont;
 
 	PROCEDURE SetBitmapFont(VAR fontR, R: Files.Rider; fd: FontDesc; pRes: INTEGER);
-		CONST fontFileId = 0DBX;
 		TYPE
 			RunRec = RECORD beg, end: INTEGER END;
 			Metrics = RECORD dx, x, y, w, h: INTEGER END;
@@ -285,7 +267,7 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 	BEGIN
 		Str(fontR, "% Conversion of the Oberon font "); Str(fontR, fd.name); Ln(fontR);
 		Files.Read(R, ch);
-		IF ch = fontFileId THEN
+		IF ch = Fonts.FontId THEN
 			Files.Read(R, ch); Str(fontR, "% abstraction: "); Int(fontR, ORD(ch)); 
 			Files.Read(R, ch); Str(fontR, ", family: "); Ch(fontR, ch); 
 			Files.Read(R, ch); Str(fontR, ", variant: "); Int(fontR, ORD(ch)); Ln(fontR);
@@ -437,175 +419,18 @@ MODULE PSPrinter;	(** portable *)  (*UNIX version: JT 11.5.90, RC 2.7.93,  JS 29
 		class[j] := 0X;
 	END ParseName;
 
-	PROCEDURE BuildName (family: ARRAY OF CHAR; size: LONGINT; style: SET; class: ARRAY OF CHAR; VAR name: ARRAY OF CHAR);
-	VAR i, j: INTEGER;
-	
-		(* Convert an integer into a string *)
-		PROCEDURE IntToStr(i: LONGINT; VAR j: INTEGER; VAR s: ARRAY OF CHAR);
-		VAR k: INTEGER; x0: LONGINT; a: ARRAY 10 OF CHAR;
-		BEGIN
-			IF i > 0 THEN
-				k := 0; x0 := i;
-				REPEAT
-					a[k] := CHR(x0 MOD 10 + 30H); x0 := x0 DIV 10; INC(k)
-				UNTIL x0 = 0;
-				REPEAT DEC(k); s[j] := a[k]; INC(j) UNTIL k = 0
-			END
-		END IntToStr;
-	
-	BEGIN
-		i := 0;
-		j := 0; WHILE family[j] # 0X DO name[i] := family[j]; INC(i); INC(j) END;
-		IntToStr(size, i, name);
-		IF italics IN style THEN name[i] := "i"; INC(i)
-		ELSIF medium IN style THEN name[i] := "m"; INC(i)
-		ELSIF bold IN style THEN name[i] := "b"; INC(i)
-		END;
-		name[i] := "."; INC(i);
-		j := 0; WHILE class[j] # 0X DO name[i] := class[j]; INC(i); INC(j) END;
-		name[i] := "."; INC(i);
-		name[i] := "F"; INC(i);
-		name[i] := "n"; INC(i);
-		name[i] := "t"; INC(i);
-		name[i] := 0X
-	END BuildName;
-
-	PROCEDURE Substitute(L: Fonts.Font);
-	BEGIN
-		L.type := Fonts.substitute;
-		L.height := Fonts.Default.height;
-		L.minX := Fonts.Default.minX; L.maxX := Fonts.Default.maxX;
-		L.minY := Fonts.Default.minY; L.maxY := Fonts.Default.maxY;
-		L.ind := Fonts.Default.ind
-	END Substitute;
-
-PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SHORTINT);
-	TYPE
-		RunRec = RECORD beg, end: INTEGER END;
-		BoxRec = RECORD dx, x, y, w, h: INTEGER END;
-	VAR
-		raster: Metrics;
-		nofRuns, nofBoxes: INTEGER;
-		k, l, m: INTEGER;
-		ch: CHAR;
-		run: ARRAY 16 OF RunRec;
-		box: ARRAY 256 OF BoxRec;
-
-		PROCEDURE DummyCh (m: INTEGER);
-		VAR raster: Metrics;
-		BEGIN
-			raster := F.ind(Metrics);
-			raster.metrics[m].dx := 0;
-			raster.metrics[m].x := 0; raster.metrics[m].y := 0;
-			raster.metrics[m].w := 0; raster.metrics[m].h := 0
-		END DummyCh;
-
-	BEGIN
-		F.type := type;
-		Files.Read(R, ch); (*family*)
-		Files.Read(R, ch); (*variant*)
-		NEW(raster); F.ind := raster;
-		Files.ReadInt(R, F.height);
-		Files.ReadInt(R, F.minX); Files.ReadInt(R, F.maxX);
-		Files.ReadInt(R, F.minY); Files.ReadInt(R, F.maxY);
-		Files.ReadInt(R, nofRuns);
-		nofBoxes := 0; k := 0;
-		WHILE k # nofRuns DO
-			Files.ReadInt(R, run[k].beg); Files.ReadInt(R, run[k].end);
-			nofBoxes := nofBoxes + run[k].end - run[k].beg;
-			INC(k);
-		END;
-		l := 0;
-		WHILE l # nofBoxes DO
-			Files.ReadInt(R, box[l].dx);
-			Files.ReadInt(R, box[l].x); Files.ReadInt(R, box[l].y);
-			Files.ReadInt(R, box[l].w); Files.ReadInt(R, box[l].h);
-			INC(l);
-		END;
-		k := 0; l := 0; m := 0;
-		WHILE k < nofRuns DO
-			WHILE m < run[k].beg DO DummyCh(m); INC(m) END;
-			WHILE m < run[k].end DO
-				raster.metrics[m].dx := box[l].dx;
-				raster.metrics[m].x := box[l].x;
-				raster.metrics[m].y := box[l].y;
-				raster.metrics[m].w := box[l].w; raster.metrics[m].h := box[l].h;
-				INC(l); INC(m);
-			END;
-			INC(k);
-		END;
-		WHILE m < 256 DO DummyCh(m); INC(m) END;
-	END Load;
-
-	PROCEDURE GetCharObj (L: Objects.Library; ref: INTEGER; VAR obj: Objects.Object);
-	VAR raster: Metrics;
-	BEGIN
-		raster := L.ind(Metrics);
-		theChar.dx := raster.metrics[ref].dx;
-		theChar.x := raster.metrics[ref].x;
-		theChar.y := raster.metrics[ref].y;
-		theChar.w := raster.metrics[ref].w;
-		theChar.h := raster.metrics[ref].h;
-		obj := theChar;
-	END GetCharObj;
-	
-	PROCEDURE OpenLib (L: Objects.Library);
-	VAR f: Files.File; R: Files.Rider; id: CHAR;
-		family, class, tmp: Objects.Name; prClass: ARRAY 4 OF CHAR; size, i, j: LONGINT; style: SET;
-	BEGIN
-		WITH L: Fonts.Font DO
-			ParseName(L.name, family, size, style, class);	(* take name apart *)
-			IF family = "Default" THEN
-				COPY(default, family); BuildName(family, size, style, class, L.name)
-			END;
-			IF (class[0] # "M") OR (class[1] # "d") THEN Substitute(L)
-			ELSE
-				COPY(class, prClass); prClass[0] := "P"; prClass[1] := "r";
-				BuildName(family, size, style, prClass, tmp);
-				f := Files.Old(tmp);
-				IF f # NIL THEN
-					Files.Set(R, f, 0); Files.Read(R, id);
-					IF id = Fonts.FontId THEN Files.Read(R, L.type);
-						IF L.type = Fonts.font THEN
-							Load(L, R, L.name, Fonts.metric);	(* only read the metrics *)
-							RETURN
-						END
-					END
-				END;
-				
-				f := Files.Old(L.name);
-				IF f # NIL THEN
-					Files.Set(R, f, 0); Files.Read(R, id);
-					IF id = Fonts.FontId THEN Files.Read(R, L.type);
-						IF L.type = Fonts.metric THEN Load(L, R, L.name, Fonts.metric)
-						ELSE Substitute(L)
-						END
-					ELSE Substitute(L)
-					END
-				ELSE Substitute(L)
-				END;
-			END
-		END
-	END OpenLib;
-
-	PROCEDURE New (): Objects.Library;
-	VAR F: Fonts.Font;
-	BEGIN NEW(F);
-		F.Load := OpenLib; F.GetObj := GetCharObj; RETURN F
-	END New;
-
 	(* -- Exported Procedures -- *)
 
 	PROCEDURE GetDim(P: Printer.Printer;  label: ARRAY OF CHAR;  def: INTEGER;  VAR val: INTEGER);
 	VAR v: REAL; S: Texts.Scanner;
 	BEGIN
 		Oberon.OpenScanner(S, label);
-		IF (S.class = Texts.Int) OR (S.class = Texts.Real) THEN
+		IF S.class IN {Texts.Int, Texts.Real} THEN
 			IF S.class = Texts.Int THEN v := S.i
 			ELSE v := S.x
 			END;
 			Texts.Scan(S);
-			IF S.class = Texts.Name THEN
+			IF S.class IN {Texts.Name, Texts.String} THEN
 				IF S.s = "cm" THEN v := v*360000.0
 				ELSIF S.s = "mm" THEN v := v*36000.0
 				ELSIF S.s = "in" THEN v := v*36000.0*25.4
@@ -619,23 +444,19 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 		END
 	END GetDim;
 	
-	PROCEDURE initMetrics(P: Printer.Printer;  register: BOOLEAN);
-	VAR val: ARRAY 12 OF CHAR;  S: Texts.Scanner;
+	PROCEDURE Swap(VAR x, y: INTEGER);
+	VAR t: INTEGER;
+	BEGIN
+		t := x;  x := y;  y := t
+	END Swap;
+	
+	PROCEDURE InitMetrics*(P: Printer.Printer);
+	VAR S: Texts.Scanner;
 	BEGIN
 		Oberon.OpenScanner(S, "PSPrinter.Resolution");
 		IF S.class # Texts.Int THEN S.i := 300 END;	(* default *)
 		
-		IF register OR (S.i # curRes) THEN
-			curRes := S.i;
-			
-			val := "Md#.Fnt";
-			val[2] := CHR(48 + S.i DIV 100 MOD 10);
-			Objects.Register(val, New);	(* e.g. Md3.Fnt *)
-			val[0] := "P";  val[1] := "r";
-			Objects.Register(val, New)	(* e.g. Pr3.Fnt *)
-		END;
-		P.Unit := 914400 DIV S.i;
-		P.Depth := 24;
+		P.Unit := 914400 DIV S.i; P.Depth := 24;
 
 		GetDim(P, "PSPrinter.Width", 210, P.Width);
 		GetDim(P, "PSPrinter.Height", 297, P.Height);
@@ -644,21 +465,12 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 		P.FrameW := P.Width-P.FrameX-P.FrameW;
 		GetDim(P, "PSPrinter.BottomMargin", 15, P.FrameY);
 		GetDim(P, "PSPrinter.TopMargin", 15, P.FrameH);
-		P.FrameH := P.Height-P.FrameY-P.FrameH
-	END initMetrics;
-
-	PROCEDURE InitMetrics*(P: Printer.Printer);
-	VAR M: Display.ControlMsg; N: Oberon.ControlMsg;
-	BEGIN
-		initMetrics(P, TRUE);
-		IF Printer.current # NIL THEN
-			N.id := Oberon.neutralize; M.F := NIL; Display.Broadcast(N);
-			M.id := Display.newprinter; M.F := NIL; Display.Broadcast(M);
-			M.id := Display.suspend; M.F := NIL; Display.Broadcast(M);
-			M.id := Display.restore; M.F := NIL; Display.Broadcast(M)
+		P.FrameH := P.Height-P.FrameY-P.FrameH;
+		IF P(PSPrinter).mode = rotated THEN
+			Swap(P.Width, P.Height);  Swap(P.FrameX, P.FrameY);  Swap(P.FrameW, P.FrameH)
 		END
 	END InitMetrics;
-	
+
 	PROCEDURE GetSuffix(VAR str(** in *), suf(** out *): ARRAY OF CHAR);
 		VAR i, j, dot: LONGINT;
 	BEGIN
@@ -692,7 +504,7 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 	PROCEDURE ResetColor;
 	BEGIN
 		curR := 0; curG := 0; curB := 0;
-		setR := 255;  setG := 255;  setB := 255	(* different from cur *)
+		setR := 0;  setG := 0;  setB := 0	(* default color is black, set by /OberonInit and /p *)
 	END ResetColor;
 
 	PROCEDURE Open*(P: Printer.Printer; printer, options: ARRAY OF CHAR);
@@ -702,29 +514,34 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 			ResetColor;
 			P.res := 1;	(* no such printer *)
 			P.printF := Files.New(printer);
-			IF P.printF # NIL THEN
-				GetSuffix(printer, suffix);
-				P.eps := (suffix = "EPS") OR (suffix = "eps");
-				i := 0;  P.mode := oneup;  P.location := 0;
-				WHILE (options[i] # 0X) & (options[i] # Oberon.OptionChar) DO
-					IF options[i] = "l" THEN P.mode := twoup
-					ELSIF options[i] = "d" THEN P.mode := fourup
-					ELSIF options[i] = "e" THEN P.eps := TRUE
-					END;
-					INC(i)
+			IF P.printF = NIL THEN
+				P.printF := Files.New(""); P.anonymous := TRUE
+			ELSE
+				P.anonymous := FALSE
+			END;
+			GetSuffix(printer, suffix);
+			P.eps := (suffix = "EPS") OR (suffix = "eps");
+			i := 0;  P.mode := oneup;  P.location := 0;
+			WHILE (options[i] # 0X) & (options[i] # Oberon.OptionChar) DO
+				IF options[i] = "l" THEN P.mode := twoup
+				ELSIF options[i] = "d" THEN P.mode := fourup
+				ELSIF options[i] = "e" THEN P.eps := TRUE
+				ELSIF options[i] = "r" THEN P.mode := rotated
+				ELSIF options[i] = "x" THEN P.duplex := TRUE
 				END;
-				initMetrics(P, FALSE);
-				fontMapDict := NIL; fontMapDictN := 0;
-				P.l := MAX(LONGINT); P.r := MIN(LONGINT); P.t := MIN(LONGINT); P.b := MAX(LONGINT);
-				
-				NEW(headerT); Texts.Open(headerT, headerFileName);
-				IF headerT.len > 0 THEN
-					bodyF := Files.New(""); Files.Set(bodyR, bodyF, 0);
-					fontIndex := -1; curFont := -1; listFont := ""; ppos := 0; P.pno := 1;
-					P.res := 0
-				ELSE
-					Error("file not found", headerFileName)
-				END
+				INC(i)
+			END;
+			InitMetrics(P);
+			fontMapDict := NIL; fontMapDictN := 0;
+			P.l := MAX(LONGINT); P.r := MIN(LONGINT); P.t := MIN(LONGINT); P.b := MAX(LONGINT);
+			
+			NEW(headerT); Texts.Open(headerT, headerFileName);
+			IF headerT.len > 0 THEN
+				bodyF := Files.New(""); Files.Set(bodyR, bodyF, 0);
+				fontIndex := -1; curFont := -1; listFont := ""; ppos := 0; P.pno := 1;
+				P.res := 0
+			ELSE
+				Error("file not found", headerFileName)
 			END
 		END
 	END Open;
@@ -1127,7 +944,7 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 		WITH P: PSPrinter DO
 			ResetColor;
 			CASE P.mode OF
-				oneup:
+				oneup, rotated:
 					IF ~P.eps THEN
 						Int(bodyR, nofcopies); Str(bodyR, " p"); Ln(bodyR)
 					END;
@@ -1189,7 +1006,7 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 				Int(printR, 0); Ch(printR, " "); Int(printR, 0); Ch(printR, " "); 
 				Int(printR, (P.r - P.l + 1)* 72 DIV (914400 DIV P.Unit)); Ch(printR, " "); Int(printR, (P.t - P.b + 1) * 72 DIV (914400 DIV P.Unit)); Ch(printR, " ");
 				Ln(printR);
-				Str(printR, "%%Creator: ETH Oberon System 3"); Ln(printR);
+				Str(printR, "%%Creator: ETH Oberon"); Ln(printR);
 				Str(printR, "%%EndComments"); Ln(printR);
 			END;
 			
@@ -1199,6 +1016,10 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 				Files.Write(printR, ch);
 				IF ch = 0DX THEN Files.Write(printR, 0AX) END;
 				Texts.Read(R, ch)
+			END;
+			IF P.duplex THEN
+				Str(printR, "statusdict /setduplexmode known {statusdict begin true setduplexmode end} if");
+				Ln(printR); Ln(printR)
 			END;
 			Str(printR, "/factor1 ");
 			Real(printR, P.Unit/12700.0);
@@ -1280,6 +1101,9 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 				|fourup:
 					Str(printR, "0.5 0.5 scale"); Ln(printR); 
 					Str(printR, "0 ");  Int(printR, 3520 * 3048 DIV P.Unit); Str(printR, " translate"); Ln(printR)
+				|rotated:
+					Str(printR, "90 rotate"); Ln(printR);
+					Str(printR, "0 ");  Int(printR, -2489 * 3048 DIV P.Unit); Str(printR, " translate"); Ln(printR)
 			END;
 			Str(printR, "save"); Ln(printR); Ln(printR);
 			Str(printR, "%%EndProlog"); Ln(printR);
@@ -1294,7 +1118,8 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 			
 			Files.Set(srcR, bodyF, 0);
 			REPEAT Files.ReadBytes(srcR, buffer, bufSize); Files.WriteBytes(printR, buffer, bufSize-srcR.res) UNTIL srcR.eof;
-			Printer.Spool(P.printF);  P.res := Printer.res;
+			IF ~P.anonymous THEN Printer.Spool(P.printF) END;
+			P.res := Printer.res;
 			
 			Files.Set(bodyR, NIL, 0);
 			headerT := NIL; bodyF := NIL
@@ -1351,11 +1176,17 @@ PROCEDURE Load(F: Fonts.Font; VAR R: Files.Rider; subst: ARRAY OF CHAR; type: SH
 		ParseName(Fonts.Default.name, default, size, style, class)
 	END Init;
 
+	PROCEDURE Cleanup;
+	BEGIN
+		IF (Printer.current # NIL) & (Printer.current IS PSPrinter) THEN
+			Printer.current := NIL
+		END
+	END Cleanup;
+	
 BEGIN
 	hexArray := "0123456789ABCDEF";
-	metric := NIL;  curRes := 0;
-	NEW(theChar);
-	Init()
+	metric := NIL; Init();
+	Modules.InstallTermHandler(Cleanup)
 END PSPrinter.
 
 System.Free PSPrinter ~

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Net3Com509;	(** non-portable *)
 
@@ -160,48 +148,6 @@ CODE {SYSTEM.i386}
 	REP MOVSD
 END Copy4;
 
-(* Copy - Copy size bytes from source to dest.  (No overlap allowed) *)
-
-PROCEDURE Copy(source, dest, size: LONGINT);
-CODE {SYSTEM.i386}
-	MOV ESI, source[EBP]
-	MOV EDI, dest[EBP]
-	MOV ECX, size[EBP]
-	CLD
-	CMP ECX, 8
-	JB bytemove
-	XOR EAX, EAX
-	SHRD EAX, ESI, 2
-	JZ copyd
-	TEST EDI, 3
-	JZ copyd
-	SHRD EAX, EDI, 2
-	SHR EAX, 28
-	CMP AL, 10
-	JZ mov2
-	CMP AL, 5
-	JZ mov3
-	NOT AL
-	AND AL, 5
-	JNZ copyd
-	MOVSB
-	DEC ECX
-	JMP copyd
-mov3:
-	MOVSB
-	DEC ECX
-mov2:
-	MOVSW
-	SUB ECX, 2
-copyd:
-	SHRD EAX, ECX, 2
-	SHR ECX, 2
-	REP MOVSD
-	SHLD ECX, EAX, 2
-bytemove:
-	REP MOVSB
-END Copy;
-
 (* ReceivePacket - Remove a packet from the input buffer *)
 
 PROCEDURE Receive(dev: NetBase.Device;  VAR prno: INTEGER; VAR src: ARRAY OF SYSTEM.BYTE; VAR item: NetBase.Item);
@@ -218,11 +164,11 @@ BEGIN
 				(* then move to buffer & split *)
 			SYSTEM.MOVE(SYSTEM.ADR(dbuf[6]), SYSTEM.ADR(src[0]), 6);	(* source address *)
 			SYSTEM.GET(SYSTEM.ADR(dbuf[12]), prno0);
-			Copy(SYSTEM.ADR(dbuf[14]), SYSTEM.ADR(item.data[0]), dlen)
+			SYSTEM.MOVE(SYSTEM.ADR(dbuf[14]), SYSTEM.ADR(item.data[0]), dlen)
 		ELSE	(* ~split *)
 			SYSTEM.MOVE(SYSTEM.ADR(buf[bufhead])+6, SYSTEM.ADR(src[0]), 6);	(* source address *)
 			SYSTEM.GET(SYSTEM.ADR(buf[bufhead])+12, prno0);
-			Copy(SYSTEM.ADR(buf[bufhead])+14, SYSTEM.ADR(item.data[0]), dlen)
+			SYSTEM.MOVE(SYSTEM.ADR(buf[bufhead])+14, SYSTEM.ADR(item.data[0]), dlen)
 		END;
 		prno := SYSTEM.ROT(prno0, 8);
 		IF logging THEN
@@ -395,7 +341,9 @@ END ReadEE2;
 
 PROCEDURE *Cleanup;
 BEGIN
-	Kernel.RemoveIP(InterruptHandler, Kernel.IRQ+irq)
+	IF Kernel.shutdown = 0 THEN
+		Kernel.RemoveIP(InterruptHandler, Kernel.IRQ+irq)
+	END
 END Cleanup;
 
 (* Init - Initialise the 3c509 card.  Can handle only one card. *)

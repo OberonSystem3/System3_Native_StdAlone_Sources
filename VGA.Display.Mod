@@ -1,18 +1,5 @@
-(* OBERON System 3, Release 2.2.
-
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Display;	(* Ott Hans-Werner, ard, pjm *)
 
@@ -806,6 +793,7 @@ qCB12:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q12lloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -816,7 +804,7 @@ q12lloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q12lloop	; next plane
@@ -837,6 +825,7 @@ qcbl1:
 		DEC	BX
 		JG	qcbl1
 qcbl7:
+		MOV	DX, 03CEH
 		MOV	AH, rightmask[EBP]
 		MOV	AL, 8
 		OUT	DX, AX	; set right dest bitmask
@@ -845,6 +834,7 @@ qcbl7:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q12rloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -855,7 +845,7 @@ q12rloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q12rloop	; next plane
@@ -875,6 +865,7 @@ qCB11:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q11lloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -885,7 +876,7 @@ q11lloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q11lloop	; next plane
@@ -906,6 +897,7 @@ qcbl6:
 		DEC	BX
 		JG	qcbl6
 qcbl3:
+		MOV	DX, 03CEH
 		MOV	AH, rightmask[EBP]
 		MOV	AL, 8
 		OUT	DX, AX	; set right dest bitmask
@@ -914,6 +906,7 @@ qcbl3:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q11rloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -924,7 +917,7 @@ q11rloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q11rloop	; next plane
@@ -944,6 +937,7 @@ qCB10:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q10rloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -954,7 +948,7 @@ q10rloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q10rloop	; next plane
@@ -975,6 +969,7 @@ qcbl10:
 		DEC	BX
 		JG	qcbl10
 qcbl12:
+		MOV	DX, 03CEH
 		MOV	AX, 0005	; writemode 0
 		OUT	DX, AX
 		MOV	AH, leftmask[EBP]
@@ -983,6 +978,7 @@ qcbl12:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q10lloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -993,7 +989,7 @@ q10lloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q10lloop	; next plane
@@ -1016,6 +1012,7 @@ qCB13:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q13rloop:
+		MOV	DX, 03CEH
 		MOV	AH, count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -1026,7 +1023,7 @@ q13rloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q13rloop	; next plane
@@ -1047,6 +1044,7 @@ qcbl13:
 		DEC	BX
 		JG	qcbl13
 qcbl14:
+		MOV	DX, 03CEH
 		MOV	AX, 0005	; writemode 0
 		OUT	DX, AX
 		MOV	AH, leftmask[EBP]
@@ -1055,6 +1053,7 @@ qcbl14:
 		MOV	count[EBP], 3
 		MOV	plane[EBP], 8
 q13lloop:
+		MOV	DX, 03CEH
 		MOV	AH, BYTE count[EBP]
 		MOV	AL, 4
 		OUT	DX, AX
@@ -1065,7 +1064,7 @@ q13lloop:
 		MOV	CL, [ESI]	; fetch source
 		MOV	AL, [EDI]	; latch at destiation
 		MOV	[EDI], CL	; set source
-		MOV	DX, 03CEH
+;		MOV	DX, 03CEH
 		SHR	plane[EBP], 1
 		DEC	count[EBP]
 		JGE	q13lloop	; next plane
@@ -1082,7 +1081,7 @@ resetgrafCB:
 		MOV	AX, 0FF08H	; default bitmask
 		OUT	DX, AX
 		MOV	AX, 0005	; default mode-reg
-		MOV	DX, AX
+		OUT	DX, AX
 		MOV	AX, 0003	; default Function-Select
 		OUT	DX, AX
 		MOV	AX, 0001	; default enable set/reset

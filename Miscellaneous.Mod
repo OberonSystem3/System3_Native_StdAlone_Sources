@@ -1,25 +1,15 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
+ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2.88*)
 
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2.88*)
-
-  IMPORT Display, FileDir, Files, Viewers, Fonts, Texts, TextFrames, Oberon, Centronics, V24, Modules, Strings;
+  IMPORT Display, Files, Viewers, Fonts, Texts, Oberon, Centronics, V24, Modules, Strings;
   
   CONST  TAB =  9X; CR = 0DX; LF = 0AX; BitmapId = 39X; 
         StandardMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
         xOn = 11X; xOff = 13X;
+  
+  TYPE FileName = ARRAY 32 OF CHAR;
   
   VAR W: Texts.Writer;
   		port: INTEGER;
@@ -32,71 +22,72 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 		Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = "^") THEN
-			text := NIL; time := 0; Oberon.GetSelection(text, beg, end, time);
-			IF (text = NIL) OR (time <= 0) THEN S.class := Texts.Inval; RETURN END;
+			text := NIL; time := -1; Oberon.GetSelection(text, beg, end, time);
+			IF (text = NIL) OR (time = -1) THEN S.class := Texts.Inval; RETURN END;
 			Texts.OpenScanner(S, text, beg); Texts.Scan(S)
 		END
 	END OpenScanner;
 
-  PROCEDURE Count (VAR name: ARRAY OF CHAR; VAR nofLines: LONGINT; T: Texts.Text;  what: CHAR);
-    VAR R: Texts.Reader; source: Texts.Text; i: LONGINT; ch: CHAR;
+	PROCEDURE Count(name: ARRAY OF CHAR; VAR nofLines: LONGINT; what: CHAR);
+		VAR T: Texts.Text; R: Texts.Reader; ch: CHAR;
   BEGIN
-    Texts.WriteString(W, name);
-    Texts.Append(T, W.buf);
-    NEW(source); Texts.Open(source, name);
-    Texts.WriteString(W," counting");
-    Texts.Append(T, W.buf);
-    Texts.OpenReader(R, source, 0);
-    nofLines := 0; i := 0;
-    WHILE i < source.len DO
-      Texts.Read(R, ch); INC(i);
-      IF ch = what THEN
-        LOOP
-          Texts.Read(R, ch); INC(i);
-          IF ch # what THEN EXIT END
-        END;
-        INC(nofLines)
-      END
-    END;
-    Texts.Write(W, " "); Texts.WriteInt(W, nofLines, 1);
-    Texts.WriteLn(W);
-    Texts.Append(T, W.buf)
+		Texts.WriteString(W, name); Texts.Write(W, Strings.Tab);
+		NEW(T); Texts.Open(T, name);
+		Texts.OpenReader(R, T, 0); Texts.Read(R, ch);
+		nofLines := 0;
+		WHILE ~R.eot DO
+			IF ch = what THEN INC(nofLines) END;
+			Texts.Read(R, ch)
+		END;
+		Texts.WriteInt(W, nofLines, 0); Texts.Write(W, " ");
+		IF what = Strings.CR THEN
+			Texts.WriteString(W, "CR")
+		ELSE
+			Texts.Write(W, what)
+		END;
+		Texts.WriteLn(W)
   END Count;
  
- (** Count the number of lines in the specified texts.  With \s switch count semicolons. *)
-   PROCEDURE CountLines*;	(** non-portable *)
-    VAR par: Oberon.ParList;
-      S: Texts.Scanner;
-      T: Texts.Text;
-      nofLines, totalLines, beg, end, time: LONGINT;
-      what: CHAR;
-  BEGIN
-    totalLines := 0; what := CR;
-    par := Oberon.Par;
-    Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
-    IF (S.class = Texts.Char) & (S.c = Oberon.OptionChar) THEN
-    	IF S.nextCh = "s" THEN what := ";" END;
-    	Texts.Scan(S); Texts.Scan(S)
-    END;
-    T := TextFrames.Text("");
-    IF what = CR THEN Oberon.OpenText("Lines", T, 380, 300)
-    ELSE Oberon.OpenText("Semicolons", T, 380, 300)
-	END;
-    WHILE S.class = Texts.Name DO
-      Count(S.s, nofLines, T, what); totalLines := totalLines + nofLines; Texts.Scan(S)
-    END;
-    IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(T, beg, end, time);
-      IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
-        IF S.class = Texts.Name THEN
-          Count(S.s, nofLines, T, what); totalLines := totalLines + nofLines
-        END
-      END
-    END;
-    Texts.WriteInt(W, totalLines, 1);
-    Texts.WriteLn(W);
-    Texts.Append(T, W.buf)
-  END CountLines;
-	
+	(** Count the number of lines in the specified texts. With \s switch count semicolons. *)
+	PROCEDURE CountLines*;	(** non-portable *)
+		VAR
+			S: Texts.Scanner; T: Texts.Text;
+			nofLines, totalLines, beg, end, time: LONGINT;
+			what: CHAR;
+	BEGIN
+		totalLines := 0; what := Strings.CR;
+		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
+		IF (S.class = Texts.Char) & (S.c = Oberon.OptionChar) THEN
+			IF S.nextCh = "s" THEN what := ";" END;
+			Texts.Scan(S); Texts.Scan(S)
+		END;
+		IF (S.class = Texts.Char) & (S.c = "^") THEN
+			T := NIL; time := -1;
+			Oberon.GetSelection(T, beg, end, time);
+			IF (T # NIL) & (time # -1) THEN
+				Texts.OpenScanner(S, T, beg); Texts.Scan(S)
+			ELSE
+				S.class := Texts.Inval
+			END
+		ELSE
+			end := Oberon.Par.text.len
+		END;
+		IF S.class IN {Texts.Name, Texts.String} THEN
+			WHILE (S.class IN {Texts.Name, Texts.String}) & ((Texts.Pos(S)-S.len) <= end) DO
+				Count(S.s, nofLines, what); totalLines := totalLines + nofLines; Texts.Scan(S)
+			END;
+			NEW(T); Texts.Open(T, "");
+			IF what = Strings.CR THEN
+				Oberon.OpenText("Lines", T, 380, 300)
+			ELSE
+				Oberon.OpenText("Semicolons", T, 380, 300)
+			END;
+			Texts.WriteLn(W); Texts.WriteString(W, "Total");
+			Texts.Write(W, Strings.Tab); Texts.WriteInt(W, totalLines, 1);
+			Texts.WriteLn(W); Texts.Append(T, W.buf)
+		END
+	END CountLines;
+
 	PROCEDURE GetSize (VAR name: ARRAY OF CHAR; VAR varSize: LONGINT;
 		VAR constSize: LONGINT; VAR codeSize: LONGINT; T: Texts.Text);
 		VAR f: Files.File; R: Files.Rider; x: INTEGER; ch1, ch2: CHAR;  size: LONGINT;
@@ -107,7 +98,7 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
 		IF f # NIL THEN
 			Files.Set(R, f, 0);
 			Files.Read(R, ch1);  Files.Read(R, ch2);
-			IF (ch1 = 0BBX) & (ch2 = 0AFX) THEN
+			IF  (ch1 = 0BBX) & ((ch2 = 0AFX) OR (ch2= 0B0X)) THEN
 				Files.ReadNum(R, size);
 				Files.Set(R, f, Files.Pos(R)+size + 18);	(* skip symbol file & first header fields *)
 				Files.ReadLInt(R, varSize);
@@ -133,7 +124,7 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
       varSize, totalConstSize, totalVarSize, totalCodeSize: LONGINT;
       beg, end, time: LONGINT;
   BEGIN
-    T := TextFrames.Text("");
+    NEW(T); Texts.Open(T, "");
     Oberon.OpenText("ObjSize", T, 380, 300);
     totalVarSize := 0; totalConstSize := 0; totalCodeSize := 0;
     par := Oberon.Par;
@@ -146,7 +137,7 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
       Texts.Scan(S)
     END;
     IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(T, beg, end, time);
-      IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
+      IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S);
         IF S.class = Texts.Name THEN
           GetSize(S.s, varSize, constSize, codeSize, T);
           totalVarSize := totalVarSize + varSize;
@@ -325,8 +316,12 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
 			COPY(S.s, Port); Texts.Scan(S);
 			WHILE (S.class = Texts.Name) OR (S.class = Texts.String) DO
 				COPY(S.s, fname); Texts.WriteString(W, fname); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
-				IF (Port = "COM1") OR (Port = "COM2") THEN
-					IF Port = "COM1" THEN port := 0 ELSE port := 1 END;
+				IF (Port = "COM1") OR (Port = "COM2") OR (Port = "COM3") OR (Port = "COM4") THEN
+					IF Port = "COM1" THEN port := 0
+					ELSIF Port = "COM2" THEN port := 1
+					ELSIF Port = "COM3" THEN port := 2
+					ELSE port := 3
+					END;
 					V24.Start(port, 9600, 8, V24.ParNo, 1, res);  ASSERT(res = 0);
 					f := Files.Old(fname);
 					IF f # NIL THEN 
@@ -361,25 +356,32 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
 	END PrintFiles;
 
   PROCEDURE ExtName (i: INTEGER; VAR org, new: ARRAY OF CHAR);
-    VAR j: INTEGER;
+    VAR j: INTEGER; strnum: ARRAY 10 OF CHAR; ch : CHAR;
   BEGIN j := 0;
     WHILE org[j] # 0X DO new[j] := org[j]; INC(j) END;
-    new[j] := CHR(ORD("0") + i); INC(j); new[j] := 0X
+    Strings.IntToStr(i,strnum);
+    i := 0;
+    REPEAT
+      ch := strnum[i];
+      new[j] := ch;
+      INC(i); INC(j);
+    UNTIL ch = 0X;
   END ExtName;
 
-(** Copy the specified file "File" into subfiles named "File0", "File1" etc., maximally 700k each *)
+(** Copy the specified file "File" into subfiles named "File0", "File1" etc., maximally 700KB (or size specified as first parameter) each *)
   PROCEDURE SplitFile*;
-    VAR S: Texts.Scanner; f, g: Files.File; Rf, Rg: Files.Rider; i: INTEGER; n: LONGINT; ch: CHAR;
+    VAR S: Texts.Scanner; f, g: Files.File; Rf, Rg: Files.Rider; i: INTEGER; n, m: LONGINT; ch: CHAR;
       name: ARRAY 32 OF CHAR;
   BEGIN
     OpenScanner(S);
+    IF S.class = Texts.Int THEN m := S.i*1024; Texts.Scan(S) ELSE m := 700*1024 END;
     IF S.class = Texts.Name THEN f := Files.Old(S.s);
       IF f # NIL THEN Files.Set(Rf, f, 0); i := 0; n := 0; Files.Read(Rf, ch); 
         WHILE ~Rf.eof DO
           ExtName(i, S.s, name); Texts.WriteString(W, name); Texts.Write(W, " ");
           Texts.Append(Oberon.Log, W.buf);
           g := Files.New(name); Files.Set(Rg, g, 0);
-          REPEAT Files.Write(Rg, ch); INC(n); Files.Read(Rf, ch) UNTIL Rf.eof OR (n MOD (700*1024) = 0);
+          REPEAT Files.Write(Rg, ch); INC(n); Files.Read(Rf, ch) UNTIL Rf.eof OR (n MOD m = 0);
           Files.Register(g); Files.Close(g); INC(i)
         END;
         Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
@@ -403,112 +405,114 @@ MODULE Miscellaneous;	(** portable, except where noted *) (*JG 20.5.94 / NW 22.2
     END
   END JoinFiles;
 
-	(** Usage: Miscellaneous.ShowMod <modname>
-		Show the source code for module <modname>. *)
-	PROCEDURE ShowMod*;
-		VAR
-			S: Texts.Scanner;
-			T: Texts.Text;
-			file, name, prefixes, prefix: FileDir.FileName;
-			i, j: LONGINT;
-		PROCEDURE Try();
-		BEGIN
-			COPY(prefix, file); Strings.Append(file, name);
-			NEW(T); Texts.Open(T, file);
-			IF T.len = 0 THEN
-				T := NIL
-			END
-		END Try;
+(** Usage: Miscellaneous.ShowMod <modname>
+	Show the source code for module <modname>. *)
+PROCEDURE ShowMod*;
+	VAR
+		S: Texts.Scanner;
+		T: Texts.Text;
+		file, name, prefixes, prefix: FileName;
+		i, j: LONGINT;
+	PROCEDURE Try();
 	BEGIN
-		OpenScanner(S);
+		COPY(prefix, file); Strings.Append(file, name);
+		NEW(T); Texts.Open(T, file);
+		IF T.len = 0 THEN
+			T := NIL
+		END
+	END Try;
+BEGIN
+	OpenScanner(S);
+	IF S.class IN {Texts.Name, Texts.String} THEN
+		i := 0;
+		WHILE (S.s[i] # 0X) & (S.s[i] # ".") DO
+			INC(i)
+		END;
+		S.s[i] := 0X; Strings.Append(S.s, ".Mod");
+		COPY(S.s, name);
+		Oberon.OpenScanner(S, "System.FilePrefixes");
 		IF S.class IN {Texts.Name, Texts.String} THEN
-			i := 0;
-			WHILE (S.s[i] # 0X) & (S.s[i] # ".") DO
-				INC(i)
-			END;
-			S.s[i] := 0X; Strings.Append(S.s, ".Mod");
-			COPY(S.s, name);
-			Oberon.OpenScanner(S, "System.FilePrefixes");
-			IF S.class IN {Texts.Name, Texts.String} THEN
-				COPY(S.s, prefixes)
-			ELSE
-				prefixes := ""
-			END;
-			i := 0; j := 0; T := NIL;
-			WHILE (T = NIL) & (prefixes[i] # 0X) DO
-				IF prefixes[i] = ";" THEN
-					prefix[j] := "."; prefix[j+1] := 0X; j := 0;
-					Try()
-				ELSE
-					prefix[j] := prefixes[i]; INC(j)
-				END;
-				INC(i)
-			END;
-			IF T = NIL THEN
-				prefix[j] := "."; prefix[j+1] := 0X; Try();
-				IF T = NIL THEN
-					prefix := ""; Try()
-				END
-			END;
-			IF T # NIL THEN
-				Oberon.OpenText(file, T, 512, 512)
-			ELSE
-				Texts.WriteString(W, name); Texts.WriteString(W, " not found");
-				Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-			END
-		END
-	END ShowMod;
-
-(*
-	(* Execute commands contained in the text. Each command must be on a separate line. *)
-	PROCEDURE do(T: Texts.Text; beg, end: LONGINT);
-	VAR S: Texts.Scanner; pos: LONGINT; res: INTEGER;
-		
-		PROCEDURE NextLine(text: Texts.Text; pos: LONGINT): LONGINT;
-			VAR tR: Texts.Reader;	ch: CHAR;
-		BEGIN
-			IF pos < text.len THEN 
-				Texts.OpenReader(tR, text, pos); Texts.Read(tR, ch);
-				WHILE ~ tR.eot & (ch # CR) DO Texts.Read(tR, ch) END;
-				IF tR.eot THEN RETURN -1 ELSE RETURN Texts.Pos(tR)  END
-			ELSE RETURN -1
-			END
-		END NextLine;
-	
-	BEGIN
-		pos := beg;
-		Texts.OpenScanner(S, T, pos); Texts.Scan(S);
-		WHILE (S.class = Texts.Name) & (pos < end) DO
-			pos := Texts.Pos(S) - 1; 
-			Oberon.Par.text := T; Oberon.Par.pos := pos;
-			Oberon.Call(S.s, Oberon.Par, FALSE, res);
-			pos := NextLine(T, pos);
-			IF pos > 0 THEN Texts.OpenScanner(S, T, pos); Texts.Scan(S)
-			ELSE S.class := Texts.Inval
-			END
-		END
-	END do;
-	
-(** Miscellaneous.Do ( "^" | cmd { cmd } "~" )
-		Execute the commands. Each command must be written on a separate line. *)
-	PROCEDURE Do*;
-		VAR
-			S: Texts.Scanner; T: Texts.Text;
-			beg, end, time: LONGINT;
-	BEGIN
-		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
-		Texts.Scan(S);
-		IF (S.class = Texts.Char) & (S.c = "^") THEN
-			T := NIL; time := -1; Oberon.GetSelection(T, beg, end, time);
+			COPY(S.s, prefixes)
 		ELSE
-			T := Oberon.Par.text; beg := Oberon.Par.pos; end := T.len
+			prefixes := ""
+		END;
+		i := 0; j := 0; T := NIL;
+		WHILE (T = NIL) & (prefixes[i] # 0X) DO
+			IF prefixes[i] = ";" THEN
+				prefix[j] := "."; prefix[j+1] := 0X; j := 0;
+				Try()
+			ELSE
+				prefix[j] := prefixes[i]; INC(j)
+			END;
+			INC(i)
+		END;
+		IF T = NIL THEN
+			prefix[j] := "."; prefix[j+1] := 0X; Try();
+			IF T = NIL THEN
+				prefix := ""; Try()
+			END
 		END;
 		IF T # NIL THEN
-			do(T, beg, end)
+			Oberon.OpenText(file, T, 512, 512)
+		ELSE
+			Texts.WriteString(W, name); Texts.WriteString(W, " not found");
+			Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 		END
-	END Do;
-*)
+	END
+END ShowMod;
 
-BEGIN Texts.OpenWriter(W)
+PROCEDURE EqualFiles(f1, f2: Files.File): BOOLEAN;
+CONST BufSize = 16384;
+VAR r1, r2: Files.Rider; i, len: LONGINT; buf1, buf2: ARRAY BufSize OF CHAR;
+BEGIN
+	IF Files.Length(f1) = Files.Length(f2) THEN
+		Files.Set(r1, f1, 0); Files.Set(r2, f2, 0);
+		LOOP
+			Files.ReadBytes(r1, buf1, BufSize);
+			Files.ReadBytes(r2, buf2, BufSize);
+			len := BufSize-r1.res;
+			i := 0; WHILE (i # len) & (buf1[i] = buf2[i]) DO INC(i) END;
+			IF (i # len) OR (r1.res # r2.res) THEN RETURN FALSE END;
+			IF len = 0 THEN RETURN TRUE END
+		END
+	ELSE
+		RETURN FALSE
+	END
+END EqualFiles;
+
+(** Compare files byte-by-byte. *)
+
+PROCEDURE CompareFiles*;	(** { file1 => file2 } ~ *)
+VAR f1, f2: Files.File; s: Texts.Scanner;
+BEGIN
+	OpenScanner(s);
+	WHILE s.class IN {Texts.Name, Texts.String} DO
+		Texts.WriteString(W, s.s);
+		f1 := Files.Old(s.s);
+		Texts.Scan(s);
+		IF f1 # NIL THEN
+			IF s.class IN {Texts.Name, Texts.String} THEN
+				Texts.Write(W, " "); Texts.WriteString(W, s.s);
+				f2 := Files.Old(s.s);
+				Texts.Scan(s);
+				IF f2 # NIL THEN
+					IF EqualFiles(f1, f2) THEN Texts.WriteString(W, " ok")
+					ELSE Texts.WriteString(W, " mismatch")
+					END
+				ELSE
+					Texts.WriteString(W, " not found")
+				END
+			ELSE
+				Texts.WriteString(W, " parameter expected"); s.class := Texts.Inval
+			END
+		ELSE
+			Texts.WriteString(W, " not found"); Texts.Scan(s)
+		END;
+		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+	END
+END CompareFiles;
+
+BEGIN
+	Texts.OpenWriter(W)
 END Miscellaneous.
 

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 
@@ -38,7 +26,7 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 	IMPORT Display, Fonts, Input, Oberon, Texts, Modules;
 	
 	CONST
-		ML = 2;	MM = 1;	MR = 0;
+		ML = 2; MR = 0;
 		CR = 0DX;
 		MaxCount = 1000;
 	
@@ -47,7 +35,7 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 			name: ARRAY 32 OF CHAR;
 			text: Texts.Text;
 			cmd: INTEGER;
-			count: LONGINT;
+			count: LONGINT
 		END;
 	
 	VAR
@@ -55,6 +43,7 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 		R: Texts.Reader;
 		ch: CHAR;
 		W: Texts.Writer;
+		buf: POINTER TO ARRAY OF CHAR;
 
 	PROCEDURE GetChar(F: Fonts.Font; ch: CHAR; VAR dx, x, y, w, h: INTEGER; VAR pat: LONGINT);
 	BEGIN
@@ -66,23 +55,34 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 	END FontOf;
 	
 	PROCEDURE CopyArea(x, y, w, h: INTEGER; save: BOOLEAN);
-		VAR cx, cy, cw, ch, x0, h0: INTEGER;
+		VAR cx, cy, cw, ch, x0, h0: INTEGER; size, pix: LONGINT;
 	BEGIN
-		Display.GetClip(cx, cy, cw, ch);
-		x0 := (x DIV Display.Width)*Display.Width;
-		h0 := Display.Bottom - Display.UBottom;
-		IF h0 > Display.Height THEN DEC(h0, Display.Height) END;
-		IF cy > -h0 THEN Display.SetClip(cx, -h0, cw, Display.Height+h0) END;	(* expand clipping *)
-		WHILE h0 < h DO
-			IF save THEN Display.CopyBlock(x, y, w, h0, x0, -h0, Display.replace)
-			ELSE Display.CopyBlock(x0, -h0, w, h0, x, y, Display.replace)
+		pix := Display.TransferFormat(0) DIV 8;
+		IF pix = 0 THEN	(* TransferBlock not available, use offscreen CopyBlock *)
+			Display.GetClip(cx, cy, cw, ch);
+			x0 := (x DIV Display.Width)*Display.Width;
+			h0 := Display.Bottom - Display.UBottom;
+			IF h0 > Display.Height THEN DEC(h0, Display.Height) END;
+			IF cy > -h0 THEN Display.SetClip(cx, -h0, cw, Display.Height+h0) END;	(* expand clipping *)
+			WHILE h0 < h DO
+				IF save THEN Display.CopyBlock(x, y, w, h0, x0, -h0, Display.replace)
+				ELSE Display.CopyBlock(x0, -h0, w, h0, x, y, Display.replace)
+				END;
+				INC(x0, w); INC(y, h0); DEC(h, h0)
 			END;
-			INC(x0, w); INC(y, h0); DEC(h, h0)
-		END;
-		IF save THEN Display.CopyBlock(x, y, w, h, x0, -h, Display.replace)
-		ELSE Display.CopyBlock(x0, -h, w, h, x, y, Display.replace)
-		END;
-		Display.SetClip(cx, cy, cw, ch)
+			IF save THEN Display.CopyBlock(x, y, w, h, x0, -h, Display.replace)
+			ELSE Display.CopyBlock(x0, -h, w, h, x, y, Display.replace)
+			END;
+			Display.SetClip(cx, cy, cw, ch)
+		ELSE
+			IF save THEN
+				size := LONG(w)*h*pix+4;
+				IF (buf = NIL) OR (size > LEN(buf^)) THEN NEW(buf, size) END;
+				Display.TransferBlock(buf^, 0, w*pix, x, y, w, h, Display.get)
+			ELSE
+				Display.TransferBlock(buf^, 0, w*pix, x, y, w, h, Display.set)
+			END
+		END
 	END CopyArea;
 
 	PROCEDURE MainFrame(ch: CHAR): BOOLEAN;
@@ -159,7 +159,7 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 		ELSIF y + dy < 0 THEN y := 0
 		ELSE INC(y, dy)
 		END;
-		IF x >= Display.ColLeft THEN off := Display.ColLeft; DEC(x, Display.ColLeft) ELSE off := 0 END;
+		off := 0;
 		IF x+dx+w > Display.Width THEN x := Display.Width - w
 		ELSIF x+dx < 0 THEN x := 0
 		ELSE INC(x, dx)
@@ -168,7 +168,7 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 	END AdjustCoords;
 
 	PROCEDURE Show(T: Texts.Text; x, y: INTEGER; VAR cmd: INTEGER; VAR cancel: BOOLEAN);
-		VAR i: LONGINT;	keys: SET;	mx, my, W, H, w, h, newCmd, entryH: INTEGER;
+		VAR keys: SET;	mx, my, W, H, w, h, newCmd, entryH: INTEGER;
 	BEGIN
 		Texts.OpenReader(R, T, 0); Texts.Read(R, ch);
 		IF ~R.eot THEN Area(FontOf(R), entryH, w, h);
@@ -209,8 +209,8 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 	END Show;
 
 	PROCEDURE CmdMenu*(menu: Texts.Text; x, y: INTEGER; VAR cmd: INTEGER);
-		VAR cmdStr: ARRAY 32 OF CHAR;	s: ARRAY 256 OF CHAR;
-			res, i, c, k: INTEGER;	mainF, cancel: BOOLEAN;
+		VAR cmdStr: ARRAY 32 OF CHAR;
+			res, i, c: INTEGER;	mainF, cancel: BOOLEAN;
 	BEGIN
 		Show(menu, x, y, cmd, cancel);
 		Texts.OpenReader(R, menu, 0);
@@ -228,7 +228,6 @@ MODULE Menu;	(** portable *)	(* rs/uh, Wed, 7-Jul-1993 *)
 			END;
 			cmdStr[i] := 0X;
 			(* no frame, no viewer *)
-			(* Oberon.Par.vwr := Viewers.This(x, y); Oberon.Par.frame := Oberon.Par.vwr.dsc; *)
 			IF mainF THEN Oberon.Par.frame := Oberon.Par.vwr.dsc.next END;
 			Oberon.Par.text := menu; Oberon.Par.pos := Texts.Pos(R)-1;
 			Oberon.Call(cmdStr, Oberon.Par, FALSE, res);	(*no free*)

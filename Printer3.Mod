@@ -1,22 +1,9 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
+MODULE Printer3; (** portable *)	(** jm 18.1.95 *)
 
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Printer3;	(** portable *) (** jm 18.1.95 *)
-
-(** Module Printer3 implements clipped printing through display masks. It has a twin module Display3 for displaying graphics.
-*)
+ (** Module Printer3 implements clipped printing through display masks. It has a twin module Display3 for displaying graphics. *)
 
 (* kr 14. 4. 93 printer patterns 
 	kr Tue, 24-Aug-1993 Printer.String fixed 
@@ -27,11 +14,12 @@ MODULE Printer3;	(** portable *) (** jm 18.1.95 *)
 	8.12.94 - removed NewPattern, CopyPattern
 *)
 
-IMPORT Display3, Objects, Display,  Printer, Fonts, Pictures;
+IMPORT Display3, Objects, Display, Printer, Fonts, Pictures;
 
 CONST
-	replConst = 0;  replPattern = 2;  line = 3;
+	replConst = 0; replPattern = 2; line = 3;
 	
+	SizeHack = FALSE;	(* jsedlacek - not needed after fix in TextFields? *)
 
 VAR 
 	Pattern*: ARRAY 9 OF Display.Pattern;		(** Display patterns that correspond to the printer patterns. *)
@@ -41,9 +29,6 @@ VAR
 	(* tmp vars for printing pictures *)
 	tmpP: Pictures.Picture;
 	tX, tY, tW, tH: INTEGER;
-
-VAR
-	lastfont: Fonts.Font; lastlib: Fonts.Font; (* for font lookup *)
 
 (* ========= Brush related ========= *)
 
@@ -66,7 +51,7 @@ VAR
 
 (* not portable
 	PROCEDURE NewPattern*(pat: Display.Pattern): Display.Pattern;
-		VAR x, y, b, l, r, t, w, h, i, W, H : INTEGER; s : SET; d : ARRAY 256, 4 OF SET;  p, s0 : LONGINT;  D, P : LONGINT; 
+		VAR x, y, b, l, r, t, w, h, i, W, H : INTEGER; s : SET; d : ARRAY 256, 4 OF SET; p, s0 : LONGINT; D, P : LONGINT; 
 			k : SHORTINT;
 			ptr : POINTER TO RECORD END;
 	BEGIN
@@ -83,7 +68,7 @@ VAR
 		y := 0; 
 		WHILE y < h DO x := 0;
 			SYSTEM.GET(p,s);
-			WHILE x < w  DO
+			WHILE x < w DO
 				IF x IN s THEN 
 					l := SHORT(x * D DIV P); r := SHORT((x +1) * D DIV P);
 					b := SHORT(y * D DIV P); t := SHORT((y +1) * D DIV P);
@@ -159,7 +144,7 @@ VAR
 			ELSIF bottom IN c THEN
 				x := SHORT(x0 + dx * (Y-y0) DIV dy); y := Y; 
 			ELSIF top IN c THEN
-				x := SHORT(x0 + dx * (T-y0) DIV  dy); y := T; 
+				x := SHORT(x0 + dx * (T-y0) DIV dy); y := T; 
 			END;
 			c := Code(x,y); 
 		END Clip;
@@ -169,10 +154,10 @@ VAR
 		c1 := Code(x1, y1); c2 := Code(x2, y2);
 		dy := y2-y1; dx := x2 - x1; 
 		x0 := x1; y0 := y1;
-		WHILE  (c1+c2 # {})  & (c1*c2={})  DO
-			IF c1 = {} THEN  Clip(x2 ,y2, c2) ELSE Clip(x1, y1, c1) END;
+		WHILE (c1+c2 # {}) & (c1*c2={}) DO
+			IF c1 = {} THEN Clip(x2 ,y2, c2) ELSE Clip(x1, y1, c1) END
 		END;
-		RETURN c1*c2={}
+		RETURN c1*c2 = {}
 	END IntersectLine;
 
 	PROCEDURE PPat(pat: Display.Pattern): INTEGER;
@@ -183,9 +168,9 @@ VAR
 			IF pat = Pattern[i] THEN RETURN i END;
 			INC(i);
 		END;
-		IF pat = Display.grey0 THEN  RETURN  4
-		ELSIF pat = Display.grey1 THEN RETURN  4
-		ELSIF pat = Display.grey2 THEN  RETURN 4
+		IF pat = Display.grey0 THEN RETURN 4
+		ELSIF pat = Display.grey1 THEN RETURN 4
+		ELSIF pat = Display.grey2 THEN RETURN 4
 		ELSIF pat = Display.solid THEN RETURN 5	
 		ELSE RETURN 5 
 		END
@@ -202,7 +187,7 @@ VAR
 	VAR u, v, u1, v1: INTEGER;
 	BEGIN
 		CASE class OF
-			   replConst: Printer.ReplConst(X, Y, W, H);
+			 replConst: Printer.ReplConst(X, Y, W, H);
 			| replPattern: Printer.ReplPattern(X, Y, W, H, pattern);	
 			| line: u := ex; v := ey; u1 := ex1; v1 := ey1; 
 				IF IntersectLine (u, v, u1, v1, X, Y, W, H) THEN Printer.Line(u, v, u1, v1); Printer.ReplConst(u1, v1, 1, 1) END
@@ -225,7 +210,7 @@ VAR
 	PROCEDURE Dot*(M: Display3.Mask; col: Display.Color; X, Y, mode: INTEGER);
 	BEGIN 
 		UseCol(col);
-		IF  M = NIL THEN Printer.ReplConst(X, Y,1,1)
+		IF M = NIL THEN Printer.ReplConst(X, Y,1,1)
 		ELSIF Display3.Visible(M, X, Y, 1, 1) THEN Printer.ReplConst(X, Y, 1, 1)
 		END;
 		UseCol(Display3.black)
@@ -259,10 +244,10 @@ VAR
 		ReplConst(M, col, X, Y, width, H, mode);
 		ReplConst(M, col, X + W - width, Y, width, H, mode);
 		ReplConst(M, col, X + width, Y, W - 2 * width, width, mode);
-		ReplConst(M, col,  X + width, Y + H - width, W - 2 * width, width, mode)
+		ReplConst(M, col, X + width, Y + H - width, W - 2 * width, width, mode)
 	END Rect;
 	
-(** Print a rectangle outline X, Y, W, H  of width width in 3D effect using top shadow  topcol and bottom shadow botcol. *)
+(** Print a rectangle outline X, Y, W, H of width width in 3D effect using top shadow topcol and bottom shadow botcol. *)
 	PROCEDURE Rect3D*(M: Display3.Mask; topcol, botcol: Display.Color; X, Y, W, H, width, mode: INTEGER);
 	BEGIN
 		width := Min(width, Min(H DIV 2, W DIV 2));
@@ -275,7 +260,7 @@ VAR
 		END
 	END Rect3D;
 	
-(** Print a filled rectangle X, Y, W, H  of width width in 3D effect using top shadow  topcol and bottom shadow botcol. The "inside" color is incol. *)
+(** Print a filled rectangle X, Y, W, H of width width in 3D effect using top shadow topcol and bottom shadow botcol. The "inside" color is incol. *)
 	PROCEDURE FilledRect3D*(M: Display3.Mask; topcol, botcol, incol: Display.Color; X, Y, W, H, width, mode: INTEGER);
 	BEGIN
 		width := Min(width, Min(H DIV 2, W DIV 2));
@@ -355,9 +340,9 @@ BEGIN b.bufh := 0;
 	IF r < 0 THEN r := 1 END;
 	x := r; y := 0; d := 2 * r; dx := 4 * r; dy := 0;
 	Set(x, y);
-    WHILE y # r DO
+	WHILE y # r DO
 		WHILE d <= 1 DO DEC(x); DEC(dx, 4); INC(d, dx) END;
-		INC(y); Set(x, y); INC(dy, 4); DEC(d, dy);
+		INC(y); Set(x, y); INC(dy, 4); DEC(d, dy)
 	END;
 	b.brushr := r; INC(b.bufh)
 END InitBrush;
@@ -401,7 +386,7 @@ BEGIN
 		ELSIF M # NIL THEN
 			UseCol(col);
 			ex := X; ey := Y; ex1 := X1; ey1 := Y1; class := line;
-			Display3.EnumRect(M, Min(X, X1), Min(Y, Y1), ABS(X - X1),  ABS(Y - Y1), Enum);
+			Display3.EnumRect(M, Min(X, X1), Min(Y, Y1), ABS(X - X1), ABS(Y - Y1), Enum);
 			UseCol(Display3.black)
 		ELSE
 			UseCol(col);
@@ -455,7 +440,7 @@ PROCEDURE FilledPoly(M: Display3.Mask; col: Display.Color; pat: Display.Pattern;
 		x := x1; y := y1; dx := (x2 - x1) * 2; dy := (y2 - y1) * 2;
 		incx := 0;
 		IF dx < 0 THEN incx := -1; dx := -dx;
-		ELSIF dx  >0 THEN incx := 1
+		ELSIF dx > 0 THEN incx := 1
 		END;
 		incy := 0;
 		IF dy < 0 THEN incy := -1; dy := -dy ELSIF dy > 0 THEN incy := 1 END;
@@ -556,7 +541,7 @@ BEGIN
 			END
 		END
 	ELSIF width > 1 THEN
-		x :=  X + r; y := Y;
+		x := X + r; y := Y;
 		InitBrush(brush, M, pat, col, width, mode); BrushJump(brush, x, y);
 		
 		d := 2* r; dx := 4* r; dy := 0;
@@ -593,86 +578,91 @@ BEGIN
 	ELSE Ellipse(M, col, pat, X, Y, r, r, width, {}, mode)
 	END
 END Circle;
-	
+
+PROCEDURE PP(x: INTEGER): INTEGER;
+BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
+END PP;
+
 (* lookup the size of a character on the printer/does not use a font cache *)
-PROCEDURE Lookup(L: Fonts.Font; ch: CHAR; VAR minY, maxY, dx, y, h: INTEGER);
-VAR obj: Objects.Object; metric: Fonts.Font;
-	
-	PROCEDURE Dev(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(LONG(x) * Display.Unit DIV Printer.Unit)
-	END Dev;
-	
+PROCEDURE Lookup(font, metric: Fonts.Font; ch: CHAR; VAR minY, maxY, dx, y, h: INTEGER);
+VAR obj: Objects.Object;
 BEGIN
-	IF L = lastfont THEN metric := lastlib
-	ELSE
-		metric := Printer.GetMetric(L);
-		lastlib := metric; lastfont := L
-	END;
 	IF metric # NIL THEN
 		metric.GetObj(metric, ORD(ch), obj);
 		WITH obj: Fonts.Char DO
 			minY := metric.minY; maxY := metric.maxY; dx := obj.dx; y := obj.y; h := obj.h
 		END
-	ELSE (* scale display font *)
-		L.GetObj(L, ORD(ch), obj);
+	ELSE
+		font.GetObj(font, ORD(ch), obj);
 		WITH obj: Fonts.Char DO
-			minY := Dev(L.minY); maxY := Dev(L.maxY); dx := Dev(obj.dx); y := Dev(obj.y); h := Dev(obj.h)
+			minY := PP(font.minY); maxY := PP(font.maxY); dx := PP(obj.dx); y := PP(obj.y); h := PP(obj.h)
 		END
-	END;
+	END
 END Lookup;
 
 (** Returns the size of a string on the printer. Width is w, height is h, and the descender offset is dsr. *)
 PROCEDURE StringSize*(s: ARRAY OF CHAR; fnt: Fonts.Font; VAR w, h, dsr: INTEGER);
-VAR p, dx, d: INTEGER;
+VAR metric: Fonts.Font; p, dx, d: INTEGER;
 BEGIN
-	w := 0;
-	p := 0;
+	metric := Printer.GetMetric(fnt);
+	w := 0; p := 0;
 	WHILE s[p] # 0X DO
-		Lookup(fnt, s[p], d, d, dx, d, d);  INC(w, dx);
+		Lookup(fnt, metric, s[p], d, d, dx, d, d); INC(w, dx);
 		INC(p)
 	END;
-	IF lastlib = NIL THEN
-		dsr := ABS(SHORT(fnt.minY*Display.Unit DIV Printer.Unit));
-		h := SHORT(fnt.height*Display.Unit DIV Printer.Unit);
-	ELSE dsr := ABS(lastlib.minY); h := lastlib.height
+	IF metric # NIL THEN
+		dsr := ABS(metric.minY); h := metric.height
+	ELSE
+		dsr := PP(ABS(fnt.minY)); h := PP(fnt.height)
 	END
 END StringSize;
 
-PROCEDURE StringSize0(fnt: Fonts.Font; s: ARRAY OF CHAR; VAR x, y, w, h: INTEGER; VAR dx: ARRAY OF INTEGER);
+PROCEDURE StringSize0(font, metric: Fonts.Font; s: ARRAY OF CHAR; VAR x, y, w, h: INTEGER; VAR dx: ARRAY OF INTEGER);
 VAR i, minY, maxY, cdx, d: INTEGER; 
 BEGIN
-	w := 0; i := 0; x := 0;  
+	w := 0; i := 0; x := 0;
 	WHILE s[i] # 0X DO
-		Lookup(fnt, s[i], minY, maxY, cdx, d, d);
+		Lookup(font, metric, s[i], minY, maxY, cdx, d, d);
 		IF i < LEN(dx) THEN dx[i] := cdx END;
 		INC(w, cdx);
 		INC(i);
 	END;
-	IF lastlib = NIL THEN
-		y := SHORT(fnt.minY*Display.Unit DIV Printer.Unit); h := SHORT(fnt.height*Display.Unit DIV Printer.Unit);
+	IF metric # NIL THEN
+		y := metric.minY; h := metric.maxY + ABS(metric.minY) (* ??? *)
 	ELSE
-		y := lastlib.minY; h := lastlib.maxY + ABS(lastlib.minY)
-	END;
+		y := PP(font.minY); h := PP(font.height)
+	END
 END StringSize0;
 		
 (** Print string s using font fnt in color col at X, Y. *)
 	PROCEDURE String*(M: Display3.Mask; col: Display.Color; X, Y: INTEGER; fnt: Fonts.Font; s: ARRAY OF CHAR; mode: INTEGER);
-	VAR W, H, x, y, i: INTEGER; dX: ARRAY 256 OF  INTEGER; t: ARRAY 2 OF CHAR;
+	VAR metric: Fonts.Font; W, H, x, y, i, ofs: INTEGER; dX: ARRAY 256 OF INTEGER; t: ARRAY 2 OF CHAR;
 	BEGIN
-		StringSize0(fnt, s, x, y, W, H, dX);
+		metric := Printer.GetMetric(fnt);
+		StringSize0(fnt, metric, s, x, y, W, H, dX);
 
-		(* debug 
-		Printer.ReplConst(X + x, Y + y, W, 1); Printer.ReplConst(X + x, Y + y, 1, H);
-		*)
-		
+(* DEBUG
+UseCol(1);
+IF M # NIL THEN Display3.Enum(M, Printer.ReplConst) END;
+UseCol(15);
+Printer.ReplConst(X + x, Y + y, W, 1); Printer.ReplConst(X + x, Y + y, 1, H);
+*)
 		UseCol(col);
-
-		IF Display3.Visible(M, X + x, Y + y, W, H) THEN Printer.String(X, Y, s, fnt)
+		
+		IF SizeHack THEN
+			INC(x, 3); INC(y, 3); DEC(H, 4); DEC(W, 9);
+			ofs := 9
+		ELSE
+			ofs := 0
+		END;
+		
+		IF Display3.Visible(M, X + x, Y + y, W, H) THEN
+			Printer.String(X, Y, s, fnt)
 		ELSE 
 			i := 0; t[1] := 0X;
 			WHILE (s[i] # 0X) & (i < LEN(dX)) DO
 				t[0] := s[i]; 
-				IF Display3.Visible(M, X + x, Y + y, dX[i], H) THEN
+				IF Display3.Visible(M, X + x, Y + y, dX[i] - ofs, H) THEN
 					Printer.String(X, Y, t, fnt); 
 				END;
 				INC(X, dX[i]);
@@ -684,26 +674,27 @@ END StringSize0;
 
 (** Print string s centered in area X, Y, W, H using color col and font fnt. Line-breaks will be inserted if the string is too long. *)
 PROCEDURE CenterString*(M: Display3.Mask; col: Display.Color; X, Y, W, H: INTEGER; fnt: Fonts.Font; s: ARRAY OF CHAR; mode: INTEGER);
-VAR len, p, h, lspc, i, y: INTEGER; s0: ARRAY 48 OF CHAR; cdx, d, fheight, fminy: INTEGER;
+VAR metric: Fonts.Font; len, p, h, lspc, i, y: INTEGER; s0: ARRAY 48 OF CHAR; cdx, d, fheight, fminy: INTEGER;
 BEGIN
+	metric := Printer.GetMetric(fnt);
 	len := 0; p := 0;
 	WHILE (s[p] # 0X) DO
-		Lookup(fnt, s[p], d, d, cdx, d, d);
-		INC(p); INC(len, cdx);
+		Lookup(fnt, metric, s[p], d, d, cdx, d, d);
+		INC(p); INC(len, cdx)
 	END;
-	
-	IF lastlib = NIL THEN
-		fminy := SHORT(fnt.minY*Display.Unit DIV Printer.Unit); fheight := SHORT(fnt.height*Display.Unit DIV Printer.Unit);
+
+	IF metric # NIL THEN
+		fminy := metric.minY; fheight := metric.height
 	ELSE
-		fminy := lastlib.minY; fheight := lastlib.height
+		fminy := PP(fnt.minY); fheight := PP(fnt.height)
 	END;
 	
 	IF len < W - 4 THEN (* normal print *)
-		String(M, col, (W - len) DIV 2 + X, Y + H DIV 2 - fheight DIV 2 + ABS(fminy), fnt, s, mode);
+		String(M, col, (W - len) DIV 2 + X, Y + H DIV 2 - fheight DIV 2 + ABS(fminy), fnt, s, mode)
 	ELSE (* formatted print *)
 		p := 0; len := 0; h := 0; lspc := -1; 
 		WHILE s[p] # 0X DO
-			Lookup(fnt, s[p], d, d, cdx, d, d);
+			Lookup(fnt, metric, s[p], d, d, cdx, d, d);
 			IF len + cdx >= W THEN (* too long next line *)
 				IF s[p] = " " THEN lspc := -1; s[p] := 1X; INC(h, fheight); len := 0;
 				ELSIF lspc > 0 THEN (* space exists *) p := lspc; lspc := -1; s[p] := 1X; INC(h, fheight); len := 0;
@@ -719,7 +710,7 @@ BEGIN
 		(* print *)
 		p := 0; i := 0; len := 0; y := Y + H DIV 2 + h DIV 2 + ABS(fminy); 
 		WHILE s[p] # 0X DO
-			Lookup(fnt, s[p], d, d, cdx, d, d);
+			Lookup(fnt, metric, s[p], d, d, cdx, d, d);
 			IF s[p] = 1X THEN (* break *)
 				s0[i] := 0X; i := 0; DEC(y, fheight);
 				String(M, col, X + W DIV 2 - len DIV 2, y, fnt, s0, mode);
@@ -736,7 +727,7 @@ BEGIN
 	END;
 END CenterString;
 
-	PROCEDURE Print(px, py, pw, ph: INTEGER; (* picture *) X, Y, W, H: INTEGER(* printer *);  P: Pictures.Picture);
+	PROCEDURE Print(px, py, pw, ph: INTEGER; (* picture *) X, Y, W, H: INTEGER(* printer *); P: Pictures.Picture);
 	BEGIN
 		Printer.Picture(P, px, py, pw, ph, X, Y, W, H, Display.replace);
 	END Print;
@@ -748,7 +739,7 @@ BEGIN
 	
 	(* map printer pixels to picture pixels *)
 	px := SHORT(LONG(px) * tmpP.width DIV tW); py := SHORT(LONG(py) * tmpP.height DIV tH);
-	pw := SHORT(LONG(pw) * tmpP.width DIV tW); ph :=  SHORT(LONG(ph) * tmpP.height DIV tH);
+	pw := SHORT(LONG(pw) * tmpP.width DIV tW); ph := SHORT(LONG(ph) * tmpP.height DIV tH);
 	
 	(* expand/reduce the px, py, pw, ph of the picture to printer coords X, Y, W, H *)
 	Print(px, py, pw, ph, X, Y, W, H, tmpP);
@@ -769,10 +760,6 @@ END Pict;
 PROCEDURE ReplPict*(M: Display3.Mask; P: Pictures.Picture; px, py, X, Y, W, H, mode: INTEGER);
 VAR x, y, w, h, pw, ph, w0, x0: INTEGER;
 	a, b, c, d: INTEGER;
-
-	PROCEDURE PP(x: INTEGER): INTEGER;
-	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
-	END PP;
 	
 BEGIN
 	a := M.X; b := M.Y; c := M.W; d := M.H;
@@ -838,12 +825,10 @@ BEGIN drawingPolygon := FALSE;
 	InitPat
 END Printer3.
 
-(** Remarks:
+(** Remarks:
 
 1. Printer3 uses the same mask descriptors as Display3 but expects all coordinates to be specified in printer coordinates (often 300dpi). It has a similar interface as Display3, although some minor differences can be found. Although the formal arguments are approximately the same as those of Display3, some of them are ignored, notably "mode". Due to the very limited interface of the underlying Printer module, strings cannot be clipped correctly. This means that whole characters are clipped at a time. As Oberon has no true color model, the col parameters are indexes into the momentary displayed palette. This means that by changing the display palette, your documents will print in different colors. No special color mappings are attempted for monochrome printers. The latter has to be done by the client.
 
 2. Note that typical Oberon fonts differ non-linearly in size on the display and printer. You cannot multiply a display string size by a constant factor to obtain an approximation of the printer string size.
 
-3. Patterns passed to the print procedures are display patterns (for example Display.solid, Display.grey1, Pattern[x] etc). The Pattern array contains display patterns corresponding to the pattern numbers expected by the Printer module. That is, Pattern[2] is the display pattern that corresponds to pattern number 2 on the printer.
-
-*)
+3. Patterns passed to the print procedures are display patterns (for example Display.solid, Display.grey1, Pattern[x] etc). The Pattern array contains display patterns corresponding to the pattern numbers expected by the Printer module. That is, Pattern[2] is the display pattern that corresponds to pattern number 2 on the printer. *)

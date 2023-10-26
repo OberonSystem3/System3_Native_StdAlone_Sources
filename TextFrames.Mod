@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE TextFrames;	(** portable *) (* JG / pjm *)
 
@@ -25,7 +13,9 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
 	LogMenu = "System.Clear Edit.Locate Edit.Search Edit.Store";
 	OpenCmd = "Edit.Open";
 	
-	Modern = FALSE;
+	Modern = FALSE;	(* enable "modern" look *)
+	SmallDisplay = TRUE;	(* enable PDR's support for narrow displays *)
+	MoveArea = TRUE;	(* show "move" icon at top left, and use clipping for caret *)
 	
   TYPE
   	Line = POINTER TO LineDesc;
@@ -72,7 +62,9 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
     W, KW: Texts.Writer; (*keyboard writer*)
     box: Fonts.Char;
     BoxPat: ARRAY 12 OF SET;
-    
+    hintPos: LONGINT;
+    saved: Oberon.CaretMsg;
+
   PROCEDURE Min (i, j: INTEGER): INTEGER;
   BEGIN IF i >= j THEN RETURN j ELSE RETURN i END
   END Min;
@@ -162,12 +154,22 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
     F.mark := mark
   END Mark;
 
+  PROCEDURE DrawIcon(F: Frame);
+  BEGIN
+    Display.ReplConst(MarkColor, F.X+3, F.Y+F.H-9, 6, 6, replace);
+    IF Oberon.New THEN
+      Display.ReplConst(F.col, F.X+5, F.Y+F.H-7, 2, 2, replace)
+    END
+  END DrawIcon;
+  
   PROCEDURE Restore* (F: Frame);
     VAR R: Texts.Reader; L: Line; curY, botY: INTEGER;
   BEGIN (*F.mark = 0*)
     Display.ReplConst(F.col, F.X, F.Y, F.W, F.H, replace);
     IF F.left >= barW THEN
       Display.ReplConst(BarColor, F.X + barW - 1, F.Y, 1, F.H, replace)
+    ELSIF MoveArea THEN
+      DrawIcon(F)
     END;
     Validate(F.text, F.org);
     botY := F.Y + F.bot + dsr;
@@ -194,6 +196,8 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
     Display.ReplConst(F.col, F.X, newY, F.W, F.Y - newY, replace);
     IF F.left >= barW THEN
       Display.ReplConst(BarColor, F.X + barW - 1, newY, 1, F.Y - newY, replace)
+    ELSIF MoveArea THEN
+      DrawIcon(F)
     END;
     F.H := F.H + F.Y - newY; F.Y := newY;
     IF F.trailer.next = F.trailer THEN Validate(F.text, F.org) END;
@@ -361,18 +365,30 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   END Pos;
 
   PROCEDURE FlipCaret (F: Frame);
+  VAR ox, oy, ow, oh: INTEGER;
   BEGIN
-    IF (F.carloc.y >= 10) & (F.carloc.x + 12 < F.W) THEN
-      Display.CopyPattern(FullColor, Display.hook, F.X + F.carloc.x, F.Y + F.carloc.y - 10, invert)
+    IF MoveArea THEN
+      Display.GetClip(ox, oy, ow, oh);
+      Display.SetClip(F.X, F.Y, F.W, F.H);
+      Display.CopyPattern(FullColor, Display.hook, F.X + F.carloc.x, F.Y + F.carloc.y - 10, invert);
+      Display.SetClip(ox, oy, ow, oh)
+    ELSE
+      IF (F.carloc.y >= 10) & (F.carloc.x + 12 < F.W) THEN
+        Display.CopyPattern(FullColor, Display.hook, F.X + F.carloc.x, F.Y + F.carloc.y - 10, invert)
+      END
     END
   END FlipCaret;
+
+  PROCEDURE ^RemoveMarks (F: Frame);
 
   PROCEDURE SetCaret* (F: Frame; pos: LONGINT);
   BEGIN
     IF F.car # 0 THEN FlipCaret(F); F.car := 0 END;
     LocatePos(F, pos, F.carloc);
     IF F.carloc.pos = pos THEN FlipCaret(F); F.car := 1
-    ELSE Show(F, pos - 100); LocatePos(F, pos, F.carloc);
+    ELSE
+      RemoveMarks(F); Oberon.RemoveMarks(F.X, F.Y, F.W, F.H);
+      Show(F, pos - 100); LocatePos(F, pos, F.carloc);
       IF F.carloc.pos = pos THEN FlipCaret(F); F.car := 1 END
     END
   END SetCaret;
@@ -455,7 +471,7 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
         Input.KeyState(modKeys);
         IF Input.SHIFT IN modKeys THEN
           M.id := Oberon.get; M.F := NIL; M.sel := NIL; M.text := NIL; M.time := -1; Display.Broadcast(M);
-          IF (M.time > 0) & (M.text = F.text) & (M.sel IS Frame) THEN
+          IF (M.time # -1) & (M.text = F.text) & (M.sel IS Frame) THEN
             IF M.beg > F.selbeg.pos THEN M.beg := F.selbeg.pos END;
             IF M.end < F.selend.pos THEN M.end := F.selend.pos END;
             FlipSelection(F, F.selbeg, F.selend);
@@ -499,25 +515,25 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   PROCEDURE TrackWord* (F: Frame; X, Y: INTEGER; VAR pos: LONGINT; VAR keysum: SET);
     VAR old, new: Location; keys: SET;
   BEGIN
-        IF F.trailer.next # F.trailer THEN
-    	  LocateString(F, X - F.X, Y - F.Y, old);
+    IF F.trailer.next # F.trailer THEN
+	  LocateString(F, X - F.X, Y - F.Y, old);
+  	ReplConst(FullColor, F, F.X + old.x, F.Y + old.y - dsr, old.dx, 2, invert);
+      keysum := {};
+      REPEAT
+    	Input.Mouse(keys, X, Y);
+		keysum := keysum + keys;
+    	Oberon.DrawCursor(Oberon.Mouse, Oberon.Mouse.marker, X, Y);
+    	LocateString(F, X - F.X, Y - F.Y, new);
+    	IF new.pos # old.pos THEN
       	ReplConst(FullColor, F, F.X + old.x, F.Y + old.y - dsr, old.dx, 2, invert);
-          keysum := {};
-          REPEAT
-        	Input.Mouse(keys, X, Y);
-    		keysum := keysum + keys;
-        	Oberon.DrawCursor(Oberon.Mouse, Oberon.Mouse.marker, X, Y);
-        	LocateString(F, X - F.X, Y - F.Y, new);
-        	IF new.pos # old.pos THEN
-          	ReplConst(FullColor, F, F.X + old.x, F.Y + old.y - dsr, old.dx, 2, invert);
-          	ReplConst(FullColor, F, F.X + new.x, F.Y + new.y - dsr, new.dx, 2, invert);
-          	old := new
-        	END
-      	UNTIL keys = {};
       	ReplConst(FullColor, F, F.X + new.x, F.Y + new.y - dsr, new.dx, 2, invert);
-      	pos := new.pos
-        ELSE pos := -1
-        END
+      	old := new
+    	END
+  	UNTIL keys = {};
+  	ReplConst(FullColor, F, F.X + new.x, F.Y + new.y - dsr, new.dx, 2, invert);
+  	pos := new.pos; hintPos := new.org
+    ELSE pos := -1
+    END
   END TrackWord;
 
   (*------------------message handling------------------------*)
@@ -545,10 +561,36 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   END CallCmd;
 
   PROCEDURE Call* (F: Frame; pos: LONGINT; new: BOOLEAN);
-    VAR S: Texts.Scanner;
+    VAR S: Texts.Scanner; i, h: INTEGER; hint: ARRAY 32 OF CHAR;
   BEGIN
-    Texts.OpenScanner(S, F.text, pos); Texts.Scan(S);
-    IF (S.line = 0) & (S.class = Texts.Name) THEN CallCmd(S.s, F, pos + S.len, new) END
+    IF SmallDisplay THEN
+      Texts.OpenScanner(S, F.text, pos); Texts.Scan(S); h := 0;
+      IF ((S.class = Texts.Char) & (S.c = ".") OR (S.class = Texts.Name) & (S.s[0] = ".")) THEN
+        (*find hint*)
+        Texts.OpenScanner(S, F.text, hintPos);
+        REPEAT
+          Texts.Scan(S);
+          IF S.class = Texts.Name THEN
+            i := 0; WHILE (i < S.len) & (S.s[i] # ".") DO INC(i) END;
+            IF (0 < i) & (i < S.len) THEN
+              h := 0; REPEAT hint[h] := S.s[h]; INC(h) UNTIL h > i
+            END
+          END
+        UNTIL Texts.Pos(S) > pos;
+        IF (S.class = Texts.Char) & (S.c = ".") THEN Texts.Scan(S) END
+      END;
+      IF S.class = Texts.Name THEN
+        IF h > 1 THEN  (*use hint*)
+          i := S.len; IF S.s[0] = "." THEN DEC(h) END;
+          REPEAT S.s[i+h] := S.s[i]; DEC(i) UNTIL (i = -1) OR (S.s[i+1] = ".");
+          REPEAT DEC(h); S.s[h] := hint[h] UNTIL h = 0
+        END;
+        CallCmd(S.s, F, pos + S.len, new)
+      END
+    ELSE
+      Texts.OpenScanner(S, F.text, pos); Texts.Scan(S);
+      IF (S.line = 0) & (S.class = Texts.Name) THEN CallCmd(S.s, F, pos + S.len, new) END
+    END
   END Call;
 
   PROCEDURE Write* (F: Frame; ch: CHAR; lib: Objects.Library; col, voff: SHORTINT);
@@ -557,6 +599,14 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
       IF F.carloc.pos > F.org THEN
         Texts.Delete(F.text, F.carloc.pos - 1, F.carloc.pos);
         SetCaret(F, F.carloc.pos - 1)
+      END
+    ELSIF ch = 0C3X THEN (* right *)
+      IF F.carloc.pos < F.text.len THEN
+        RemoveCaret(F); SetCaret(F, F.carloc.pos + 1)
+      END
+    ELSIF ch = 0C4X THEN (* left *)
+      IF F.carloc.pos > 0 THEN
+        RemoveCaret(F); SetCaret(F, F.carloc.pos - 1)
       END
     ELSIF (ch >= 0C1X) & (ch <= 0C4X) THEN
     ELSIF (ch >= 0A0X) & (ch <= 0A9X) THEN
@@ -621,7 +671,7 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   PROCEDURE GetSelection* (F: Frame; VAR M: Oberon.SelectMsg);
   BEGIN
     IF F.sel > 0 THEN
-      IF F.time > M.time THEN M.sel := F; M.time := F.time;
+      IF (F.time - M.time > 0) OR (M.time = -1) THEN M.sel := F; M.time := F.time;
         M.text := F.text; M.beg := F.selbeg.pos; M.end := F.selend.pos;
         IF M.end > M.text.len THEN M.end := M.text.len END
 (*
@@ -765,6 +815,19 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
     END
   END Recall;
 
+  PROCEDURE SaveCaret;
+  BEGIN
+    saved.car := NIL; saved.text := NIL;
+    saved.id := Oberon.get; Display.Broadcast(saved)
+  END SaveCaret;
+  
+  PROCEDURE RestoreCaret;
+  BEGIN
+    IF (saved.car # NIL) & (saved.text # NIL) THEN
+      saved.id := Oberon.set; Display.Broadcast(saved)
+    END
+  END RestoreCaret;
+  
   PROCEDURE Edit* (F: Frame; X, Y: INTEGER; Keys: SET);
     VAR
       M: Oberon.ConsumeMsg;
@@ -804,49 +867,65 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
           Show(F, pos)
         END
       END
-  ELSE
-    IF 0 IN Keys THEN
-      TrackSelection(F, X, Y, keysum);
-      IF F.sel # 0 THEN
-        IF (2 IN keysum) & ~(1 IN keysum) THEN (*delete text*)
-          Oberon.GetSelection(text, beg, end, time);
-          Texts.Delete(text, beg, end);
-          Oberon.Defocus; SetCaret(F, beg)
-        ELSIF (1 IN keysum) & ~(2 IN keysum) THEN (*copy to focus*)
-          Oberon.GetSelection(text, beg, end, time);
-          M.F := NIL; M.text := text; M.beg := beg; M.end := end;
-          Display.Broadcast(M)
-  	  END
-      END
-    ELSIF 1 IN Keys THEN
-      TrackWord(F, X, Y, pos, keysum);
-      IF 0 IN keysum THEN
-        IF (pos >= 0) & ~(2 IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
-      ELSE
-        IF pos >= 0 THEN Call(F, pos, 2 IN keysum) END
-      END
-    ELSIF 2 IN Keys THEN
-        Oberon.Defocus; TrackCaret(F, X, Y, keysum);
-        IF F.car # 0 THEN
-          IF (1 IN keysum) & ~(0 IN keysum) THEN (*copy from selection*)
+    ELSE
+      IF 0 IN Keys THEN
+        TrackSelection(F, X, Y, keysum);
+        IF F.sel # 0 THEN
+          IF (2 IN keysum) & ~(1 IN keysum) THEN (*delete text*)
             Oberon.GetSelection(text, beg, end, time);
-             IF time >= 0 THEN
-                NEW(buf); Texts.OpenBuf(buf);
-                Texts.Save(text, beg, end, buf);
-                Texts.Insert(F.text, F.carloc.pos, buf);
-                SetCaret(F, F.carloc.pos + (end - beg))
-              END
-           ELSIF (0 IN keysum) & ~(1 IN keysum) THEN (*copy font*)
+            Texts.Delete(text, beg, end);
+            Oberon.Defocus; SetCaret(F, beg)
+          ELSIF (1 IN keysum) & ~(2 IN keysum) THEN (*copy to focus*)
+            Oberon.GetSelection(text, beg, end, time);
+            M.F := NIL; M.text := text; M.beg := beg; M.end := end;
+            Display.Broadcast(M)
+    	  END
+        END
+      ELSIF 1 IN Keys THEN
+        TrackWord(F, X, Y, pos, keysum);
+        IF 0 IN keysum THEN
+          IF (pos >= 0) & ~(2 IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
+        ELSE
+          IF pos >= 0 THEN Call(F, pos, 2 IN keysum) END
+        END
+      ELSIF 2 IN Keys THEN
+        IF Oberon.New & (F.car # 0) & (Pos(F, X, Y) = F.carloc.pos) THEN (*click on caret*)
+          Oberon.Defocus; RestoreCaret; TrackWord(F, X, Y, pos, keysum);
+          IF 0 IN keysum THEN
+            IF (pos >= 0) & ~(1 IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
+          ELSE
+            IF pos >= 0 THEN Call(F, pos, FALSE) END
+          END
+        ELSE
+          IF Oberon.New THEN SaveCaret END;
+          Oberon.Defocus; TrackCaret(F, X, Y, keysum);
+          IF F.car # 0 THEN
+            IF (1 IN keysum) & ~(0 IN keysum) THEN (*copy from selection*)
               Oberon.GetSelection(text, beg, end, time);
-              IF time >= 0 THEN
+              IF time # -1 THEN
+                 NEW(buf); Texts.OpenBuf(buf);
+                 Texts.Save(text, beg, end, buf);
+                 Texts.Insert(F.text, F.carloc.pos, buf);
+                 SetCaret(F, F.carloc.pos + (end - beg))
+               ELSE (*copy from delete buffer*)
+                 NEW(buf); Texts.OpenBuf(buf);
+                 Texts.Recall(buf);
+                 end := F.carloc.pos + buf.len;
+                 Texts.Insert(F.text, F.carloc.pos, buf);
+                 SetCaret(F, end)
+               END
+            ELSIF (0 IN keysum) & ~(1 IN keysum) THEN (*copy font*)
+              Oberon.GetSelection(text, beg, end, time);
+              IF time # -1 THEN
                 Texts.OpenReader(R, F.text, F.carloc.pos); Texts.Read(R, ch);
                 IF (R.lib # NIL) & (R.lib IS Fonts.Font) THEN
-      	          Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
-      	      END
+                  Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+                END
               END
             END
-         END
-       END
+          END
+        END
+      END
     END
   END Edit;
 
@@ -918,8 +997,55 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   (*creation*)
 
   PROCEDURE Menu (name, commands: ARRAY OF CHAR): Texts.Text;
-    VAR T: Texts.Text;
+    VAR T: Texts.Text; mb, me, m, s, d, i: INTEGER; ch: CHAR;
   BEGIN
+    IF SmallDisplay & (Display.Width < 1024) THEN (*adjust commands*)
+      mb := 0; me := 0; s := 0; d := 0;
+      LOOP
+        (*position to beginning of word*)
+        LOOP
+          IF s >= LEN(commands) THEN EXIT END;
+          ch := commands[s]; INC(s);
+          IF ch = 0X THEN EXIT END;
+          commands[d] := ch; INC(d);
+          IF ("A" <= CAP(ch)) & (CAP(ch) <= "Z") THEN EXIT END
+        END;
+        IF (s >= LEN(commands)) OR (ch = 0X) THEN EXIT END;
+        (*scan first part of word, checking against last module name*)
+        m := mb; i := 0;
+        LOOP
+          INC(i); IF (m < me) & (commands[m] = ch) THEN INC(m) END;
+          IF s >= LEN(commands) THEN EXIT END;
+          ch := commands[s]; INC(s);
+          IF ch = 0X THEN EXIT END;
+          commands[d] := ch; INC(d);
+          IF (ch < "0") OR ("9" < ch) & (CAP(ch) < "A")
+               OR (CAP(ch) > "Z") THEN EXIT
+          END
+        END;
+        (*check for match*)
+        IF (s < LEN(commands)) & (ch = ".") THEN
+          IF m = mb + i THEN (*matches previous module name - compress*)
+            DEC(d, i); commands[d-1] := "."
+          ELSE (*set new module name*)
+            mb := d - (i+1); me := d-1
+          END;
+          (*and do last part of word*)
+          LOOP
+            IF s >= LEN(commands) THEN EXIT END;
+            ch := commands[s]; INC(s);
+            IF ch = 0X THEN EXIT END;
+            commands[d] := ch; INC(d);
+            IF (ch < "0") OR ("9" < ch) & (CAP(ch) < "A")
+                 OR (CAP(ch) > "Z") THEN EXIT
+            END
+          END
+        END;
+        IF (s >= LEN(commands)) OR (ch = 0X) THEN EXIT END
+      END;
+      IF d < LEN(commands) THEN commands[d] := 0X END
+    END;
+  
     NEW(T); Texts.Open(T, "");
     Texts.WriteString(W, name); Texts.WriteString(W, " | "); Texts.WriteString(W, commands);
     Texts.Append(T, W.buf);
@@ -932,10 +1058,11 @@ MODULE TextFrames;	(** portable *) (* JG / pjm *)
   END Text;
 
   PROCEDURE NewMenu* (name, commands: ARRAY OF CHAR): Frame;
-    VAR F: Frame;
+    VAR F: Frame; l: INTEGER;
   BEGIN NEW(F);
-    IF Modern THEN Open(F, Handle, Menu(name, commands), 0, MenuBG, left DIV 4, 0, 3, 1, lsp)
-    ELSE Open(F, Handle, Menu(name, commands), 0, MenuBG, left DIV 4, 0, 1, 0, lsp)
+    IF MoveArea THEN l := barW-1 ELSE l := left DIV 4 END;
+    IF Modern THEN Open(F, Handle, Menu(name, commands), 0, MenuBG, l, 0, 3, 1, lsp)
+    ELSE Open(F, Handle, Menu(name, commands), 0, MenuBG, l, 0, 1, 0, lsp)
     END;
     RETURN F
   END NewMenu;

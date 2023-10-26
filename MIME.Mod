@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE MIME; (** portable *)
-	IMPORT Streams, TextStreams, Files, Dates, Strings, Fonts, Texts, Display, Display3,
-		Objects, Attributes, Gadgets, BasicFigures, Out, Oberon;
+	IMPORT Streams, TextStreams, Files, FileDir, Dates, Strings, Fonts, Texts, Display, Display3,
+		Objects, Attributes, Gadgets, BasicFigures, Out, Oberon, Modules;
 
 	CONST
 		BufLen = 1024;
@@ -70,9 +58,16 @@ MODULE MIME; (** portable *)
 			next: Part
 		END;
 
+		TempFile = POINTER TO TempFileDesc;
+		TempFileDesc = RECORD
+			name: FileDir.FileName;
+			next: TempFile
+		END;
+
 	VAR
 		contTypes*: ContentType; (** Root of the content-typ list. *)
 		textCont*: Content;
+		tempFiles: TempFile;
 
 	PROCEDURE ReadHeader*(S, echo: Streams.Stream; VAR h: Header; VAR len: LONGINT);
 		VAR
@@ -99,7 +94,7 @@ MODULE MIME; (** portable *)
 					INC(bufLen, 1024); NEW(buf, bufLen);
 					COPY(h.fields^, buf^); h.fields := buf
 				END;
-IF (ch = ":") & ~field THEN
+				IF ((ch = ":") OR (ch = "+")) & ~field THEN	(* "+OK xxx octets" workaround *)
 					end := FALSE; field := ~white; anyField := anyField OR field
 				ELSIF ch <= " " THEN
 					ch := " "; white := TRUE
@@ -143,9 +138,9 @@ IF (ch = ":") & ~field THEN
 			eol := FALSE
 		UNTIL end;
 		len := begLen; h.fields[bufPos] := 0X;
-IF ~anyField THEN
-	h.fields[0] := 0X; h.fields[1] := 0X
-END
+		IF ~anyField THEN
+			h.fields[0] := 0X; h.fields[1] := 0X
+		END
 	END ReadHeader;
 
 	PROCEDURE FindFieldPos*(h: Header; field: ARRAY OF CHAR; VAR pos: LONGINT);
@@ -385,7 +380,11 @@ END
 		VAR dH, dM, i: LONGINT;
 	BEGIN
 		IF (zone[0] = "+") OR (zone[0] = "-") THEN
-			Strings.StrToInt(zone, dH);
+			IF Strings.Length(zone) > 5 THEN
+				dH := 0
+			ELSE
+				Strings.StrToInt(zone, dH)
+			END;
 			IF dH < 0 THEN i := -1 ELSE i := 1 END;
 			dM := i*ABS(dH MOD 100);
 			dH := i*ABS(dH DIV 100)
@@ -467,14 +466,16 @@ END
 			INC(pos)
 		END;
 		i := 0;
-		WHILE (pos < len) & (h.fields[pos] > " ") DO
+		WHILE (pos < len) & (h.fields[pos] > " ") & (i # LEN(mo)-1) DO
 			mo[i] := h.fields[pos]; INC(i); INC(pos)
 		END;
 		mo[i] := 0X; month := StrToMonth(mo);
-		IF (month >= 1) & (month <= 12) THEN
+		IF (i # LEN(mo)-1) & (day >= 1) & (day <= 31) & (month >= 1) & (month <= 12) THEN
 			j := SHORT(pos); Strings.StrToIntPos(h.fields^, year, j);
-			IF year >= 100 THEN
+			IF year >= 1900 THEN
 				date := (year-1900)*200H + month*20H + day
+			ELSIF year < 80 THEN
+				date := (year+100)*200H + month*20H + day
 			ELSE
 				date := year*200H + month*20H + day
 			END;
@@ -606,15 +607,30 @@ END
 			ELSE S.class := Texts.Inval
 			END
 		END;
-		NEW(textCont); textCont.typ := GetContentType("text/plain"); textCont.encoding := Enc8Bit
+		NEW(textCont); textCont.typ := GetContentType("text/plain"); textCont.encoding := Enc8Bit;
+		textCont.h := NIL; textCont.pos := 0; textCont.len := MAX(LONGINT)-BufLen-1
 	END LoadTypes;
+
+	PROCEDURE RegisterTempFile*(name: ARRAY OF CHAR);
+		VAR temp: TempFile;
+	BEGIN
+		temp := tempFiles;
+		WHILE (temp # NIL) & ~FileDir.SameName(name, tempFiles.name) DO
+			temp := temp.next
+		END;
+		IF temp = NIL THEN
+			NEW(temp); COPY(name, temp.name);
+			temp.next := tempFiles; tempFiles := temp
+		END
+	END RegisterTempFile;
 
 (** Create a temporary file name for contType. *)
 	PROCEDURE MakeTempName*(contType: ContentType; VAR tempName: ARRAY OF CHAR);
 	BEGIN
 		COPY(contType.prefix, tempName);
 		Strings.Append(tempName, "Temp.");
-		Strings.Append(tempName, contType.suffix)
+		Strings.Append(tempName, contType.suffix);
+		RegisterTempFile(tempName)
 	END MakeTempName;
 
 	PROCEDURE ExtractContentType*(h: Header; pos: LONGINT; VAR cont: Content);
@@ -644,13 +660,14 @@ END
 			buffer: ARRAY BufLen OF CHAR;
 			len, rlen, i, offs, maxLen: LONGINT;
 			ch, ch1: CHAR;
-			iso, quoted: BOOLEAN;
+			iso, quoted, cr: BOOLEAN;
 	BEGIN
 		iso := cont.encoding IN {Enc8Bit, Enc7Bit, EncQuoted}; quoted := cont.encoding = EncQuoted;
 		IF cont.h # NIL THEN
 			FindParam(cont.h, cont.pos, "charset", buffer); iso := iso OR (buffer # "")
 		END;
-		ch := 0X; offs := 0; maxLen := cont.len;
+		ch := 0X; cr := FALSE;
+		offs := 0; maxLen := cont.len;
 		in.mode := Streams.binary; len := in.Available(in);
 		WHILE (maxLen > 0) & ((len > 0) OR (~in.eos & in.buffer)) DO
 			IF len > (BufLen-2) THEN
@@ -664,14 +681,17 @@ END
 			in.ReadBytes(in, buffer, rlen); DEC(maxLen, rlen);
 			i := 0;
 			WHILE i < rlen DO
-				IF buffer[i] = Strings.CR THEN
-					(* ignore CR *)
-				ELSIF buffer[i] = Strings.LF THEN
-					Texts.WriteLn(W);
-					IF mail & (offs = 1) & (ch = ".") THEN
-						RETURN
+				IF (buffer[i] = Strings.CR) OR (buffer[i] = Strings.LF) THEN
+					IF (buffer[i] = Strings.LF) & cr THEN
+						(* ignore LF after CR *)
+					ELSE
+						Texts.WriteLn(W);
+						IF mail & (offs = 1) & (ch = ".") THEN
+							RETURN
+						END;
+						offs := 0
 					END;
-					offs := 0
+					cr := (buffer[i] = Strings.CR)
 				ELSIF iso THEN
 					ch := buffer[i];
 					IF ~quoted OR (ch # "=") THEN
@@ -895,6 +915,7 @@ END
 		NEW(T); Texts.Open(T, ""); Texts.OpenWriter(W);
 		pos := 0; end := 0; len := Files.Length(F); parts := NIL;
 		IF SearchBoundary(F, boundary, pos) THEN
+			DecodePart(F, 0, pos-Strings.Length(boundary)-2, T, W, parts, mail);
 			WHILE end < len DO
 				beg := pos;
 				IF SearchBoundary(F, boundary, pos) THEN
@@ -1086,6 +1107,17 @@ END
 		END
 	END WriteISOMime;
 
+	PROCEDURE *TermMod();
+		VAR res: INTEGER;
+	BEGIN
+		WHILE tempFiles # NIL DO
+			Files.Delete(tempFiles.name, res);
+			tempFiles := tempFiles.next
+		END
+	END TermMod;
+
 BEGIN
+	tempFiles := NIL;
+	Modules.InstallTermHandler(TermMod);
 	LoadTypes()
 END MIME.

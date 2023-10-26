@@ -1,4 +1,7 @@
-MODULE GfxFonts0;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxFonts0; (** non-portable *)	(* eos   *)
 
 	(**
 		Non-portable part of GfxFonts
@@ -10,6 +13,8 @@ MODULE GfxFonts0;	(** eos   **)
 	(*
 		16.2.99 - made unknown font types have ppm=MIN(LONGINT) (to avoid .Md?)
 		20.4.99 - merged Native and Windows version (using Builder preprocessor)
+		22.02.2000 - made name matching more robust to be compatible with device specifiers in Native
+		30.03.2000 - fixed dimensionless fonts not being recognized (Elektra)
 	*)
 	
 	IMPORT
@@ -18,7 +23,7 @@ MODULE GfxFonts0;	(** eos   **)
 	
 	VAR
 		Name, Style: ARRAY 32 OF CHAR;
-		PPM, FPPM, Len, Error: INTEGER;
+		PPM, FPPM, Error: INTEGER;
 		
 	
 
@@ -28,11 +33,13 @@ MODULE GfxFonts0;	(** eos   **)
 
 	BEGIN
 		IF ~isdir THEN
-			i := Len; ppm := 0;
+			i := 0; ppm := 0;
+			WHILE (name[i] # 0X) & (name[i] # ".") & (name[i] < "0") OR ("9" < name[i]) DO INC(i) END;
 			WHILE ("0" <= name[i]) & (name[i] <= "9") DO
 				ppm := 10*ppm + ORD(name[i]) - ORD("0");
 				INC(i)
 			END;
+			IF ppm = 0 THEN ppm := 10 END;
 			IF (Style = "") & (name[i] = ".") OR (CAP(Style[0]) = CAP(name[i])) THEN
 				WHILE (name[i] # 0X) & (name[i] # ".") DO INC(i) END;
 				IF name[i] = "." THEN INC(i) END;
@@ -56,7 +63,7 @@ MODULE GfxFonts0;	(** eos   **)
 		VAR pattern: ARRAY 64 OF CHAR;
 	BEGIN
 		Name := ""; FPPM := 0;
-		COPY(style, Style); PPM := ppm; Len := SHORT(Strings.Length(family)); Error := MAX(INTEGER);
+		COPY(style, Style); PPM := ppm; Error := MAX(INTEGER);
 		COPY(family, pattern); Strings.AppendCh(pattern, "*");
 		IF style = "Bold" THEN Strings.AppendCh(pattern, "b")
 		ELSIF style = "Italic" THEN Strings.AppendCh(pattern, "i")

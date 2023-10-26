@@ -1,25 +1,11 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Magnifier; (** portable *)	(* ejz   *)
-	IMPORT SYSTEM, Display, Oberon, Effects, Out;
-
-	CONST
-		W = 32; H = 32; Z = 4; W2 = W DIV 2; H2  = H DIV 2;
+	IMPORT SYSTEM, Modules, Display, Oberon, Effects, In, Out;
 
 	VAR
+		W, H, W2, H2, Z: INTEGER;
 		Marker, eArrow, oArrow: Oberon.Marker;
 		buf, buf1, buf2: POINTER TO ARRAY OF CHAR;
 		vX, vY, pix: LONGINT;
@@ -115,10 +101,21 @@ MODULE Magnifier; (** portable *)	(* ejz   *)
 		RETURN pix # 0
 	END OK;
 	
-	PROCEDURE Zoom*;
+	PROCEDURE GetParams(): BOOLEAN;
+	BEGIN
+		In.Open;
+		In.Int(W);  In.Int(H);  In.Int(Z);
+		IF ~In.Done THEN
+			W := 32;  H := 32;  Z := 4
+		END;
+		W2 := W DIV 2;  H2 := H DIV 2;
+		RETURN (Z*W < Display.Width) & (Z*H < Display.Height)
+	END GetParams;
+	
+	PROCEDURE Zoom*;	(** width height zoomfactor *)
 		VAR keys: SET; X, Y: INTEGER;
 	BEGIN
-		IF installed OR ~OK() THEN RETURN END; installed := TRUE;
+		IF installed OR ~OK() OR ~GetParams() THEN RETURN END; installed := TRUE;
 		oArrow := Oberon.Arrow; eArrow := Effects.Arrow;
 		NEW(buf, pix*Z*W*Z*H+4); NEW(buf1, pix*W*H+4); NEW(buf2, pix*Z*W*Z*H+4);
 		vX := 0; vY := 0; ShowView();
@@ -129,9 +126,9 @@ MODULE Magnifier; (** portable *)	(* ejz   *)
 		buf := NIL; buf1 := NIL; buf2 := NIL; installed := FALSE
 	END Zoom;
 
-	PROCEDURE Install*;
+	PROCEDURE Install*;	(** width height zoomfactor *)
 	BEGIN
-		IF installed OR ~OK() THEN RETURN END; installed := TRUE;
+		IF installed OR ~OK() OR ~GetParams() THEN RETURN END; installed := TRUE;
 		oArrow := Oberon.Arrow; eArrow := Effects.Arrow;
 		NEW(buf, pix*Z*W*Z*H+4); NEW(buf1, pix*W*H+4); NEW(buf2, pix*Z*W*Z*H+4);
 		vX := 0; vY := 0; ShowView();
@@ -150,14 +147,14 @@ MODULE Magnifier; (** portable *)	(* ejz   *)
 	PROCEDURE Init();
 	BEGIN
 		pix := Display.TransferFormat(0) DIV 8; installed := FALSE;
-		ASSERT((Z*W < Display.Width) & (Z*H < Display.Height));
 		Marker.Draw := Draw; Marker.Fade := Fade
 	END Init;
 
 BEGIN
-	Init()
+	Init();
+	Modules.InstallTermHandler(Remove)
 END Magnifier.
 
-Magnifier.Zoom
-Magnifier.Install
+Magnifier.Zoom ~  Magnifier.Zoom 50 20 7 ~
+Magnifier.Install ~  Magnifier.Install 50 20 7 ~
 Magnifier.Remove

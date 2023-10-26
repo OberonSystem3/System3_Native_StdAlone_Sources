@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE ET;	(** portable *)	(* uh, Wed, 30-Jun-1993 *)
+MODULE ET; (** portable *)	(* uh, Wed, 30-Jun-1993 *)
 
 	IMPORT Display, Texts, TextFrames, Viewers, Files, Input, MenuViewers, Oberon, Objects, Fonts;
 
@@ -30,12 +18,12 @@ CONST
 	
 	Err = -1;	(* scanner *)
 	
-	CR = 0DX;	TAB = 09X;	SPACE = " ";	LF = 0AX;	DEL = 07FX;	Quote = 22X;
+	CR = 0DX;	TAB = 09X;	SPACE = " ";	LF = 0AX;	Quote = 22X;
 	LtArrow = 0C4X;	RtArrow = 0C3X;
 	ML = 2;	MM = 1;	MR = 0;
-	Fnt = 0;	Colr = 1;	Voff = 2;
+	Fnt = 0;	Colr = 1;
 
-	MinSplitHeight = 40;	MaxPatLen = 128;	BufLen = 64;
+	MaxPatLen = 128;	BufLen = 64;
 	FG = Display.FG;
 
 TYPE
@@ -106,8 +94,8 @@ VAR
 		OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); IF S.class = Err THEN RETURN END;	(* ### *)
 		Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = "^") OR (S.line > 0) THEN	(* check for selection *)
-			text := NIL; time := 0; Oberon.GetSelection(text, beg, end, time);
-			IF (text = NIL) OR (time <= 0) THEN S.class := Texts.Inval; RETURN END;	(* ### *)
+			text := NIL; time := -1; Oberon.GetSelection(text, beg, end, time);
+			IF (text = NIL) OR (time = -1) THEN S.class := Texts.Inval; RETURN END;	(* ### *)
 			OpenScanner(S, text, beg); Texts.Scan(S)
 		END;
 		IF S.class = Texts.Int  THEN	(* option y coordinate *)
@@ -131,8 +119,8 @@ VAR
 		OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); IF S.class = Err THEN RETURN END;	(* ### *)
 		Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = "^") OR (S.line > 0) THEN	(* check for selection *)
-			text := NIL; time := 0; Oberon.GetSelection(text, beg, end, time);
-			IF (text = NIL) OR (time <= 0) THEN S.class := Texts.Inval; RETURN END;	(* ### *)
+			text := NIL; time := -1; Oberon.GetSelection(text, beg, end, time);
+			IF (text = NIL) OR (time = -1) THEN S.class := Texts.Inval; RETURN END;	(* ### *)
 			OpenScanner(S, text, beg); Texts.Scan(S)
 		END
 	END ScanPara;
@@ -182,7 +170,7 @@ VAR
 		M.id := Oberon.get; M.F := NIL;
 		M.time := -1; M.sel := NIL; M.text := NIL; 
 		Display.Broadcast(M);
-		IF (M.time >= 0) & (M.text # NIL) & (M.sel # NIL) & (M.sel IS TextFrames.Frame) THEN
+		IF (M.time # -1) & (M.text # NIL) & (M.sel # NIL) & (M.sel IS TextFrames.Frame) THEN
 			F := M.sel(TextFrames.Frame)
 		ELSE F := NIL
 		END
@@ -201,62 +189,6 @@ VAR
 	BEGIN
 		IF W.lib # Fonts.Default THEN Texts.SetFont(W, Fonts.Default) END
 	END SetDefFont;
-(*-v2-
-	PROCEDURE FocusViewer(): Viewers.Viewer;
-	BEGIN
-		RETURN Oberon.FocusViewer
-	END FocusViewer;
-	
-	PROCEDURE SetFocus(V: Viewers.Viewer);
-	BEGIN
-		IF Oberon.FocusViewer # V THEN Oberon.PassFocus(V) END
-	END SetFocus;
-	
-	PROCEDURE Defocus(tF: TextFrames.Frame);
-		VAR M: Oberon.InputMsg;
-	BEGIN
-		IF tF # NIL THEN SetFocus(Viewers.This(tF.X, tF.Y))
-		ELSE
-			M.id := Oberon.defocus; Oberon.FocusViewer.handle(Oberon.FocusViewer, M)
-		END
-	END Defocus;
-	
-	PROCEDURE GetSelData(tF: TextFrames.Frame; VAR text: Texts.Text; VAR beg, end, time: LONGINT);
-	BEGIN
-		text := NIL; time := -1;
-		TextFrames.GetSelection(tF, text, beg, end, time)
-	END GetSelData;
-	
-	PROCEDURE GetSelFrame(VAR F: TextFrames.Frame);
-		VAR time: LONGINT; V: Viewers.Viewer; X: INTEGER; f: TextFrames.Frame;
-	BEGIN
-		time := -1; X := 0; F := NIL;
-		WHILE X < Display.Width DO V := Viewers.This(X, 0);
-			WHILE V.state > 1 DO
-				IF (V.dsc # NIL) & (V.dsc.next # NIL) & (V.dsc.next IS TextFrames.Frame) THEN
-					f := V.dsc.next(TextFrames.Frame); 
-					IF (f.sel > 0) & (f.time > time) THEN F := f; time := f.time END
-				END;
-				V := Viewers.Next(V)
-			END;
-			X := X + V.W
-		END
-	END GetSelFrame;
-	
-	PROCEDURE ReaderFnt(VAR R: Texts.Reader): Fonts.Font;
-	BEGIN RETURN R.fnt
-	END ReaderFnt;
-	
-	PROCEDURE AdjustFont(VAR W: Texts.Writer; VAR R: Texts.Reader);
-	BEGIN
-		IF W.fnt # R.fnt THEN Texts.SetFont(tW, R.fnt) END
-	END AdjustFont;
-	
-	PROCEDURE SetDefFont(VAR W: Texts.Writer);
-	BEGIN
-		IF W.fnt # Fonts.Default THEN Texts.SetFont(W, Fonts.Default) END
-	END SetDefFont;
--v-*)
 	
 	PROCEDURE LinesOf(tF: TextFrames.Frame): INTEGER;
 	BEGIN
@@ -270,9 +202,6 @@ VAR
 		IF pos >= BufLen THEN
 			bR.begPos := pos - BufLen; i := 0; Texts.OpenReader(R, text, bR.begPos)
 		ELSE
-		(*
-			i := 0; WHILE i < (BufLen - pos) DO bR.buf[i] := 0X; INC(i) END;
-		*)
 			i := SHORT(BufLen - pos);
 			bR.begPos := -i; Texts.OpenReader(R, text, 0)
 		END;
@@ -416,7 +345,7 @@ VAR
 		IF F = NIL THEN GetSelFrame(tF) ELSIF F IS TextFrames.Frame THEN tF := F(TextFrames.Frame) ELSE tF := NIL END;
 		IF (tF # NIL) & (tF.sel > 0) THEN
 			GetSelData(tF, text, beg, end, time);
-			IF (text # NIL) & (time > 0) THEN
+			IF (text # NIL) & (time # -1) THEN
 				fLine := LinesUp(text, beg, 0); lLine := LinesUp(text, end - 1, 0);
 				Texts.OpenReader(R, text, fLine); Texts.Read(R, ch); AdjustFont(tW, R);
 				IF (ch # SPACE) & (ch # TAB) THEN ch := TAB END;
@@ -456,7 +385,7 @@ VAR
 		IF F = NIL THEN GetSelFrame(tF) ELSIF F IS TextFrames.Frame THEN tF := F(TextFrames.Frame) ELSE tF := NIL END;
 		IF (tF # NIL) & (tF.sel > 0) THEN
 			GetSelData(tF, text, beg, end, time);
-			IF (text # NIL) & (time > 0) THEN
+			IF (text # NIL) & (time # -1) THEN
 				fLine := LinesUp(text, beg, 0); lLine := LinesUp(text, end - 1, 0);
 				nr := nbr; WHILE (nr > 0) & IsCh(text, lLine) DO Texts.Delete(text, lLine, lLine + 1); DEC(nr); DEC(end) END;
 				WHILE fLine # lLine DO
@@ -503,7 +432,7 @@ VAR
 	END PredSelFrame;
 	
 	PROCEDURE PreHandleMR(tF: TextFrames.Frame; VAR X, Y: INTEGER; keys: SET);
-		VAR V: Viewers.Viewer;	pF: TextFrames.Frame;	newPos, endPos: LONGINT;
+		VAR pF: TextFrames.Frame;	newPos, endPos: LONGINT;
 	BEGIN
 		IF (X >= tF.X  + Min(tF.left, TextFrames.barW)) THEN	(* not in scrollbar *)
 			pF := PredSelFrame(tF);
@@ -522,11 +451,11 @@ VAR
 	PROCEDURE GetSelection(tF: TextFrames.Frame; VAR M: SelectMsg; VAR handled: BOOLEAN);
 		VAR pF: TextFrames.Frame;
 	BEGIN
-		handled := (tF.sel > 0) & (tF.time > M.time);
+		handled := (tF.sel > 0) & (((M.time-tF.time) < 0) OR (M.time = -1));
 		IF handled THEN
 			GetSelData(tF, M.text, M.beg, M.end, M.time);
 			pF := PredSelFrame(tF);
-			IF (pF # NIL) & (pF.time < M.time) & (pF.selbeg.pos < M.end) THEN	(* enlarge selection *)
+			IF (pF # NIL) & (((pF.time-M.time) < 0) OR (pF.time = -1)) & (pF.selbeg.pos < M.end) THEN	(* enlarge selection *)
 				M.beg := pF.selbeg.pos
 			END
 		END
@@ -775,7 +704,7 @@ VAR
 	(** specification needed: "text.pattern"; loads the text text, searches the pattern *)
 	(** pattern and shows it in a viewer *)
 		VAR text: Texts.Text;	S: Texts.Scanner;	V: Viewers.Viewer;
-			X, Y, i, j, M: INTEGER;	pos, beg, end: LONGINT;	name: ARRAY 35 OF CHAR;
+			X, Y, i, j, M: INTEGER;	pos: LONGINT;	name: ARRAY 35 OF CHAR;
 	BEGIN
 		ScanName(Oberon.UserTrack(Oberon.Par.vwr.X), X, Y, S);
 		IF S.class # Texts.Name THEN RETURN END;	(* ### *)
@@ -886,7 +815,7 @@ VAR
 	PROCEDURE StoreAscii*; BEGIN store("a") END StoreAscii;
 	
 	PROCEDURE Cleartrack(X: INTEGER);
-		VAR Y : INTEGER;	V, lV: Viewers.Viewer;	M: Oberon.InputMsg;
+		VAR V, lV: Viewers.Viewer;
 	BEGIN
 		Oberon.RemoveMarks(X, Display.Bottom, Display.Width, Display.Height);
 		Defocus(NIL);
@@ -904,7 +833,7 @@ VAR
 	
 	PROCEDURE ValidX(X: INTEGER): BOOLEAN;
 	BEGIN
-		RETURN (Display.Left <= X) & (X < Display.Left + Display.Width)
+		RETURN (0 <= X) & (X < Display.Width)
 				OR (Display.ColLeft <= X) & (X < Display.ColLeft + Display.Width)
 	END ValidX;
 	
@@ -969,7 +898,7 @@ VAR
 	PROCEDURE Search*;
 		VAR tF: TextFrames.Frame;	V: Viewers.Viewer;
 			R: Texts.Reader;	text: Texts.Text;
-			pos, beg, end, time: LONGINT; 	i, j, d: INTEGER;
+			pos, beg, end, time: LONGINT; 	i: INTEGER;
 	BEGIN
 		IF (Oberon.Par.vwr # NIL) & (Oberon.Par.frame = Oberon.Par.vwr.dsc) THEN V := Oberon.Par.vwr
 		ELSE V := FocusViewer()
@@ -977,7 +906,7 @@ VAR
 		IF (V.dsc = NIL) OR ~ (V.dsc.next IS TextFrames.Frame) THEN RETURN END;	(* ### *)
 		tF := V.dsc.next(TextFrames.Frame);
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
-		IF (text # NIL) & (time > lTime) THEN	(* set search pattern *)
+		IF (text # NIL) & (time-lTime > 0) THEN	(* set search pattern *)
 			Texts.OpenReader(R, text, beg);
 			i := 0; pos := beg;
 			REPEAT Texts.Read(R, sPat[i]); INC(i); INC(pos) UNTIL (i = MaxPatLen) OR (pos = end);
@@ -1024,7 +953,7 @@ VAR
 		tF := V.dsc.next(TextFrames.Frame);
 		T := tF.text;
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
-		IF (text # NIL) & (time > lTime) THEN	(* set replace buffer *)
+		IF (text # NIL) & (time-lTime > 0) THEN	(* set replace buffer *)
 			lTime := time; NEW(rBuf); Texts.OpenBuf(rBuf); Texts.Save(text, beg, end, rBuf)
 		END;
 		IF (tF.car <= 0) OR ~ (sPatLen > 0) OR (rBuf = NIL) THEN RETURN FALSE END;	(* ### *)
@@ -1061,7 +990,7 @@ VAR
 		IF (V.dsc # NIL) & (V.dsc.next IS TextFrames.Frame) THEN
 			tF := V.dsc.next(TextFrames.Frame);
 			text := NIL; Oberon.GetSelection(text, beg, end, time);
-			IF (text # NIL) & (time > 0) THEN
+			IF (text # NIL) & (time # -1) THEN
 				OpenScanner(S, text, beg);
 				REPEAT Texts.Scan(S) UNTIL (S.class >= Texts.Int);	(*skip names*)
 				IF S.class = Texts.Int THEN
@@ -1079,7 +1008,7 @@ VAR
 			X, Y, i: INTEGER;	pos, beg, end, time: LONGINT;
 	BEGIN
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
-		IF (text # NIL) & (time > 0) THEN
+		IF (text # NIL) & (time # -1) THEN
 			OpenScanner(S, text, beg);
 			Texts.Scan(S);
 			REPEAT Texts.Scan(S) UNTIL ((S.class = Texts.Name) & (S.s = "err")) OR (S.class > Texts.Int);
@@ -1107,7 +1036,7 @@ VAR
 	END Error;
 
 	PROCEDURE MenuExchange(F: Frame; vwrName, menuStr: ARRAY OF CHAR);
-		VAR mF: TextFrames.Frame;	menuH: INTEGER;
+		VAR mF: TextFrames.Frame;
 	BEGIN
 		IF F IS TextFrames.Frame THEN
 			mF := F(TextFrames.Frame); SetDefFont(tW);
@@ -1176,7 +1105,7 @@ VAR
 			beg, end, time, carloc : LONGINT; 	B: Texts.Buffer;
 	BEGIN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time > 0 THEN
+		IF time # -1 THEN
 			V := FocusViewer();
 			IF V.dsc.next IS TextFrames.Frame THEN
 				tF := V.dsc.next(TextFrames.Frame);
@@ -1248,7 +1177,7 @@ VAR
 			S.s[i] := 0X
 		END;
 		text := NIL; Oberon.GetSelection(text, beg, end, time);
-		IF (text # NIL) & (time > 0) THEN
+		IF (text # NIL) & (time # -1) THEN
 			Texts.ChangeLooks(text, beg, end, {Fnt}, Fonts.This(S.s), 0, 0)
 		END
 	END Font;
@@ -1261,7 +1190,7 @@ VAR
 		col := SHORT(SHORT(S.i));
 		IF (0 <= col) & (col <= 15) THEN
 			text := NIL; Oberon.GetSelection(text, beg, end, time);
-			IF (text # NIL) & (time > 0) THEN
+			IF (text # NIL) & (time # -1) THEN
 				Texts.ChangeLooks(text, beg, end, {Colr}, NIL, col, 0)
 			END
 		END
@@ -1335,7 +1264,7 @@ VAR
 		COPY(S.s, cmd);
 		IF para.len > 0 THEN Texts.Delete(para, 0, para.len) END;	(* clear parameter text *)
 		text := NIL; time := 0; Oberon.GetSelection(text, beg, end, time);
-		IF (text = NIL) OR (time <= 0) THEN beg := end END;
+		IF (text = NIL) OR (time = -1) THEN beg := end END;
 		Texts.Scan(S);
 		WHILE S.class = Texts.String DO
 			Process(text, beg, end, S.s);
@@ -1346,7 +1275,7 @@ VAR
 	END Call;
 	
 	PROCEDURE ListNames*;
-		VAR S, S0: Texts.Scanner;	text: Texts.Text;	beg, end, time: LONGINT;
+		VAR S, S0: Texts.Scanner;	text: Texts.Text;
 			V: Viewers.Viewer;	X, Y: INTEGER;
 	BEGIN
 		ScanPara(S); IF S.class # Texts.Name THEN RETURN END;	(* ### *)
@@ -1444,7 +1373,7 @@ VAR
 	
 	PROCEDURE SetMenu*;
 	(* initializes menu texts regarding user defined menus *)
-		VAR text: Texts.Text;	S: Texts.Scanner;
+		VAR S: Texts.Scanner;
 	BEGIN
 		ScanPara(S); IF S.class # Texts.Name THEN RETURN END;	(* ### *)
 		IF S.s = "default" THEN

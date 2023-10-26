@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE ColorTools; (** portable *)  (** jm 19.1.95 *)
 
@@ -122,7 +110,7 @@ BEGIN
 	END;
 END ColorPickerAttr;
 
-PROCEDURE Grid(F: ColorPicker; R: Display3.Mask; b, x, y, w, h: INTEGER);
+PROCEDURE Grid(F: ColorPicker; R: Display3.Mask; b, x, y: INTEGER);
 VAR i, j, c, max: INTEGER;
 BEGIN
 	IF Display.Depth(0) >= 8 THEN max := 16 ELSE max := 4 END; 
@@ -196,7 +184,7 @@ BEGIN
 	Views.GetBlock(x, y+ofs, bw4, bw4, M.dlink, block);
 	
 	Display3.ReplConst(block.mask, Display3.black, x, y+ofs, bw4, bw4, Display.replace);
-	Grid(F, block.mask, b, x+2, y+2+ofs, w, h);
+	Grid(F, block.mask, b, x+2, y+2+ofs);
 	Input.Mouse(keys, X, Y); keysum := keys;
 	Cell(X, Y, li, lj); Highlight(15, li, lj);
 	WHILE keys # {} DO
@@ -225,7 +213,7 @@ BEGIN
 	IF Display.Depth(0) >= 8 THEN max := 16 ELSE max := 4 END;
 	b := (w - 4) DIV max;
 	Display3.ReplConst(R, Display3.black, x, y, w, h, Display.replace);
-	Grid(F, R, b, x+2, y+2, w-4, h-4);
+	Grid(F, R, b, x+2, y+2);
 	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, Display3.white, Display3.selectpat, 0, 0, x, y, w, h, Display.paint); END;
 END RestoreColorPicker;
 
@@ -366,9 +354,9 @@ BEGIN
 	MOS.id := Display.get; MOS.time := -1; MOS.F := NIL; MOS.obj := NIL;
 	MTS.id := Oberon.get; MTS.time := -1; MTS.F := NIL; MTS.sel := NIL; MTS.text := NIL;
 	Display.Broadcast(MOS); Display.Broadcast(MTS);
-	IF (MTS.time >= 0) & (MTS.time >= MOS.time) THEN
+	IF (MTS.time # -1) & (((MOS.time-MTS.time) < 0) OR (MOS.time = -1)) THEN
 		Texts.ChangeLooks(MTS.text, MTS.beg, MTS.end, {1}, NIL, SHORT(col), 0)
-	ELSIF (MOS.time >= 0) & (MOS.time >= MTS.time) & (MOS.obj # NIL) THEN
+	ELSIF (MOS.time # -1) & (((MTS.time-MOS.time) < 0) OR (MTS.time = -1)) & (MOS.obj # NIL) THEN
 		obj := MOS.obj;
 		WHILE obj # NIL DO
 			MA.id := Objects.set; MA.name := "Color"; MA.class := Objects.Int; MA.i := col; MA.res := -1;

@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Navigators;	(** portable *)
+MODULE Navigators; (** portable *)
 
 (*
 	7.4.94 - Allow middle key for focus too
@@ -137,7 +125,7 @@ BEGIN
 	Gadgets.CopyFrame(M, from, to);
 END CopyFrame;
 
-PROCEDURE Focus(F: Frame; x, y, w, h: INTEGER; VAR M: Oberon.InputMsg);
+PROCEDURE Focus(F: Frame; x, y: INTEGER; VAR M: Oberon.InputMsg);
 VAR X, Y, count: INTEGER; obj: Objects.Object;
 	A: Display.ModifyMsg; keysum: SET;
 BEGIN
@@ -195,7 +183,7 @@ BEGIN
 						WITH M: Oberon.InputMsg DO
 							IF (M.id = Oberon.track) & Gadgets.InActiveArea(F, M) THEN
 								IF (M.keys = {2}) OR (M.keys = {1}) THEN (* focus *)
-									Focus(F, x, y, w, h, M)
+									Focus(F, x, y, M)
 								ELSE Gadgets.framehandle(F, M)
 								END
 							ELSE Gadgets.framehandle(F, M)

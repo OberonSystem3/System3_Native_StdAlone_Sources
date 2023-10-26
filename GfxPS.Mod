@@ -1,4 +1,7 @@
-MODULE GfxPS;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxPS; (** portable *)	(* eos   *)
 
 	(**
 		Graphics context generating PostScript code
@@ -13,10 +16,20 @@ MODULE GfxPS;	(** eos   **)
 		10.3.98 - fixed bug with empty clip and bounding rectangles
 		2.10.98 - new image and font code
 		3.11.98 - new dash pattern
+		2.6.99 - several minor corrections for resetting CTM and clipping region
+		26.8.99 - replaced GfxMaps with Images/GfxImages
+		10.8.99 - added ClosePath
+		17.11.1999 - added Colors
+		26.01.2000 - new code for resetting CTM, clip path, and context (avoid init* for embedded graphics)
+		09.02.2000 - bugfix in Arc: wrong direction of rotation; bugfix in RestoreClip: mustn't clip to empty path
+		13.02.2000 - new get/set clip methods
+		26.03.2000 - fixed bug in run-length encoding: switch to equal mode failed if only first byte different
+		27.03.2000 - fixed bug in ImageM: didn't take x and y into account
+		31.05.2000 - fixed bug in ResetClip: must also restore current font (found by pjm)
 	*)
 	
 	IMPORT
-		Files, Texts, Oberon, Math, Strings, BIT, GfxMatrix, GfxMaps, GfxPaths, GfxFonts, Gfx;
+		Files, Texts, Oberon, Math, Strings, BIT, Colors, Images, GfxMatrix, GfxImages, GfxPaths, GfxFonts, Gfx;
 		
 	
 	CONST
@@ -30,23 +43,22 @@ MODULE GfxPS;	(** eos   **)
 		RLEBufLen = 128;
 		NofSets = 8;	(* 256/32 *)
 		PrologName = "GfxProlog.ps";
-		ClipStackDepth = 8;
 		
-		R = GfxMaps.R; G = GfxMaps.G; B = GfxMaps.B;
+		Red = Images.r; Green = Images.g; Blue = Images.b;
 		
 	
 	TYPE
-		ClipPath = POINTER TO RECORD
+		ClipPath = POINTER TO RECORD (Gfx.ClipAreaDesc)
 			path: GfxPaths.Path;	(* clip path *)
 			llx, lly, urx, ury: REAL;	(* bounding box *)
 			evenOdd: BOOLEAN;	(* flag how to interpret path area *)
-			next: ClipPath;	(* next element on stack *)
+			next: ClipPath;	(* next clip path element *)
 		END;
 		
 		Image = POINTER TO ImageDesc;
 		ImageDesc = RECORD
 			next: Image;
-			map: GfxMaps.Map;
+			img: Images.Image;
 		END;
 		
 		Pattern = POINTER TO PatternDesc;
@@ -83,10 +95,6 @@ MODULE GfxPS;	(** eos   **)
 			pages: INTEGER;	(* number of pages written *)
 			defMatrix: GfxMatrix.Matrix;	(* default matrix *)
 			clip: ClipPath;	(* current list of clip paths *)
-			clipStack: ARRAY ClipStackDepth OF ClipPath;	(* saved clip paths *)
-			clipDepth: LONGINT;	(* number of saved clip paths *)
-			simpleCap, simpleJoin, simpleStroke, simpleFill: BOOLEAN;	(* flags for deciding whether to let PostScript stroke the current path *)
-			closed: BOOLEAN;	(* flag if current subpath might be closed *)
 			sx, sy, cx, cy: REAL;	(* current subpath parameters *)
 			color: Gfx.Color;	(* current color in PS graphics state *)
 			pattern: Gfx.Pattern;	(* current pattern *)
@@ -135,11 +143,11 @@ MODULE GfxPS;	(** eos   **)
 		END
 	END Hex;
 	
-	PROCEDURE HexCol (VAR r: Files.Rider; col: GfxMaps.Color);
+	PROCEDURE HexCol (VAR r: Files.Rider; col: Images.Pixel);
 	BEGIN
-		Hex(r, col.r DIV 16); Hex(r, col.r MOD 16);
-		Hex(r, col.g DIV 16); Hex(r, col.g MOD 16);
-		Hex(r, col.b DIV 16); Hex(r, col.b MOD 16)
+		Hex(r, ORD(col[Red]) DIV 16); Hex(r, ORD(col[Red]) MOD 16);
+		Hex(r, ORD(col[Green]) DIV 16); Hex(r, ORD(col[Green]) MOD 16);
+		Hex(r, ORD(col[Blue]) DIV 16); Hex(r, ORD(col[Blue]) MOD 16)
 	END HexCol;
 	
 	PROCEDURE Str (VAR r: Files.Rider; s: ARRAY OF CHAR);
@@ -226,7 +234,7 @@ MODULE GfxPS;	(** eos   **)
 	PROCEDURE Arc (VAR r: Files.Rider; sx, sy, ex, ey, x0, y0, dx1, dy1, dx2, dy2: REAL);
 		CONST eps = 0.001;
 		
-		VAR tmp: REAL; mat, m: GfxMatrix.Matrix;
+		VAR tmp, sin, cos: REAL; mat, m: GfxMatrix.Matrix;
 		
 		PROCEDURE angle (x, y: REAL): REAL;
 			VAR phi: REAL;
@@ -250,13 +258,13 @@ MODULE GfxPS;	(** eos   **)
 		END;
 		mat := GfxMatrix.Identity;
 		IF ABS(dy1) > eps THEN
-			tmp := Math.sqrt(dx1 * dx1 + dy1 * dy1);
-			GfxMatrix.Rotate(GfxMatrix.Identity, -dy1/tmp, dx1/tmp, mat);
-			GfxMatrix.ApplyToVector(mat, dx1, dy1, dx1, dy1);
-			GfxMatrix.ApplyToVector(mat, dx2, dy2, dx2, dy2)
+			tmp := Math.sqrt(dx1 * dx1 + dy1 * dy1); sin := dy1/tmp; cos := dx1/tmp;
+			GfxMatrix.Rotate(GfxMatrix.Identity, sin, cos, mat);
+			dx1 := tmp; dy1 := 0;
+			tmp := cos * dy2 - sin * dx2; dx2 := cos * dx2 + sin * dy2; dy2 := tmp;
 		END;
 		IF ABS(dx2) > eps THEN
-			GfxMatrix.Init(m, 1, -dx2/dy2, 0, 1, 0, 0);
+			GfxMatrix.Init(m, 1, 0, dx2/dy2, 1, 0, 0);
 			GfxMatrix.Concat(m, mat, mat)
 		END;
 		IF ABS(ABS(dx1) - ABS(dy2)) > eps THEN
@@ -283,27 +291,34 @@ MODULE GfxPS;	(** eos   **)
 		Ln(r)
 	END Arc;
 	
-	PROCEDURE Path (VAR r: Files.Rider; path: GfxPaths.Path);
-		VAR s: GfxPaths.Scanner; sx, sy, dx, dy, x, y: REAL;
+	PROCEDURE Path (VAR r: Files.Rider; path: GfxPaths.Path; connect: BOOLEAN);
+		VAR s: GfxPaths.Scanner; closed: BOOLEAN; sx, sy, dx, dy, x, y: REAL;
 	BEGIN
-		GfxPaths.Open(s, path, 0);
-		WHILE s.elem = GfxPaths.Enter DO
-			sx := s.x; sy := s.y; dx := s.dx; dy := s.dy;
-			Point(r, sx, sy); Str(r, " mt"); Ln(r);
-			x := sx; y := sy;
-			GfxPaths.Scan(s);
-			WHILE s.elem # GfxPaths.Exit DO
-				CASE s.elem OF
-				| GfxPaths.Line: Point(r, s.x, s.y); Str(r, " ln"); Ln(r)
-				| GfxPaths.Arc: Arc(r, x - s.x0, y - s.y0, s.x - s.x0, s.y - s.y0, s.x0, s.y0, s.x1 - s.x0, s.y1 - s.y0, s.x2 - s.x0, s.y2 - s.y0)
-				| GfxPaths.Bezier: Point(r, s.x1, s.y1); Blank(r); Point(r, s.x2, s.y2); Blank(r); Point(r, s.x, s.y); Str(r, " ct"); Ln(r)
+		GfxPaths.Open(s, path, 0); closed := TRUE;
+		WHILE s.elem # GfxPaths.Stop DO
+			CASE s.elem OF
+			| GfxPaths.Enter:
+				IF connect & ~closed THEN
+					closed := TRUE;
+					IF (s.x # x) OR (s.y # y) THEN
+						Point(r, s.x, s.y); Str(r, " ln"); Ln(r)
+					END
+				ELSE
+					sx := s.x; sy := s.y; dx := s.dx; dy := s.dy;
+					Point(r, sx, sy); Str(r, " mt"); Ln(r)
+				END
+			| GfxPaths.Line: Point(r, s.x, s.y); Str(r, " ln"); Ln(r)
+			| GfxPaths.Arc: Arc(r, x - s.x0, y - s.y0, s.x - s.x0, s.y - s.y0, s.x0, s.y0, s.x1 - s.x0, s.y1 - s.y0, s.x2 - s.x0, s.y2 - s.y0)
+			| GfxPaths.Bezier: Point(r, s.x1, s.y1); Blank(r); Point(r, s.x2, s.y2); Blank(r); Point(r, s.x, s.y); Str(r, " ct"); Ln(r)
+			| GfxPaths.Exit:
+				IF (x = sx) & (y = sy) & ((dx # 0) OR (dy # 0)) & ((s.dx # 0) OR (s.dy # 0)) THEN
+					Str(r, "cp"); Ln(r)
+				ELSIF (s.dx # 0) OR (s.dy # 0) THEN
+					closed := FALSE
 				END;
-				x := s.x; y := s.y;
-				GfxPaths.Scan(s)
+				dx := s.dx; dy := s.dy
 			END;
-			IF (x = sx) & (y = sy) & ((dx # 0) OR (dy # 0)) & ((s.dx # 0) OR (s.dy # 0)) THEN
-				Str(r, "cp"); Ln(r)
-			END;
+			x := s.x; y := s.y;
 			GfxPaths.Scan(s)
 		END
 	END Path;
@@ -336,7 +351,7 @@ MODULE GfxPS;	(** eos   **)
 				d.buf[1] := x; d.len := 2
 			END
 		ELSIF d.len > 1 THEN
-			len := 0;
+			len := -1;
 			IF (x = d.buf[d.len-1]) & (x = d.buf[d.len-2]) THEN	(* three consecutive bytes equal => switch mode *)
 				len := d.len-3;
 				d.len := -3
@@ -347,7 +362,7 @@ MODULE GfxPS;	(** eos   **)
 					d.len := 0
 				END
 			END;
-			IF len > 0 THEN
+			IF len >= 0 THEN
 				IF d.n = 36 THEN Ln(r); d.n := 0 END;
 				Hex(r, len DIV 16); Hex(r, len MOD 16); INC(d.n);
 				FOR i := 0 TO len DO
@@ -411,16 +426,16 @@ MODULE GfxPS;	(** eos   **)
 		RETURN no
 	END PatternNo;
 	
-	PROCEDURE MaskMap (VAR r: Files.Rider; map: GfxMaps.Map);
+	PROCEDURE ImageMask (VAR r: Files.Rider; mask: Images.Image);
 		VAR y, x, w, i, n: INTEGER; buf: ARRAY 36 OF CHAR;
 	BEGIN
 		y := 0;
-		WHILE y < map.height DO
+		WHILE y < mask.height DO
 			x := 0;
-			WHILE x < map.width DO
+			WHILE x < mask.width DO
 				w := 8*36;
-				IF x + w > map.width THEN w := map.width - x END;
-				GfxMaps.GetPixels(map, x, y, w, GfxMaps.A1, buf, GfxMaps.SrcCopy);
+				IF x + w > mask.width THEN w := mask.width - x END;
+				Images.GetPixels(mask, x, y, w, Images.A1, buf, Images.SrcCopy);
 				i := 0; n := (w+7) DIV 8;
 				WHILE i < n DO
 					Hex(r, ORD(buf[i]) DIV 10H); Hex(r, ORD(buf[i]) MOD 10H);
@@ -430,62 +445,82 @@ MODULE GfxPS;	(** eos   **)
 			END;
 			INC(y)
 		END
-	END MaskMap;
+	END ImageMask;
 	
-	PROCEDURE Palette256 (VAR r: Files.Rider; pal: GfxMaps.Palette);
+	PROCEDURE Palette (VAR r: Files.Rider; VAR col: ARRAY OF Images.Pixel; size: LONGINT);
 		VAR i, j: LONGINT;
+	BEGIN
+		Ln(r); Str(r, " <"); i := 0; j := 0;
+		WHILE i < size DO
+			IF j = 8 THEN
+				Ln(r); Str(r, "  "); j := 0
+			END;
+			HexCol(r, col[i]);
+			INC(i); INC(j)
+		END;
+		Str(r, " >")
+	END Palette;
+	
+	PROCEDURE DPalette (VAR r: Files.Rider);
+		VAR i, j: LONGINT; col: Images.Pixel;
 	BEGIN
 		Ln(r); Str(r, " <"); i := 0; j := 0;
 		WHILE i < 256 DO
 			IF j = 8 THEN
 				Ln(r); Str(r, "  "); j := 0
 			END;
-			HexCol(r, pal.col[i]);
+			Images.SetRGB(col, Colors.Red[i], Colors.Green[i], Colors.Blue[i]);
+			HexCol(r, col);
 			INC(i); INC(j)
 		END;
 		Str(r, " >")
-	END Palette256;
+	END DPalette;
 	
-	PROCEDURE DefMap (psc: Context; map: GfxMaps.Map);
-		VAR y, x, byte: INTEGER; pix: GfxMaps.Pixel; fmt: GfxMaps.Format;
+	PROCEDURE DefImage (psc: Context; img: Images.Image);
+		VAR mode: Images.Mode; y, x, byte: INTEGER; pix: Images.Pixel; fmt: Images.Format;
 	BEGIN
 		IF ~psc.level2 THEN Ch(psc.out, "{") END;
 		Ch(psc.out, "<");
-		IF map.fmt.components = {GfxMaps.Alpha} THEN
-			MaskMap(psc.out, map)
+		IF img.fmt.components = {Images.alpha} THEN
+			ImageMask(psc.out, img)
 		ELSIF ~psc.level2 THEN
+			Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 			y := 0;
-			WHILE y < map.height DO
+			WHILE y < img.height DO
 				x := 0;
-				WHILE x < map.width DO
-					GfxMaps.Get(map, x, y, pix, GfxMaps.SrcCopy);
-					byte := Grey(ORD(pix[R]), ORD(pix[G]), ORD(pix[B]));
+				WHILE x < img.width DO
+					Images.Get(img, x, y, pix, mode);
+					byte := Grey(ORD(pix[Red]), ORD(pix[Green]), ORD(pix[Blue]));
 					Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
 					INC(x)
 				END;
 				INC(y); Ln(psc.out)
 			END
-		ELSIF map.fmt.components = {GfxMaps.Index} THEN
-			fmt := GfxMaps.I8; fmt.pal := map.fmt.pal;
+		ELSIF img.fmt.components = {Images.index} THEN
+			IF img.fmt.pal = NIL THEN fmt := Images.D8
+			ELSE Images.InitPaletteFormat(fmt, img.fmt.pal)
+			END;
+			Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 			y := 0;
-			WHILE y < map.height DO
+			WHILE y < img.height DO
 				x := 0;
-				WHILE x < map.width DO
-					GfxMaps.GetPixels(map, x, y, 1, fmt, pix, GfxMaps.SrcCopy);
+				WHILE x < img.width DO
+					Images.GetPixels(img, x, y, 1, fmt, pix, mode);
 					Hex(psc.out, ORD(pix[0]) DIV 10H); Hex(psc.out, ORD(pix[0]) MOD 10H);
 					INC(x)
 				END;
 				INC(y); Ln(psc.out)
 			END
 		ELSE
+			Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 			y := 0;
-			WHILE y < map.height DO
+			WHILE y < img.height DO
 				x := 0;
-				WHILE x < map.width DO
-					GfxMaps.Get(map, x, y, pix, GfxMaps.SrcCopy);
-					byte := ORD(pix[R]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
-					byte := ORD(pix[G]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
-					byte := ORD(pix[B]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
+				WHILE x < img.width DO
+					Images.Get(img, x, y, pix, mode);
+					byte := ORD(pix[Red]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
+					byte := ORD(pix[Green]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
+					byte := ORD(pix[Blue]); Hex(psc.out, byte DIV 10H); Hex(psc.out, byte MOD 10H);
 					INC(x)
 				END;
 				INC(y); Ln(psc.out)
@@ -494,69 +529,77 @@ MODULE GfxPS;	(** eos   **)
 		Ch(psc.out, ">");
 		IF psc.level2 THEN Str(psc.out, " cvx") ELSE Ch(psc.out, "}") END;
 		Ln(psc.out)
-	END DefMap;
+	END DefImage;
 	
-	PROCEDURE UseMap (psc: Context; map: GfxMaps.Map; no: INTEGER);
-		VAR rle: RLEData; y, x: INTEGER; pix: GfxMaps.Pixel; fmt: GfxMaps.Format;
+	PROCEDURE UseImage (psc: Context; img: Images.Image; no: INTEGER);
+		VAR mode: Images.Mode; rle: RLEData; y, x: INTEGER; pix: Images.Pixel; fmt: Images.Format;
 	BEGIN
-		Int(psc.out, map.width); Blank(psc.out); Int(psc.out, map.height);
-		IF map.fmt.components = {GfxMaps.Alpha} THEN
+		Int(psc.out, img.width); Blank(psc.out); Int(psc.out, img.height);
+		IF img.fmt.components = {Images.alpha} THEN
 			IF no >= 0 THEN
 				Str(psc.out, " true matrix Images "); Int(psc.out, no); Str(psc.out, " get imask")
 			ELSE
-				Str(psc.out, " true matrix {"); Int(psc.out, 2*((map.width+7) DIV 8)); Str(psc.out, " rh} imask"); Ln(psc.out);
-				MaskMap(psc.out, map); Ln(psc.out)
+				Str(psc.out, " true matrix {"); Int(psc.out, 2*((img.width+7) DIV 8)); Str(psc.out, " rh} imask"); Ln(psc.out);
+				ImageMask(psc.out, img); Ln(psc.out)
 			END
 		ELSIF ~psc.level2 THEN
 			IF no >= 0 THEN
 				Str(psc.out, " Images "); Int(psc.out, no); Str(psc.out, " get img")
 			ELSE
+				Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 				Str(psc.out, " /rld load img"); Ln(psc.out);
 				RLEStart(rle);
 				y := 0;
-				WHILE y < map.height DO
+				WHILE y < img.height DO
 					x := 0;
-					WHILE x < map.width DO
-						GfxMaps.Get(map, x, y, pix, GfxMaps.SrcCopy);
-						RLECh(psc.out, CHR(Grey(ORD(pix[R]), ORD(pix[G]), ORD(pix[B]))), rle);
+					WHILE x < img.width DO
+						Images.Get(img, x, y, pix, mode);
+						RLECh(psc.out, CHR(Grey(ORD(pix[Red]), ORD(pix[Green]), ORD(pix[Blue]))), rle);
 						INC(x)
 					END;
 					INC(y)
 				END;
 				RLEStop(psc.out, rle); Ln(psc.out)
 			END
-		ELSIF map.fmt.components = {GfxMaps.Index} THEN
-			Palette256(psc.out, map.fmt.pal);
+		ELSIF img.fmt.components = {Images.index} THEN
+			IF img.fmt.pal = NIL THEN
+				DPalette(psc.out);
+				fmt := Images.D8
+			ELSE
+				Palette(psc.out, img.fmt.pal.col, img.fmt.pal.used);
+				Images.InitPaletteFormat(fmt, img.fmt.pal)
+			END;
 			IF no >= 0 THEN
 				Str(psc.out, " Images "); Int(psc.out, no); Str(psc.out, " get pict")
 			ELSE
+				Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 				Str(psc.out, " rlf pict"); Ln(psc.out);
 				RLEStart(rle);
-				fmt := GfxMaps.I8; fmt.pal := map.fmt.pal;
 				y := 0;
-				WHILE y < map.height DO
+				WHILE y < img.height DO
 					x := 0;
-					WHILE x < map.width DO
-						GfxMaps.GetPixels(map, x, y, 1, fmt, pix, GfxMaps.SrcCopy);
+					WHILE x < img.width DO
+						Images.GetPixels(img, x, y, 1, fmt, pix, mode);
 						RLECh(psc.out, pix[0], rle);
 						INC(x)
 					END;
 					INC(y)
 				END;
-				RLEStop(psc.out, rle); Ln(psc.out)
+				RLEStop(psc.out, rle); Files.Write(psc.out, ">"); Ln(psc.out)
 			END
 		ELSE
 			IF no >= 0 THEN
 				Str(psc.out, " Images "); Int(psc.out, no); Str(psc.out, " get colimg")
 			ELSE
+				Images.InitModeColor(mode, Images.srcCopy, psc.color.r, psc.color.g, psc.color.b);
 				Str(psc.out, " rlf colimg"); Ln(psc.out);
 				RLEStart(rle);
 				y := 0;
-				WHILE y < map.height DO
+				WHILE y < img.height DO
 					x := 0;
-					WHILE x < map.width DO
-						GfxMaps.Get(map, x, y, pix, GfxMaps.SrcCopy);
-						RLECh(psc.out, pix[R], rle); RLECh(psc.out, pix[G], rle); RLECh(psc.out, pix[B], rle);
+					WHILE x < img.width DO
+						Images.Get(img, x, y, pix, mode);
+						RLECh(psc.out, pix[Red], rle); RLECh(psc.out, pix[Green], rle); RLECh(psc.out, pix[Blue], rle);
 						INC(x)
 					END;
 					INC(y)
@@ -565,18 +608,18 @@ MODULE GfxPS;	(** eos   **)
 			END
 		END;
 		Ln(psc.out)
-	END UseMap;
+	END UseImage;
 	
-	PROCEDURE RegisterMap (psc: Context; VAR map: GfxMaps.Map; VAR no: INTEGER);
-		VAR img: Image; copy: GfxMaps.Map;
+	PROCEDURE RegisterImage (psc: Context; VAR img: Images.Image; VAR no: INTEGER);
+		VAR i: Image; copy: Images.Image;
 		
-		PROCEDURE same (m, n: GfxMaps.Map): BOOLEAN;
+		PROCEDURE same (m, n: Images.Image): BOOLEAN;
 			VAR y, x, len, l: INTEGER; mbuf, nbuf: ARRAY 4*128 OF CHAR;
 		BEGIN
 			IF (m.width # n.width) OR (m.height # n.height) THEN
 				RETURN FALSE
 			END;
-			IF (m.fmt.bpp # n.fmt.bpp) OR (m.fmt.components # n.fmt.components) OR (m.fmt.unpack # n.fmt.unpack) THEN
+			IF ~Images.Same(m.fmt, n.fmt) THEN
 				RETURN FALSE	(* trivial reject case *)
 			END;
 			y := 0;
@@ -584,8 +627,8 @@ MODULE GfxPS;	(** eos   **)
 				x := 0;
 				WHILE x < m.width DO
 					IF x + 128 > m.width THEN len := m.width - x ELSE len := 128 END;
-					GfxMaps.GetPixels(m, x, y, len, GfxMaps.PixelFormat, mbuf, GfxMaps.SrcCopy);
-					GfxMaps.GetPixels(n, x, y, len, GfxMaps.PixelFormat, nbuf, GfxMaps.SrcCopy);
+					Images.GetPixels(m, x, y, len, Images.PixelFormat, mbuf, Images.SrcCopy);
+					Images.GetPixels(n, x, y, len, Images.PixelFormat, nbuf, Images.SrcCopy);
 					l := 0;
 					WHILE l < 4*len DO
 						IF mbuf[l] # nbuf[l] THEN
@@ -601,31 +644,31 @@ MODULE GfxPS;	(** eos   **)
 		END same;
 		
 	BEGIN
-		IF map.width * map.bpr < 8000H THEN	(* predefined images must fit in PostScript string *)
-			img := psc.images; no := 0;
-			IF img = NIL THEN
-				NEW(img); psc.images := img;
-				NEW(img.map); GfxMaps.Create(img.map, map.width, map.height, map.fmt);
-				GfxMaps.Copy(map, img.map, 0, 0, map.width, map.height, 0, 0, GfxMaps.SrcCopy)
-			ELSIF ~same(img.map, map) THEN
+		IF img.width * img.bpr < 8000H THEN	(* predefined images must fit in PostScript string *)
+			i := psc.images; no := 0;
+			IF i = NIL THEN
+				NEW(i); psc.images := i;
+				NEW(i.img); Images.Create(i.img, img.width, img.height, img.fmt);
+				Images.Copy(img, i.img, 0, 0, img.width, img.height, 0, 0, Images.SrcCopy)
+			ELSIF ~same(i.img, img) THEN
 				INC(no);
-				WHILE (img.next # NIL) & ~same(img.next.map, map) DO
-					img := img.next; INC(no)
+				WHILE (i.next # NIL) & ~same(i.next.img, img) DO
+					i := i.next; INC(no)
 				END;
-				IF img.next = NIL THEN
-					NEW(img.next); img := img.next;
-					NEW(img.map); GfxMaps.Create(img.map, map.width, map.height, map.fmt);
-					GfxMaps.Copy(map, img.map, 0, 0, map.width, map.height, 0, 0, GfxMaps.SrcCopy)
+				IF i.next = NIL THEN
+					NEW(i.next); i := i.next;
+					NEW(i.img); Images.Create(i.img, img.width, img.height, img.fmt);
+					Images.Copy(img, i.img, 0, 0, img.width, img.height, 0, 0, Images.SrcCopy)
 				END
 			END;
-			map := img.map
+			img := i.img
 		ELSE
 			no := -1;
-			NEW(copy); GfxMaps.Create(copy, map.width, map.height, map.fmt);
-			GfxMaps.Copy(map, copy, 0, 0, map.width, map.height, 0, 0, GfxMaps.SrcCopy);
-			map := copy
+			NEW(copy); Images.Create(copy, img.width, img.height, img.fmt);
+			Images.Copy(img, copy, 0, 0, img.width, img.height, 0, 0, Images.SrcCopy);
+			img := copy
 		END
-	END RegisterMap;
+	END RegisterImage;
 	
 	
 	(*--- Fonts ---*)
@@ -913,7 +956,7 @@ MODULE GfxPS;	(** eos   **)
 	END Type1;
 	
 	PROCEDURE Type3 (VAR r: Files.Rider; VAR t3: T3Font; scale: REAL);
-		VAR font: GfxFonts.Font; used, i, j: LONGINT; bx, by, dx, dy: REAL; map: GfxMaps.Map; name: GfxFonts.FontName;
+		VAR font: GfxFonts.Font; used, i, j: LONGINT; bx, by, dx, dy: REAL; img: Images.Image; name: GfxFonts.FontName;
 	BEGIN
 		font := t3.font;
 		Str(r, "8 dict dup begin"); Ln(r);
@@ -931,31 +974,31 @@ MODULE GfxPS;	(** eos   **)
 			END
 		END;
 		Str(r, "/CharData "); Int(r, used+1); Str(r, " dict dup begin"); Ln(r);
-		GfxFonts.GetMap(font, 0X, bx, by, dx, dy, map);
+		GfxFonts.GetMap(font, 0X, bx, by, dx, dy, img);
 		IF (dx = 0) & (dy = 0) THEN
-			GfxFonts.GetMap(font, " ", bx, by, dx, dy, map);
+			GfxFonts.GetMap(font, " ", bx, by, dx, dy, img);
 			Str(r, "/.notdef ["); Int(r, ENTIER(dx)); Ch(r, " "); Int(r, ENTIER(dy)); Str(r, " 0] def"); Ln(r)
-		ELSIF map = NIL THEN
+		ELSIF img = NIL THEN
 			Str(r, "/.notdef ["); Int(r, ENTIER(dx)); Ch(r, " "); Int(r, ENTIER(dy)); Str(r, " 0] def"); Ln(r)
 		ELSE
-			Str(r, "/.notdef [{<"); MaskMap(r, map); Str(r, ">} ");
+			Str(r, "/.notdef [{<"); ImageMask(r, img); Str(r, ">} ");
 			Int(r, ENTIER(dx)); Ch(r, " "); Int(r, ENTIER(dy)); Ch(r, " ");
 			Int(r, ENTIER(bx)); Ch(r, " "); Int(r, ENTIER(by)); Ch(r, " ");
-			Int(r, map.width); Ch(r, " "); Int(r, map.height); Str(r, "] def"); Ln(r)
+			Int(r, img.width); Ch(r, " "); Int(r, img.height); Str(r, "] def"); Ln(r)
 		END;
 		FOR i := 0 TO 255 DO
 			IF (i MOD 32) IN t3.used[i DIV 32] THEN
 				GetName(i, name);
 				IF name # ".notdef" THEN
 					Ch(r, "/"); Str(r, name); Str(r, " [");
-					GfxFonts.GetMap(font, CHR(i), bx, by, dx, dy, map);
-					IF map = NIL THEN
+					GfxFonts.GetMap(font, CHR(i), bx, by, dx, dy, img);
+					IF img = NIL THEN
 						Int(r, ENTIER(dx)); Ch(r, " "); Int(r, ENTIER(dy)); Str(r, " 0] def"); Ln(r)
 					ELSE
-						Str(r, "{<"); MaskMap(r, map); Str(r, ">} ");
+						Str(r, "{<"); ImageMask(r, img); Str(r, ">} ");
 						Int(r, ENTIER(dx)); Ch(r, " "); Int(r, ENTIER(dy)); Ch(r, " ");
 						Int(r, ENTIER(bx)); Ch(r, " "); Int(r, ENTIER(by)); Ch(r, " ");
-						Int(r, map.width); Ch(r, " "); Int(r, map.height); Str(r, "] def"); Ln(r)
+						Int(r, img.width); Ch(r, " "); Int(r, img.height); Str(r, "] def"); Ln(r)
 					END
 				END
 			END
@@ -1034,16 +1077,16 @@ MODULE GfxPS;	(** eos   **)
 	END Prolog;
 	
 	PROCEDURE Setup (psc: Context);
-		VAR img: Image; pat: Pattern; n: LONGINT; map: GfxMaps.Map; t1: T1Font; t3: T3Font;
+		VAR il: Image; pat: Pattern; n: LONGINT; img: Images.Image; t1: T1Font; t3: T3Font;
 	BEGIN
 		Str(psc.out, "%%BeginSetup"); Ln(psc.out);
-		img := psc.images;
-		IF img # NIL THEN
+		il := psc.images;
+		IF il # NIL THEN
 			Str(psc.out, "/Images ["); Ln(psc.out);
 			REPEAT
-				DefMap(psc, img.map);
-				img := img.next
-			UNTIL img = NIL;
+				DefImage(psc, il.img);
+				il := il.next
+			UNTIL il = NIL;
 			Str(psc.out, "] def"); Ln(psc.out)
 		END;
 		pat := psc.patterns;
@@ -1052,26 +1095,26 @@ MODULE GfxPS;	(** eos   **)
 			Str(psc.out, "/Patterns "); Int(psc.out, n); Str(psc.out, " array def"); Ln(psc.out);
 			pat := psc.patterns; n := 0;
 			REPEAT
-				map := pat.map;
+				img := pat.img;
 				Str(psc.out, "Patterns "); Int(psc.out, n); Str(psc.out, " <<"); Ln(psc.out);
 				Str(psc.out, "  /PatternType 1"); Ln(psc.out);
-				IF map.fmt.components = {GfxMaps.Alpha} THEN Str(psc.out, "  /PaintType 2"); Ln(psc.out)
+				IF img.fmt.components = {Images.alpha} THEN Str(psc.out, "  /PaintType 2"); Ln(psc.out)
 				ELSE Str(psc.out, " /PaintType 1"); Ln(psc.out)
 				END;
 				Str(psc.out, "  /TilingType 1"); Ln(psc.out);
-				Str(psc.out, "  /BBox [0 0 "); Int(psc.out, map.width); Blank(psc.out);
-				Int(psc.out, map.height); Ch(psc.out, "]"); Ln(psc.out);
-				Str(psc.out, "  /XStep "); Int(psc.out, map.width); Ln(psc.out);
-				Str(psc.out, "  /YStep "); Int(psc.out, map.height); Ln(psc.out);
+				Str(psc.out, "  /BBox [0 0 "); Int(psc.out, img.width); Blank(psc.out);
+				Int(psc.out, img.height); Ch(psc.out, "]"); Ln(psc.out);
+				Str(psc.out, "  /XStep "); Int(psc.out, img.width); Ln(psc.out);
+				Str(psc.out, "  /YStep "); Int(psc.out, img.height); Ln(psc.out);
 				Str(psc.out, "  /PaintProc {"); Ln(psc.out);
 				IF pat.no >= 0 THEN
 					IF (pat.px # 0) OR (pat.py # 0) THEN
 						Str(psc.out, "    "); Point(psc.out, pat.px, pat.py); Str(psc.out, " translate"); Ln(psc.out)
 					END;
 					Str(psc.out, "    pop ");
-					UseMap(psc, map, pat.no)
+					UseImage(psc, img, pat.no)
 				ELSE
-					Str(psc.out, "    pop 0 0 "); Int(psc.out, pat.map.width); Blank(psc.out); Int(psc.out, pat.map.height);
+					Str(psc.out, "    pop 0 0 "); Int(psc.out, pat.img.width); Blank(psc.out); Int(psc.out, pat.img.height);
 					Str(psc.out, " rectfill"); Ln(psc.out)
 				END;
 				Str(psc.out, "  }"); Ln(psc.out);
@@ -1101,18 +1144,40 @@ MODULE GfxPS;	(** eos   **)
 	
 	(*--- initialization ---*)
 	
+	PROCEDURE InitClip (psc: Context);
+	BEGIN
+		NEW(psc.clip); NEW(psc.clip.path);
+		GfxPaths.Clear(psc.clip.path); psc.clip.evenOdd := FALSE; psc.clip.next := NIL;
+		psc.clip.llx := MIN(REAL); psc.clip.lly := MIN(REAL); psc.clip.urx := MAX(REAL); psc.clip.ury := MAX(REAL)
+	END InitClip;
+	
+	PROCEDURE AdjustClip (psc: Context);
+		VAR llx, lly, urx, ury: REAL;
+	BEGIN
+		IF ~psc.eps THEN
+			GfxMatrix.ApplyToRect(psc.defMatrix, 0, 0, psc.width - psc.left - psc.right, psc.height - psc.bot - psc.top, llx, lly, urx, ury);
+			psc.clip.llx := llx; psc.clip.lly := lly; psc.clip.urx := urx; psc.clip.ury := ury;
+			GfxPaths.AddRect(psc.clip.path, llx, lly, urx, ury);
+			IF psc.level2 THEN
+				Point(psc.out, llx, lly); Blank(psc.out);
+				Point(psc.out, urx - llx, ury - lly); Str(psc.out, " rectclip")
+			ELSE
+				Rect(psc.out, llx, lly, urx - llx, ury - lly); Str(psc.out, " clnp")
+			END;
+			Ln(psc.out)
+		END
+	END AdjustClip;
+	
 	PROCEDURE Reset (ctxt: Gfx.Context);
 		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
-		Gfx.InitContextValues(psc);
-		Str(psc.out, "ig "); Real(psc.out, PSDPI/ScreenDPI); Str(psc.out, " slw ");
-		Real(psc.out, psc.styleLimit); Str(psc.out, " sml");
-		IF psc.level2 THEN Str(psc.out, " /DeviceRGB setcolorspace") END;
-		Ln(psc.out);
-		Gfx.ResetCTM(psc);
-		Gfx.ResetClip(psc);
-		psc.simpleCap := TRUE; psc.simpleJoin := TRUE;
+		Str(psc.out, "gr gs"); Ln(psc.out);
+		Gfx.Init(psc); InitClip(psc); AdjustClip(psc);
+		psc.ctm := psc.defMatrix;
+		Matrix(psc.out, psc.defMatrix); Str(psc.out, " cc"); Ln(psc.out);
+		Real(psc.out, psc.styleLimit); Str(psc.out, " sml"); Ln(psc.out);
+		IF psc.level2 THEN Str(psc.out, " /DeviceRGB setcolorspace"); Ln(psc.out) END;
 		psc.color := Gfx.Black; psc.pattern := NIL;
 		psc.fontname := ""
 	END Reset;
@@ -1124,10 +1189,15 @@ MODULE GfxPS;	(** eos   **)
 		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
-		psc.ctm := mat;
-		IF ~(Gfx.InPath IN psc.mode) THEN
-			Str(psc.out, "im ");
-			Matrix(psc.out, mat); Str(psc.out, " cc"); Ln(psc.out)
+		IF ~GfxMatrix.Equal(mat, psc.ctm) THEN
+			psc.ctm := mat;
+			IF ~(Gfx.InPath IN psc.mode) THEN
+				Str(psc.out, "im ");
+				IF ~GfxMatrix.Equal(mat, GfxMatrix.Identity) THEN
+					Matrix(psc.out, mat); Str(psc.out, " cc")
+				END;
+				Ln(psc.out)
+			END
 		END
 	END SetCTM;
 	
@@ -1180,73 +1250,83 @@ MODULE GfxPS;	(** eos   **)
 	
 	(*--- Clipping ---*)
 	
+	PROCEDURE^ SetColor (psc: Context; col: Gfx.Color; pattern: Gfx.Pattern);
+	
 	PROCEDURE ResetClip (ctxt: Gfx.Context);
-		VAR psc: Context; llx, lly, urx, ury: REAL;
+		VAR psc: Context; col: Gfx.Color; pat: Gfx.Pattern; i: LONGINT; fname: GfxFonts.FontName; fmat: GfxMatrix.Matrix;
 	BEGIN
 		psc := ctxt(Context);
-		IF psc.clip = NIL THEN NEW(psc.clip); NEW(psc.clip.path) END;
-		GfxPaths.Clear(psc.clip.path); psc.clip.evenOdd := FALSE; psc.clip.next := NIL;
-		psc.clip.llx := MIN(REAL); psc.clip.lly := MIN(REAL); psc.clip.urx := MAX(REAL); psc.clip.ury := MAX(REAL);
-		psc.clipDepth := 0;
-		IF ~psc.eps THEN
-			GfxMatrix.ApplyToRect(psc.defMatrix, 0, 0, psc.width - psc.right - psc.left, psc.height - psc.top - psc.bot, llx, lly, urx, ury);
-			GfxPaths.AddRect(psc.clip.path, llx, lly, urx, ury);
-			psc.clip.llx := llx; psc.clip.lly := lly; psc.clip.urx := urx; psc.clip.ury := ury;
-			IF ~GfxMatrix.Equal(psc.ctm, psc.defMatrix) THEN
-				Str(psc.out, "ctm im "); Matrix(psc.out, psc.defMatrix); Str(psc.out, " cc ")
+		InitClip(psc);
+		Str(psc.out, "ctm gr gs"); Ln(psc.out);
+		AdjustClip(psc);
+		Str(psc.out, "sm"); Ln(psc.out);
+		Str(psc.out, "5 sml"); Ln(psc.out);
+		IF psc.level2 THEN Str(psc.out, " /DeviceRGB setcolorspace"); Ln(psc.out) END;
+		col := psc.color; pat := psc.pattern;
+		psc.color := Gfx.Black; psc.pattern := NIL;
+		SetColor(psc, col, pat);
+		IF psc.lineWidth # 1 THEN Real(psc.out, psc.lineWidth); Str(psc.out, " slw"); Ln(psc.out) END;
+		IF psc.dashPatLen # 0 THEN
+			Ch(psc.out, "[");
+			Real(psc.out, psc.dashPatOn[0]); Blank(psc.out); Real(psc.out, psc.dashPatOff[0]);
+			FOR i := 1 TO psc.dashPatLen-1 DO
+				Blank(psc.out); Real(psc.out, psc.dashPatOn[i]); Blank(psc.out); Real(psc.out, psc.dashPatOff[i])
 			END;
-			Str(psc.out, "ic ");
-			IF psc.level2 THEN
-				Point(psc.out, 0, 0); Blank(psc.out);
-				Point(psc.out, psc.width - psc.right - psc.left, psc.height - psc.top - psc.bot); Str(psc.out, " rectclip")
-			ELSE
-				Rect(psc.out, 0, 0, psc.width - psc.right - psc.left, psc.height - psc.top - psc.bot); Str(psc.out, " clnp")
-			END;
-			IF ~GfxMatrix.Equal(psc.ctm, psc.defMatrix) THEN
-				Str(psc.out, " sm")
-			END;
-			Ln(psc.out)
+			Str(psc.out, "] "); Real(psc.out, psc.dashPhase); Str(psc.out, " sd"); Ln(psc.out)
+		END;
+		IF psc.capStyle # Gfx.DefaultCap THEN
+			IF psc.capStyle = Gfx.SquareCap THEN Str(psc.out, "2 slc"); Ln(psc.out)
+			ELSIF psc.capStyle = Gfx.RoundCap THEN Str(psc.out, "1 slc"); Ln(psc.out)
+			END
+		END;
+		IF psc.joinStyle # Gfx.DefaultJoin THEN
+			IF psc.joinStyle = Gfx.RoundJoin THEN Str(psc.out, "1 slj"); Ln(psc.out)
+			ELSIF psc.joinStyle = Gfx.BevelJoin THEN Str(psc.out, "2 slj"); Ln(psc.out)
+			END
+		END;
+		IF psc.flatness # 1 THEN
+			Real(psc.out, psc.flatness); Str(psc.out, " setflat"); Ln(psc.out)
+		END;
+		IF psc.fontname # "" THEN
+			COPY(psc.fontname, fname); fmat := psc.fontmat;
+			psc.fontname := "";
+			SelectFont(psc, fname, fmat)
 		END
 	END ResetClip;
 	
 	PROCEDURE GetClipRect (ctxt: Gfx.Context; VAR llx, lly, urx, ury: REAL);
-		VAR clip: ClipPath;
+		VAR clip: ClipPath; inv: GfxMatrix.Matrix;
 	BEGIN
 		clip := ctxt(Context).clip;
-		llx := clip.llx; lly := clip.lly; urx := clip.urx; ury := clip.ury
+		GfxMatrix.Invert(ctxt.ctm, inv);
+		GfxMatrix.ApplyToRect(inv, clip.llx, clip.lly, clip.urx, clip.ury, llx, lly, urx, ury)
 	END GetClipRect;
 	
-	PROCEDURE SaveClip (ctxt: Gfx.Context);
-		VAR psc: Context;
+	PROCEDURE GetClip (ctxt: Gfx.Context): Gfx.ClipArea;
 	BEGIN
-		psc := ctxt(Context);
-		IF psc.clipDepth < ClipStackDepth THEN
-			psc.clipStack[psc.clipDepth] := psc.clip
-		END;
-		INC(psc.clipDepth)
-	END SaveClip;
+		RETURN ctxt(Context).clip
+	END GetClip;
 	
-	PROCEDURE RestoreClip (ctxt: Gfx.Context);
-		VAR psc: Context; inv: GfxMatrix.Matrix; clip: ClipPath;
+	PROCEDURE SetClip (ctxt: Gfx.Context; clip: Gfx.ClipArea);
+		VAR psc: Context; inv: GfxMatrix.Matrix; cl: ClipPath;
 	BEGIN
+		ASSERT(clip IS ClipPath, 100);
 		psc := ctxt(Context);
-		ASSERT(psc.clipDepth > 0);
-		DEC(psc.clipDepth);
-		IF psc.clipDepth < ClipStackDepth THEN
-			psc.clip := psc.clipStack[psc.clipDepth];
-			GfxMatrix.Invert(psc.ctm, inv);
-			Str(psc.out, "ic"); Ln(psc.out);
-			clip := psc.clip;
-			WHILE clip # NIL DO
-				GfxPaths.Copy(clip.path, TmpPath);
+		ResetClip(psc);
+		psc.clip := clip(ClipPath);
+		GfxMatrix.Invert(psc.ctm, inv);
+		cl := psc.clip;
+		WHILE cl # NIL DO
+			IF ~GfxPaths.Empty(cl.path) THEN
+				GfxPaths.Copy(cl.path, TmpPath);
 				GfxPaths.Apply(TmpPath, inv);
-				Path(psc.out, TmpPath);
-				IF clip.evenOdd THEN Str(psc.out, "eo") END;
-				Str(psc.out, "clnp"); Ln(psc.out);
-				clip := clip.next
-			END
+				Path(psc.out, TmpPath, FALSE);
+				IF cl.evenOdd THEN Str(psc.out, "eo") END;
+				Str(psc.out, "clnp"); Ln(psc.out)
+			END;
+			cl := cl.next
 		END
-	END RestoreClip;
+	END SetClip;
 	
 	
 	(*--- Graphics State ---*)
@@ -1265,6 +1345,10 @@ MODULE GfxPS;	(** eos   **)
 		VAR psc: Context; i: LONGINT; pat: ARRAY 2*Gfx.MaxDashPatSize OF REAL;
 	BEGIN
 		psc := ctxt(Context);
+		IF (len = psc.dashPatLen) & (phase = psc.dashPhase) THEN
+			i := 0; WHILE (i < len) & (on[i] = psc.dashPatOn[i]) & (off[i] = psc.dashPatOff[i]) DO INC(i) END;
+			IF i = len THEN RETURN END
+		END;
 		Gfx.SetDashArray(psc, on, off, len);
 		psc.dashPhase := phase;
 		FOR i := 0 TO len-1 DO
@@ -1274,45 +1358,33 @@ MODULE GfxPS;	(** eos   **)
 	END SetDashPattern;
 	
 	PROCEDURE SetCapStyle (ctxt: Gfx.Context; style: Gfx.CapStyle);
-		VAR psc: Context; butt, round, square: Gfx.CapStyle;
+		VAR psc: Context;
 	BEGIN
 		IF style # ctxt.capStyle THEN
 			psc := ctxt(Context);
-			butt := Gfx.ButtCap; round := Gfx.RoundCap; square := Gfx.SquareCap;
 			psc.capStyle := style;
-			IF style = butt THEN
-				psc.simpleCap := TRUE;
-				Str(psc.out, "0 slc"); Ln(psc.out)
-			ELSIF style = round THEN
-				psc.simpleCap := TRUE;
-				Str(psc.out, "1 slc"); Ln(psc.out)
-			ELSIF style = square THEN
-				psc.simpleCap := TRUE;
+			IF style = Gfx.SquareCap THEN
 				Str(psc.out, "2 slc"); Ln(psc.out)
+			ELSIF style = Gfx.RoundCap THEN
+				Str(psc.out, "1 slc"); Ln(psc.out)
 			ELSE
-				psc.simpleCap := FALSE
+				Str(psc.out, "0 slc"); Ln(psc.out)
 			END
 		END
 	END SetCapStyle;
 	
 	PROCEDURE SetJoinStyle (ctxt: Gfx.Context; style: Gfx.JoinStyle);
-		VAR psc: Context; miter, bevel, round: Gfx.JoinStyle;
+		VAR psc: Context;
 	BEGIN
 		IF style # ctxt.joinStyle THEN
 			psc := ctxt(Context);
-			miter := Gfx.MiterJoin; bevel := Gfx.BevelJoin; round := Gfx.RoundJoin;
 			psc.joinStyle := style;
-			IF style = miter THEN
-				psc.simpleJoin := TRUE;
+			IF style = Gfx.MiterJoin THEN
 				Str(psc.out, "0 slj "); Ln(psc.out)
-			ELSIF style = round THEN
-				psc.simpleJoin := TRUE;
+			ELSIF style = Gfx.RoundJoin THEN
 				Str(psc.out, "1 slj"); Ln(psc.out)
-			ELSIF style = bevel THEN
-				psc.simpleJoin := TRUE;
-				Str(psc.out, "2 slj"); Ln(psc.out)
 			ELSE
-				psc.simpleJoin := FALSE
+				Str(psc.out, "2 slj"); Ln(psc.out)
 			END
 		END
 	END SetJoinStyle;
@@ -1321,24 +1393,20 @@ MODULE GfxPS;	(** eos   **)
 		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
-		psc.styleLimit := limit;
-		Real(psc.out, limit); Str(psc.out, " sml"); Ln(psc.out)
+		IF limit # psc.styleLimit THEN
+			psc.styleLimit := limit;
+			Real(psc.out, limit); Str(psc.out, " sml"); Ln(psc.out)
+		END
 	END SetStyleLimit;
-	
-	PROCEDURE SetPoint (ctxt: Gfx.Context; x, y: REAL);
-		VAR psc: Context;
-	BEGIN
-		psc := ctxt(Context);
-		Point(psc.out, x, y); Str(psc.out, " mt"); Ln(psc.out);
-		psc.cpx := x; psc.cpy := y
-	END SetPoint;
 	
 	PROCEDURE SetFlatness (ctxt: Gfx.Context; flatness: REAL);
 		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
-		Real(psc.out, flatness); Str(psc.out, " setflat"); Ln(psc.out);
-		ctxt.flatness := flatness
+		IF flatness # psc.flatness THEN
+			Real(psc.out, flatness); Str(psc.out, " setflat"); Ln(psc.out);
+			ctxt.flatness := flatness
+		END
 	END SetFlatness;
 	
 	PROCEDURE GetWidth (ctxt: Gfx.Context; VAR str: ARRAY OF CHAR; VAR dx, dy: REAL);
@@ -1374,7 +1442,7 @@ MODULE GfxPS;	(** eos   **)
 	PROCEDURE SetColor (psc: Context; col: Gfx.Color; pattern: Gfx.Pattern);
 	BEGIN
 		IF psc.level2 & ((col.r # psc.color.r) OR (col.g # psc.color.g) OR (col.b # psc.color.b) OR (pattern # psc.pattern)) THEN
-			IF (pattern = NIL) OR (pattern.map.fmt.components = {GfxMaps.Alpha}) THEN
+			IF (pattern = NIL) OR (pattern.img.fmt.components = {Images.alpha}) THEN
 				Real(psc.out, col.r/255); Ch(psc.out, " ");
 				Real(psc.out, col.g/255); Ch(psc.out, " ");
 				Real(psc.out, col.b/255); Ch(psc.out, " ")
@@ -1387,7 +1455,7 @@ MODULE GfxPS;	(** eos   **)
 			psc.color := col; psc.pattern := pattern
 		ELSIF ~psc.level2 &
 			(Grey(col.r, col.g, col.b) # Grey(psc.color.r, psc.color.g, psc.color.b)) &
-			((pattern = NIL) OR (pattern.map.fmt.components = {GfxMaps.Alpha}))
+			((pattern = NIL) OR (pattern.img.fmt.components = {Images.alpha}))
 		THEN
 			Real(psc.out, Grey(col.r, col.g, col.b)/255); Str(psc.out, " sg"); Ln(psc.out);
 			psc.color := col; psc.pattern := pattern
@@ -1401,33 +1469,87 @@ MODULE GfxPS;	(** eos   **)
 		GfxMatrix.Invert(psc.defMatrix, m);
 		GfxMatrix.ApplyToRect(m, llx, lly, urx, ury, llx, lly, urx, ury);
 		ResetCTM(psc);
-		px := pat.px + ENTIER((llx - pat.px)/pat.map.width) * pat.map.width;
-		py := pat.py + ENTIER((lly - pat.py)/pat.map.height) * pat.map.height;
+		px := pat.px + ENTIER((llx - pat.px)/pat.img.width) * pat.img.width;
+		py := pat.py + ENTIER((lly - pat.py)/pat.img.height) * pat.img.height;
 		Point(psc.out, px, py); Str(psc.out, " tr"); Ln(psc.out);
-		vcnt := -ENTIER((py - ury)/pat.map.height);
+		vcnt := -ENTIER((py - ury)/pat.img.height);
 		REPEAT
 			Str(psc.out, "gs"); Ln(psc.out);
-			hcnt := -ENTIER((px - urx)/pat.map.width);
+			hcnt := -ENTIER((px - urx)/pat.img.width);
 			REPEAT
-				UseMap(psc, pat.map, pat.no);
-				Int(psc.out, pat.map.width); Str(psc.out, " 0 tr"); Ln(psc.out);
+				UseImage(psc, pat.img, pat.no);
+				Int(psc.out, pat.img.width); Str(psc.out, " 0 tr"); Ln(psc.out);
 				DEC(hcnt)
 			UNTIL hcnt <= 0;
-			Str(psc.out, "gr 0 "); Int(psc.out, pat.map.height); Str(psc.out, " tr"); Ln(psc.out);
+			Str(psc.out, "gr 0 "); Int(psc.out, pat.img.height); Str(psc.out, " tr"); Ln(psc.out);
 			DEC(vcnt)
 		UNTIL vcnt <= 0;
 		Str(psc.out, "gr"); Ln(psc.out)
 	END FillPattern;
 	
+	(* remove coincident enter/exit pairs *)
+	PROCEDURE Simplify (src, dst: GfxPaths.Path; VAR connected: BOOLEAN);
+		VAR conn: BOOLEAN; s: GfxPaths.Scanner; sx, sy, x, y, dx, dy: REAL;
+	BEGIN
+		connected := TRUE; conn := TRUE;
+		GfxPaths.Open(s, src, 0); GfxPaths.Clear(dst);
+		WHILE s.elem # GfxPaths.Stop DO
+			CASE s.elem OF
+			| GfxPaths.Enter:
+				IF (s.dx = 0) & (s.dy = 0) THEN
+					IF ~conn THEN
+						GfxPaths.AddExit(dst, dx, dy);
+						connected := FALSE; conn := TRUE
+					END;
+					GfxPaths.AddEnter(dst, s.x, s.y, s.dx, s.dy)
+				ELSIF conn THEN
+					GfxPaths.AddEnter(dst, s.x, s.y, s.dx, s.dy);
+					sx := s.x; sy := s.y
+				ELSIF (s.x = x) & (s.y = y) THEN
+					conn := TRUE	(* discard coincident Enter and Exit point *)
+				ELSE
+					connected := FALSE; conn := TRUE;
+					GfxPaths.AddExit(dst, dx, dy);
+					GfxPaths.AddEnter(dst, s.x, s.y, s.dx, s.dy);
+					sx := s.x; sy := s.y
+				END;
+				x := s.x; y := s.y
+			| GfxPaths.Line:
+				GfxPaths.AddLine(dst, s.x, s.y);
+				x := s.x; y := s.y
+			| GfxPaths.Arc:
+				GfxPaths.AddArc(dst, s.x, s.y, s.x0, s.y0, s.x1, s.y1, s.x2, s.y2);
+				x := s.x; y := s.y
+			| GfxPaths.Bezier:
+				GfxPaths.AddBezier(dst, s.x, s.y, s.x1, s.y1, s.x2, s.y2);
+				x := s.x; y := s.y
+			| GfxPaths.Exit:
+				IF (s.dx = 0) & (s.dy = 0) THEN
+					GfxPaths.AddExit(dst, s.dx, s.dy)
+				ELSIF (x = sx) & (y = sy) THEN
+					GfxPaths.AddExit(dst, s.dx, s.dy)
+				ELSE
+					conn := FALSE; dx := s.dx; dy := s.dy	(* delay output *)
+				END
+			END;
+			GfxPaths.Scan(s)
+		END;
+		IF ~conn THEN
+			connected := FALSE;
+			GfxPaths.AddExit(dst, dx, dy)
+		END
+	END Simplify;
+	
 	PROCEDURE RenderPath (psc: Context; path: GfxPaths.Path);
-		VAR inv: GfxMatrix.Matrix; clip: ClipPath; llx, lly, urx, ury, lw, bw: REAL; savePath: GfxPaths.Path;
+		VAR simple: BOOLEAN; inv: GfxMatrix.Matrix; clip: ClipPath; llx, lly, urx, ury, lw, bw: REAL; savePath: GfxPaths.Path;
 	BEGIN
 		IF ~GfxPaths.Empty(path) THEN
-			IF (psc.mode * {Gfx.Clip, Gfx.Fill} # {}) OR (Gfx.Stroke IN psc.mode) & psc.simpleStroke THEN
-				GfxPaths.Copy(path, TmpPath);
+			Simplify(path, TmpPath, simple);
+			simple := simple & ((psc.strokePat = NIL) OR psc.level2 & (PatternNo(psc, psc.strokePat) >= 0));
+			IF (psc.mode * {Gfx.Clip, Gfx.Fill} # {}) OR (Gfx.Stroke IN psc.mode) & simple THEN
 				GfxMatrix.Invert(psc.cam, inv);
 				GfxPaths.Apply(TmpPath, inv);
-				Path(psc.out, TmpPath)
+				Path(psc.out, TmpPath, FALSE)
 			END;
 			GfxPaths.GetBox(path, llx, lly, urx, ury);
 			IF Gfx.Clip IN psc.mode THEN
@@ -1447,14 +1569,14 @@ MODULE GfxPS;	(** eos   **)
 			IF Gfx.Fill IN psc.mode THEN
 				IncludeBox(psc, llx, lly, urx, ury);
 				SetColor(psc, psc.fillCol, psc.fillPat);
-				IF psc.simpleFill THEN
-					IF (Gfx.Stroke IN psc.mode) & psc.simpleStroke THEN Str(psc.out, "gs ") END;
+				IF (psc.fillPat = NIL) OR psc.level2 & (PatternNo(psc, psc.fillPat) >= 0) THEN
+					IF (Gfx.Stroke IN psc.mode) & simple THEN Str(psc.out, "gs ") END;
 					IF Gfx.EvenOdd IN psc.mode THEN Str(psc.out, "eofill") ELSE Str(psc.out, "fill") END;
-					IF (Gfx.Stroke IN psc.mode) & psc.simpleStroke THEN Str(psc.out, " gr") END;
+					IF (Gfx.Stroke IN psc.mode) & simple THEN Str(psc.out, " gr") END;
 					Ln(psc.out)
 				ELSE
 					FillPattern(psc, llx, lly, urx, ury, psc.fillPat(Pattern));
-					IF ~(Gfx.Stroke IN psc.mode) THEN
+					IF ~((Gfx.Stroke IN psc.mode) & simple) THEN
 						Str(psc.out, "np"); Ln(psc.out)
 					END
 				END
@@ -1464,7 +1586,7 @@ MODULE GfxPS;	(** eos   **)
 				bw := lw * psc.styleLimit;
 				IncludeBox(psc, llx - bw, lly - bw, urx + bw, ury + bw);
 				SetColor(psc, psc.strokeCol, psc.strokePat);
-				IF psc.simpleStroke THEN
+				IF simple THEN
 					Str(psc.out, "stroke"); Ln(psc.out)
 				ELSE
 					savePath := psc.path; psc.path := path;
@@ -1472,7 +1594,7 @@ MODULE GfxPS;	(** eos   **)
 					psc.path := savePath;
 					GfxMatrix.Invert(psc.cam, inv);
 					GfxPaths.Apply(TmpPath, inv);
-					Path(psc.out, TmpPath);
+					Path(psc.out, TmpPath, TRUE);
 					IF (psc.strokePat = NIL) OR psc.level2 & (PatternNo(psc, psc.fillPat) >= 0) THEN
 						Str(psc.out, "fill"); Ln(psc.out)
 					ELSE
@@ -1496,10 +1618,7 @@ MODULE GfxPS;	(** eos   **)
 			IF psc.cp = NIL THEN NEW(psc.cp) END;
 			GfxPaths.Clear(psc.cp);
 		END;
-		psc.cam := psc.ctm;	(* preserve current transformation for attributes *)
-		psc.simpleStroke := psc.simpleCap & psc.simpleJoin;
-		psc.simpleStroke := psc.simpleStroke & ((psc.strokePat = NIL) OR psc.level2 & (PatternNo(psc, psc.strokePat) >= 0));
-		psc.simpleFill := (psc.fillPat = NIL) OR psc.level2 & (PatternNo(psc, psc.fillPat) >= 0);
+		psc.cam := psc.ctm	(* preserve current transformation for attributes *)
 	END Begin;
 	
 	PROCEDURE End (ctxt: Gfx.Context);
@@ -1517,7 +1636,6 @@ MODULE GfxPS;	(** eos   **)
 		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
-		psc.closed := (dx # 0) OR (dy # 0);
 		GfxMatrix.Apply(psc.ctm, x, y, psc.sx, psc.sy);
 		GfxMatrix.ApplyToVector(psc.ctm, dx, dy, dx, dy);
 		IF Gfx.Record IN psc.mode THEN
@@ -1538,9 +1656,27 @@ MODULE GfxPS;	(** eos   **)
 			GfxPaths.AddExit(psc.path, dx, dy)
 		ELSE
 			GfxPaths.AddExit(psc.cp, dx, dy)
-		END;
-		psc.simpleStroke := psc.simpleStroke & ((dx = 0) & (dy = 0) OR (psc.cx = psc.sx) & (psc.cy = psc.sy) & psc.closed)
+		END
 	END Exit;
+	
+	PROCEDURE ClosePath (ctxt: Gfx.Context);
+		VAR psc: Context;
+	BEGIN
+		psc := ctxt(Context);
+		IF Gfx.Record IN psc.mode THEN
+			IF (psc.cx # psc.sx) OR (psc.cy # psc.sy) THEN
+				GfxPaths.AddLine(psc.path, psc.sx, psc.sy)
+			END;
+			GfxPaths.AddExit(psc.path, 0, 0);
+			GfxPaths.Close(psc.path)
+		ELSE
+			IF (psc.cx # psc.sx) OR (psc.cy # psc.sy) THEN
+				GfxPaths.AddLine(psc.cp, psc.sx, psc.sy)
+			END;
+			GfxPaths.AddExit(psc.cp, 0, 0);
+			GfxPaths.Close(psc.cp)
+		END
+	END ClosePath;
 	
 	PROCEDURE LineTo (ctxt: Gfx.Context; x, y: REAL);
 		VAR psc: Context;
@@ -1593,8 +1729,8 @@ MODULE GfxPS;	(** eos   **)
 		font := GfxFonts.Open(psc.font.name, psc.font.ptsize, m);
 		IF font # NIL THEN
 			IF (psc.mode * {Gfx.Record, Gfx.Clip} = {}) & GfxMatrix.Equal(psc.ctm, psc.cam) &
-				(~(Gfx.Stroke IN psc.mode) OR psc.simpleStroke) &
-				(~(Gfx.Fill IN psc.mode) OR psc.simpleFill)
+				(~(Gfx.Stroke IN psc.mode) OR (psc.strokePat = NIL) OR (psc.level2 & (PatternNo(psc, psc.strokePat) >= 0))) &
+				(~(Gfx.Fill IN psc.mode) OR (psc.fillPat = NIL) OR (psc.level2 & (PatternNo(psc, psc.fillPat) >= 0)))
 			THEN
 				RenderPath(psc, psc.cp);
 				GfxPaths.Clear(psc.cp);
@@ -1682,7 +1818,7 @@ MODULE GfxPS;	(** eos   **)
 		VAR psc: Context; scale, dx, dy, llx, lly, urx, ury: REAL; inv, m: GfxMatrix.Matrix; font: GfxFonts.Font;
 	BEGIN
 		psc := ctxt(Context);
-		IF (psc.mode * {Gfx.Record..Gfx.EvenOdd} = {Gfx.Fill}) & psc.simpleFill THEN
+		IF (psc.mode * {Gfx.Record..Gfx.EvenOdd} = {Gfx.Fill}) & (psc.fillPat = NIL) THEN
 			SetColor(psc, psc.fillCol, psc.fillPat);
 			scale := Math.sqrt(GfxMatrix.Det(psc.ctm))/(PSDPI/ScreenDPI);	(* overall scale factor wrt default matrix *)
 			GfxMatrix.Init(inv, 1/scale, 0, 0, 1/scale, 0, 0);
@@ -1721,71 +1857,47 @@ MODULE GfxPS;	(** eos   **)
 	END Outline;
 	
 	PROCEDURE Render (ctxt: Gfx.Context; mode: SET);
-		VAR psc: Context; s: GfxPaths.Scanner; sx, sy, cx, cy: REAL; closed: BOOLEAN;
+		VAR psc: Context;
 	BEGIN
 		psc := ctxt(Context);
 		psc.mode := mode; psc.cam := psc.ctm;
-		IF Gfx.Fill IN mode THEN
-			psc.simpleFill := (psc.fillPat = NIL) OR psc.level2 & (PatternNo(psc, psc.fillPat) >= 0)
-		END;
-		IF Gfx.Stroke IN mode THEN
-			psc.simpleStroke := psc.simpleCap & psc.simpleJoin;
-			psc.simpleStroke := psc.simpleStroke & ((psc.strokePat = NIL) OR psc.level2 & (PatternNo(psc, psc.strokePat) >= 0));
-			GfxPaths.Open(s, psc.path, 0);
-			WHILE psc.simpleStroke & (s.elem # GfxPaths.Stop) DO
-				CASE s.elem OF
-				| GfxPaths.Enter:
-					closed := (s.dx # 0) OR (s.dy # 0);
-					sx := s.x; sy := s.y; cx := sx; cy := sy
-				| GfxPaths.Line, GfxPaths.Arc, GfxPaths.Bezier:
-					cx := s.x; cy := s.y
-				| GfxPaths.Exit:
-					psc.simpleStroke := psc.simpleStroke & ((s.dx = 0) & (s.dy = 0) OR (cx = sx) & (cy = sy) & closed)
-				END;
-				GfxPaths.Scan(s)
-			END
-		END;
 		RenderPath(psc, psc.path)
 	END Render;
 	
 	
-	(*--- Painting Operators ---*)
-	
-	PROCEDURE Erase (ctxt: Gfx.Context);
-		VAR psc: Context;
-	BEGIN
-		psc := ctxt(Context);
-		Str(psc.out, "ep"); Ln(psc.out)
-	END Erase;
-	
-	
 	(*--- Images and Patterns ---*)
 	
-	PROCEDURE ImageM (ctxt: Gfx.Context; x, y: REAL; map: GfxMaps.Map; VAR filter: GfxMaps.Filter);
+	PROCEDURE ImageM (ctxt: Gfx.Context; x, y: REAL; img: Images.Image; VAR filter: GfxImages.Filter);
 		VAR psc: Context; no: INTEGER; llx, lly, urx, ury: REAL;
 	BEGIN
 		psc := ctxt(Context);
-		RegisterMap(psc, map, no);
+		IF (x # 0) OR (y # 0) THEN
+			Str(psc.out, "gs "); Point(psc.out, x, y); Str(psc.out, " tr"); Ln(psc.out)
+		END;
+		RegisterImage(psc, img, no);
 		SetColor(psc, psc.fillCol, NIL);
-		UseMap(psc, map, no);
-		GfxMatrix.ApplyToRect(psc.ctm, x, y, x + map.width, y + map.height, llx, lly, urx, ury);
+		UseImage(psc, img, no);
+		IF (x # 0) OR (y # 0) THEN
+			Str(psc.out, "gr"); Ln(psc.out)
+		END;
+		GfxMatrix.ApplyToRect(psc.ctm, x, y, x + img.width, y + img.height, llx, lly, urx, ury);
 		IncludeBox(psc, llx, lly, urx, ury)
 	END ImageM;
 	
-	PROCEDURE NewPattern (ctxt: Gfx.Context; map: GfxMaps.Map; px, py: REAL): Gfx.Pattern;
+	PROCEDURE NewPattern (ctxt: Gfx.Context; img: Images.Image; px, py: REAL): Gfx.Pattern;
 		VAR psc: Context; no: INTEGER; pat: Pattern;
 	BEGIN
 		psc := ctxt(Context);
-		RegisterMap(psc, map, no);
+		RegisterImage(psc, img, no);
 		pat := psc.patterns;
 		IF pat = NIL THEN
-			NEW(pat); psc.patterns := pat; pat.map := map; pat.px := px; pat.py := py; pat.no := no
+			NEW(pat); psc.patterns := pat; pat.img := img; pat.px := px; pat.py := py; pat.no := no
 		ELSE
-			WHILE (pat.next # NIL) & ((pat.next.map # map) OR (pat.next.px # px) OR (pat.next.py # py)) DO
+			WHILE (pat.next # NIL) & ((pat.next.img # img) OR (pat.next.px # px) OR (pat.next.py # py)) DO
 				pat := pat.next
 			END;
 			IF pat.next = NIL THEN
-				NEW(pat.next); pat.next.map := map; pat.next.px := px; pat.next.py := py; pat.next.no := no
+				NEW(pat.next); pat.next.img := img; pat.next.px := px; pat.next.py := py; pat.next.no := no
 			END;
 			pat := pat.next
 		END;
@@ -1802,16 +1914,16 @@ MODULE GfxPS;	(** eos   **)
 		Methods := do;
 		do.reset := Reset; do.resetCTM := ResetCTM; do.setCTM := SetCTM;
 		do.translate := Translate; do.scale := Scale; do.rotate := Rotate; do.concat := Concat;
-		do.resetClip := ResetClip; do.getClipRect := GetClipRect; do.saveClip := SaveClip; do.restoreClip := RestoreClip;
+		do.resetClip := ResetClip; do.getClipRect := GetClipRect; do.getClip := GetClip; do.setClip := SetClip;
 		do.setStrokeColor := Gfx.DefSetStrokeColor; do.setStrokePattern := Gfx.DefSetStrokePattern;
 		do.setFillColor := Gfx.DefSetFillColor; do.setFillPattern := Gfx.DefSetFillPattern;
 		do.setLineWidth := SetLineWidth; do.setDashPattern := SetDashPattern;
 		do.setCapStyle := SetCapStyle; do.setJoinStyle := SetJoinStyle; do.setStyleLimit := SetStyleLimit;
-		do.setPoint := SetPoint; do.setFlatness := SetFlatness; do.setFont := Gfx.DefSetFont; do.getWidth := GetWidth;
-		do.begin := Begin; do.end := End; do.enter := Enter; do.exit := Exit;
+		do.setFlatness := SetFlatness; do.setFont := Gfx.DefSetFont; do.getWidth := GetWidth;
+		do.begin := Begin; do.end := End; do.enter := Enter; do.exit := Exit; do.close := ClosePath;
 		do.line := LineTo; do.arc := ArcTo; do.bezier := BezierTo; do.show := Show;
 		do.flatten := Flatten; do.outline := Outline; do.render := Render;
-		do.erase := Erase; do.rect := Gfx.DefRect; do.ellipse := Gfx.DefEllipse;
+		do.rect := Gfx.DefRect; do.ellipse := Gfx.DefEllipse;
 		do.image := ImageM; do.newPattern := NewPattern;
 	END InitMethods;
 	
@@ -1840,24 +1952,26 @@ MODULE GfxPS;	(** eos   **)
 	
 	(** start output on given file **)
 	PROCEDURE Open* (psc: Context; file: Files.File);
+		CONST s = PSDPI/ScreenDPI;
 	BEGIN
 		psc.psfile := file;
 		Files.Set(psc.out, Files.New(""), 0);
 		psc.images := NIL; psc.patterns := NIL; psc.t1fonts := NIL; psc.t3fonts := NIL;
 		psc.llx := MAX(REAL); psc.lly := MAX(REAL); psc.urx := MIN(REAL); psc.ury := MIN(REAL);
-		IF psc.eps THEN
-			psc.defMatrix := GfxMatrix.Identity
-		ELSE
+		psc.defMatrix := GfxMatrix.Identity;
+		IF ~psc.eps THEN
 			psc.pages := 0; psc.fileLen := 0;
 			Str(psc.out, "%%Page: 0 1"); Ln(psc.out);
 			Str(psc.out, "save"); Ln(psc.out);
-			GfxMatrix.Translate(GfxMatrix.Identity, psc.left, psc.bot, psc.defMatrix)
+			IF psc.landscape THEN
+				GfxMatrix.Translate(GfxMatrix.Identity, s * psc.height, 0, psc.defMatrix);
+				GfxMatrix.Rotate(psc.defMatrix, 1, 0, psc.defMatrix)
+			END;
+			GfxMatrix.Translate(psc.defMatrix, s * psc.left, s * psc.bot, psc.defMatrix)
 		END;
-		IF psc.landscape THEN
-			GfxMatrix.Translate(psc.defMatrix, 0, psc.height, psc.defMatrix);
-			GfxMatrix.Rotate(psc.defMatrix, -1, 0, psc.defMatrix)
-		END;
-		GfxMatrix.Scale(psc.defMatrix, PSDPI/ScreenDPI, PSDPI/ScreenDPI, psc.defMatrix);
+		GfxMatrix.Scale(psc.defMatrix, s, s, psc.defMatrix);
+		Str(psc.out, "gs"); Ln(psc.out);
+		Str(psc.out, "/defctm ctm def"); Ln(psc.out);
 		Reset(psc)
 	END Open;
 	
@@ -1866,12 +1980,14 @@ MODULE GfxPS;	(** eos   **)
 	BEGIN
 		IF ~psc.eps THEN
 			INC(psc.pages);
+			Str(psc.out, "gr"); Ln(psc.out);
 			Str(psc.out, "showpage"); Ln(psc.out);
 			Str(psc.out, "restore"); Ln(psc.out);
 			Str(psc.out, "%%PageTrailer"); Ln(psc.out);
 			psc.fileLen := Files.Pos(psc.out);
 			Str(psc.out, "%%Page: "); Int(psc.out, psc.pages); Blank(psc.out); Int(psc.out, psc.pages+1); Ln(psc.out);
 			Str(psc.out, "save"); Ln(psc.out);
+			Str(psc.out, "gs"); Ln(psc.out);
 			Reset(psc)
 		END
 	END ShowPage;
@@ -1881,12 +1997,12 @@ MODULE GfxPS;	(** eos   **)
 		CONST bufSize = 4096;
 		VAR src: Files.Rider; date, time: LONGINT; str: ARRAY 32 OF CHAR; buf: ARRAY bufSize OF CHAR;
 	BEGIN
+		Files.Set(src, Files.Base(psc.out), 0);
+		Files.Set(psc.out, psc.psfile, 0);
+		Str(psc.out, "%!PS-Adobe-3.0");
+		IF psc.eps THEN Str(psc.out, " EPSF-3.0") END;
+		Ln(psc.out);
 		IF (psc.llx <= psc.urx) & (psc.lly <= psc.ury) & (psc.eps OR (psc.pages > 0)) THEN
-			Files.Set(src, Files.Base(psc.out), 0);
-			Files.Set(psc.out, psc.psfile, 0);
-			Str(psc.out, "%!PS-Adobe-3.0");
-			IF psc.eps THEN Str(psc.out, " EPSF-3.0") END;
-			Ln(psc.out);
 			Str(psc.out, "%%BoundingBox: ");
 			Int(psc.out, ENTIER(psc.llx)); Blank(psc.out); Int(psc.out, ENTIER(psc.lly)); Blank(psc.out);
 			Int(psc.out, -ENTIER(-psc.urx)); Blank(psc.out); Int(psc.out, -ENTIER(-psc.ury)); Ln(psc.out);
@@ -1911,12 +2027,15 @@ MODULE GfxPS;	(** eos   **)
 			END;
 			Files.ReadBytes(src, buf, psc.fileLen);
 			Files.WriteBytes(psc.out, buf, psc.fileLen);
+			IF psc.eps THEN Str(psc.out, "gr"); Ln(psc.out) END;
 			Str(psc.out, "%%Trailer"); Ln(psc.out);
-			Str(psc.out, "end"); Ln(psc.out);
-			Str(psc.out, "%%EOF"); Ln(psc.out);
-			Files.Register(psc.psfile);
-			psc.images := NIL; psc.patterns := NIL; psc.t1fonts := NIL; psc.t3fonts := NIL
-		END
+			Str(psc.out, "end"); Ln(psc.out)
+		ELSE
+			Str(psc.out, "% no output was produced"); Ln(psc.out)
+		END;
+		Str(psc.out, "%%EOF"); Ln(psc.out);
+		Files.Register(psc.psfile);
+		psc.images := NIL; psc.patterns := NIL; psc.t1fonts := NIL; psc.t3fonts := NIL
 	END Close;
 	
 

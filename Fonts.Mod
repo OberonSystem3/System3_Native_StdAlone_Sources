@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Fonts;	(** portable *) (*JG 16.3.94*)
 
@@ -49,7 +37,6 @@ of characters, each character being a pattern and and metric data.
 	VAR FontId*: CHAR;	(** Initial character of font files (.Fnt). *)
 			Default*: Font;	(** Default system screen font (typically Oberon10.Scn.Fnt). *)
 			theChar: Char;
-			default: Objects.Name;
 			conv: BOOLEAN;
 	 
 	PROCEDURE Put1 (VAR a: LONGINT; x: INTEGER);
@@ -120,8 +107,8 @@ of characters, each character being a pattern and and metric data.
 	END GetChar;
 
 	PROCEDURE Internalize (F: Font; VAR R: Files.Rider; type: SHORTINT);
-	VAR n: SHORTINT; ch: CHAR;
-			NofRuns, NofBoxes, N, i, k, l, m: INTEGER;
+	VAR ch: CHAR;
+			NofRuns, NofBoxes, i, k, l, m: INTEGER;
 			NofBytes, RasterBase, A, a: LONGINT;
 			run: ARRAY MaxRuns OF RunRec;
 			box: ARRAY 256 OF BoxRec;
@@ -213,8 +200,8 @@ of characters, each character being a pattern and and metric data.
 				COPY(L.name, name);  name[7] := 0X;
 				IF name = "Default" THEN
 					IF TraceAlias THEN Kernel.WriteString(L.name);  Kernel.WriteString(" -> ") END;
-					COPY(default, name);
-					i := 0;  WHILE name[i] # 0X DO INC(i) END;
+					COPY(Default.name, name);
+					i := 0;  WHILE (name[i] # 0X) & ((name[i] < "0") OR (name[i] > "9")) DO INC(i) END;
 					j := 7;  WHILE L.name[j] # 0X DO name[i] := L.name[j];  INC(i);  INC(j) END;
 					name[i] := 0X;
 					IF TraceAlias THEN Kernel.WriteString(name);  Kernel.WriteLn END;
@@ -224,13 +211,12 @@ of characters, each character being a pattern and and metric data.
 					name[6] := 0X;
 					IF conv & (name = "Syntax") THEN
 						IF TraceAlias THEN Kernel.WriteString(L.name);  Kernel.WriteString(" -> ") END;
-						name := "Oberon";
-						i := 6;  WHILE (L.name[i] >= "0") & (L.name[i] <= "9") DO name[i] := L.name[i];  INC(i) END;
-						IF L.name[i] = "j" THEN name[i] := "i";  INC(i)	(* Syntax italic bold -> Oberon italic *)
-						ELSIF L.name[i] = "m" THEN name[i] := "b";  INC(i)	(* Syntax medium -> Oberon bold *)
-						END;
-						WHILE L.name[i] # 0X DO name[i] := L.name[i];  INC(i) END;
-						name[i] := 0X;
+						name := Default.name;
+						j := 0;  WHILE (name[j] # 0X) & ((name[j] < "0") OR (name[j] > "9")) DO INC(j) END;
+						i := 6;  WHILE (L.name[i] >= "0") & (L.name[i] <= "9") DO name[j] := L.name[i];  INC(i);  INC(j) END;
+						IF L.name[i] = "m" THEN name[j] := "b";  INC(i);  INC(j) END;	(* Syntax medium -> Oberon bold *)
+						WHILE L.name[i] # 0X DO name[j] := L.name[i];  INC(i);  INC(j) END;
+						name[j] := 0X;
 						IF TraceAlias THEN Kernel.WriteString(name);  Kernel.WriteLn END;
 						COPY(name, L.name);
 						f := Files.Old(name)
@@ -271,11 +257,17 @@ of characters, each character being a pattern and and metric data.
 		F.Load := Load; F.GetObj := GetCharObj; RETURN F
 	END New;
 
-BEGIN FontId := 0DBX; NEW(theChar);
-	Kernel.GetConfig("FontConv", default);
-	conv := default[0] # "0";
-	default := "Oberon";
-	Objects.Register("Fnt", New)
+	PROCEDURE Init;
+	VAR s: ARRAY 8 OF CHAR;
+	BEGIN
+		FontId := Objects.LibBlockId; NEW(theChar);
+		Kernel.GetConfig("FontConv", s);
+		conv := s[0] # "0";
+		Objects.Register("Fnt", New)
+	END Init;
+	
+BEGIN
+	Init
 END Fonts.
 
  (* Remarks:

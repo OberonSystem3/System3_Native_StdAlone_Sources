@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NamePlates;	(** portable *)  (** jm 19.4.95 *)
 
@@ -27,11 +15,13 @@ MODULE NamePlates;	(** portable *)  (** jm 19.4.95 *)
 
 IMPORT
 	Objects, Input, Display, Fonts, Texts, Display3, Oberon, Gadgets, Effects, Printer, Printer3, Files, 
-	Documents, Viewers, Desktops, FileDir;
+	Documents, Viewers, Desktops, TextGadgets0, FileDir;
 	
 CONST
  	(* name plates *)
  	VersionNo = 1; MaxLen = 128; CarHeight = 14; CarWidth = 2; Xoffset = 10;
+ 	TranslatePlate = FALSE;
+ 	PrefixBehind = FALSE;
  	
 TYPE
 	NamePlate* = POINTER TO NamePlateDesc;
@@ -40,12 +30,13 @@ TYPE
 		time: LONGINT;
 		carpos, carx, cary: INTEGER;
 		val: ARRAY MaxLen OF CHAR;
-		start: INTEGER;
+		start: INTEGER
 	END;
 	
 VAR
 	W: Texts.Writer;
 	invTF: INTEGER; (* focus & selection color for text fields *)
+	XtraOffset: INTEGER;
 
 PROCEDURE Update(obj: Objects.Object);
 VAR M: Desktops.UpdateNameMsg;
@@ -100,26 +91,28 @@ END Delete;
 PROCEDURE DocToPlate(F: NamePlate);
 	VAR i, j, k: LONGINT;
 BEGIN
-(*ejz*)IF F.carpos >= 0 THEN RETURN END;
+	IF F.carpos >= 0 THEN RETURN END;
 	COPY(F.obj(Documents.Document).name, F.val);
-	i := 0; j := -1;
-	WHILE F.val[i] # 0X DO
-		IF F.val[i] = FileDir.PathChar THEN
-			j := i+1
-		END;
-		INC(i)
-	END;
-	IF j > 0 THEN
-		k := 0; i := j;
+	IF TranslatePlate THEN
+		i := 0; j := -1;
 		WHILE F.val[i] # 0X DO
-			F.val[k] := F.val[i]; INC(i); INC(k)
+			IF (F.val[i] = "/") OR (PrefixBehind & (F.val[i] = ":")) THEN
+				j := i+1
+			END;
+			INC(i)
 		END;
-		F.val[k] := " "; INC(k);
-		i := 0;
-		WHILE (i < j) & (k < 127) DO
-			F.val[k] := F.obj(Documents.Document).name[i]; INC(i); INC(k)
-		END;
-		F.val[k] := 0X
+		IF j > 0 THEN
+			k := 0; i := j;
+			WHILE F.val[i] # 0X DO
+				F.val[k] := F.val[i]; INC(i); INC(k)
+			END;
+			F.val[k] := " "; INC(k);
+			i := 0;
+			WHILE (i < j) & (k < 127) DO
+				F.val[k] := F.obj(Documents.Document).name[i]; INC(i); INC(k)
+			END;
+			F.val[k] := 0X
+		END
 	END
 END DocToPlate;
 
@@ -128,33 +121,36 @@ PROCEDURE PlateToDoc(F: NamePlate);
 		i, j: LONGINT;
 		lastChar: CHAR;
 BEGIN
-(*ejz*)IF F.carpos >= 0 THEN RETURN END;
-	(*COPY(F.val, F.obj(Documents.Document).name)*)
-	i := 0;
-	WHILE F.val[i] > " " DO
-		INC(i)
-	END;
-	IF F.val[i] = " " THEN
-		INC(i); j := 0; lastChar := FileDir.PathChar;
-		WHILE F.val[i] # 0X DO
-			lastChar := F.val[i];
-			F.obj(Documents.Document).name[j] := lastChar; INC(i); INC(j)
-		END;
-		IF lastChar # FileDir.PathChar THEN
-			F.obj(Documents.Document).name[j] := FileDir.PathChar; INC(j);
-			IF i < 127 THEN
-				F.val[i] := FileDir.PathChar; F.val[i+1] := 0X
-			END
-		END;
+	IF F.carpos >= 0 THEN RETURN END;
+	IF TranslatePlate THEN
 		i := 0;
 		WHILE F.val[i] > " " DO
-			F.obj(Documents.Document).name[j] := F.val[i]; INC(i); INC(j)
+			INC(i)
 		END;
-		F.obj(Documents.Document).name[j] := 0X
+		IF F.val[i] = " " THEN
+			INC(i); j := 0; lastChar := "/";
+			WHILE F.val[i] # 0X DO
+				lastChar := F.val[i];
+				F.obj(Documents.Document).name[j] := lastChar; INC(i); INC(j)
+			END;
+			IF (lastChar # "/") & (lastChar # ":") THEN
+				F.obj(Documents.Document).name[j] := "/"; INC(j);
+				IF i < 127 THEN
+					F.val[i] := "/"; F.val[i+1] := 0X
+				END
+			END;
+			i := 0;
+			WHILE F.val[i] > " " DO
+				F.obj(Documents.Document).name[j] := F.val[i]; INC(i); INC(j)
+			END;
+			F.obj(Documents.Document).name[j] := 0X
+		ELSE
+			COPY(F.val, F.obj(Documents.Document).name)
+		END;
+		Update(F.obj)
 	ELSE
 		COPY(F.val, F.obj(Documents.Document).name)
-	END;
-	Update(F.obj)
+	END
 END PlateToDoc;
 
 (* ----- NamePlates ----- *)
@@ -275,7 +271,7 @@ END ConsumeChar;
 PROCEDURE LocateChar(F: NamePlate; x, mx: INTEGER; VAR pos: INTEGER);
 VAR p: INTEGER; r: Objects.Object; X: INTEGER;
 BEGIN
-	p := F.start; X := x + Xoffset;
+	p := F.start; X := x + Xoffset + XtraOffset;
 	WHILE (F.val[p] # 0X) DO
 		Fonts.Default.GetObj(Fonts.Default, ORD(F.val[p]), r);
 		IF mx < X + r(Fonts.Char).dx THEN pos := p; RETURN; END;
@@ -287,7 +283,7 @@ END LocateChar;
 PROCEDURE LocatePos(F: NamePlate; pos: INTEGER; VAR x, y: INTEGER);
 VAR r: Objects.Object; p: INTEGER;
 BEGIN
-	x := Xoffset; y := Yoffset(F); p := F.start;
+	x := Xoffset + XtraOffset; y := Yoffset(F); p := F.start;
 	WHILE (F.val[p] # 0X) & (p < pos) DO
 		Fonts.Default.GetObj(Fonts.Default, ORD(F.val[p]), r);
 		INC(x, r(Fonts.Char).dx); INC(p);
@@ -327,7 +323,7 @@ BEGIN
 	END;
 	IF keysum = {2, 1} THEN
 		Oberon.GetSelection(text, beg, end, time);
-		IF time > 0 THEN
+		IF time # -1 THEN
 			p := beg; Texts.OpenReader(R, text, p);
 			LOOP
 				IF p = end THEN EXIT END;
@@ -440,9 +436,9 @@ BEGIN
 	IF M.id = Objects.get THEN
 		IF M.name = "Gen" THEN M.class := Objects.String; COPY("NamePlates.NewNamePlate", M.s); M.res := 0
 		ELSIF M.name = "Value" THEN
-IF F.carpos >= 0 THEN
-(*ejz*)PlateToDoc(F); DocToPlate(F)
-END;
+			IF F.carpos >= 0 THEN
+			(*ejz*)PlateToDoc(F); DocToPlate(F)
+			END;
 			M.class := Objects.String;
 			IF (F.obj # NIL) & (F.obj IS Documents.Document) THEN
 				COPY(F.obj(Documents.Document).name, M.s)
@@ -505,21 +501,52 @@ BEGIN
 END Dot;
 
 PROCEDURE RestoreNamePlate(R: Display3.Mask; F: NamePlate; x, y, w, h: INTEGER; dlink: Objects.Object);
-VAR p, X, Y, cx, cy, cw, ch, col: INTEGER; r: Objects.Object;
+VAR p, X, Y, cx, cy, cw, ch: INTEGER; r: Objects.Object; col: Display.Color; eo: INTEGER;
 BEGIN
-	col := Display3.textbackC;
 	FindModel(F, dlink);
 	Oberon.RemoveMarks(x, y, w, h);
-	Display3.Rect3D(R, Display3.topC, Display3.bottomC, x, y, w, h, 1, Display.replace);
+	col := Display3.textbackC;
+	IF XtraOffset > 0 THEN
+		Display3.FilledRect3D(R, Display3.topC, Display3.bottomC, col, x, y, XtraOffset, h, 1, Display.replace);
+(*
+		cx := x + XtraOffset DIV 2; cy := Display3.downC;
+		Display3.Line(R, cy, Display.solid, cx, y+4, cx, y+h-6, 1, Display.replace);
+		Display3.Line(R, cy, Display.solid, cx, y+5, cx-2, y+7, 1, Display.replace);
+		Display3.Line(R, cy, Display.solid, cx, y+5, cx+2, y+7, 1, Display.replace);
+		Display3.Line(R, cy, Display.solid, cx, y+h-6, cx-2, y+h-8, 1, Display.replace);
+		Display3.Line(R, cy, Display.solid, cx, y+h-6, cx+2, y+h-8, 1, Display.replace)
+*)
+		IF ODD(XtraOffset) THEN eo := XtraOffset ELSE eo := XtraOffset-1 END;
+		cx := x + eo DIV 2; cy := y + h DIV 2;
+		cw := eo-4; ch := h-4;
+		IF cw < ch THEN
+			ch := cw;
+			X := x+2; Y := cy - ch DIV 2
+		ELSE
+			cw := ch;
+			X := cx - cw DIV 2; Y := y+2
+		END;
+		Display3.ReplConst(R, Display3.downC, cx, Y, 1, ch, Display.replace);
+		Display3.ReplConst(R, Display3.downC, X, cy, cw, 1, Display.replace);
+		Display3.ReplConst(R, Display3.downC, cx-1, Y+1, 3, 1, Display.replace);
+		Display3.ReplConst(R, Display3.downC, cx-2, Y+2, 5, 1, Display.replace);
+		Display3.ReplConst(R, Display3.downC, cx-2, Y+ch-1-2, 5, 1, Display.replace);
+		Display3.ReplConst(R, Display3.downC, cx-1, Y+ch-1-1, 3, 1, Display.replace);
+		Display3.ReplConst(R, Display3.downC, X+1, cy-1, 1, 3, Display.replace);
+		Display3.ReplConst(R, Display3.downC, X+2, cy-2, 1, 5, Display.replace);
+		Display3.ReplConst(R, Display3.downC, X+cw-1-2, cy-2, 1, 5, Display.replace);
+		Display3.ReplConst(R, Display3.downC, X+cw-1-1, cy-1, 1, 3, Display.replace)
+	END;
+	Display3.Rect3D(R, Display3.topC, Display3.bottomC, x + XtraOffset, y, w - XtraOffset, h, 1, Display.replace);
 	
 	(* left border *)
-	Display3.ReplConst(R, col, x+1, y+1, Xoffset - 1, h-2, Display.replace);
+	Display3.ReplConst(R, col, x+XtraOffset+1, y+1, Xoffset + XtraOffset - 1, h-2, Display.replace);
 	
-	Dot(R, x+2, y+2); Dot(R, x+2, y + h - 7); 
+	Dot(R, x+XtraOffset+2, y+2); Dot(R, x+XtraOffset+2, y + h - 7);
 	
-	p := F.start; X := x + Xoffset; Y := y + Yoffset(F);
+	p := F.start; X := x + Xoffset + XtraOffset; Y := y + Yoffset(F);
 	cx := R.X; cy := R.Y; cw := R.W; ch := R.H;
-	Display3.AdjustMask(R, x+1, y+1, w-2, h-2);
+	Display3.AdjustMask(R, x+XtraOffset+1, y+1, w-2-XtraOffset, h-2);
 	WHILE F.val[p] # 0X DO
 		Fonts.Default.GetObj(Fonts.Default, ORD(F.val[p]), r);
 		WITH r: Fonts.Char DO
@@ -537,13 +564,15 @@ BEGIN
 		IF F.carpos > Length(F.val) THEN
 			F.carpos := Length(F.val)
 		END;
-		SetCaret(R, F, x, y, F.carpos);
+		SetCaret(R, F, x, y, F.carpos)
 	END;
 	IF F.selbeg >= 0 THEN
-		FlipSelection(R, F, x, y, F.selbeg, F.selend);
+		FlipSelection(R, F, x, y, F.selbeg, F.selend)
 	END;
 	R.X := cx; R.Y := cy; R.W := cw; R.H := ch;
-	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint); END;
+	IF Gadgets.selected IN F.state THEN
+		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
+	END
 END RestoreNamePlate;
 
 PROCEDURE PrintNamePlate(F: NamePlate; VAR M: Display.DisplayMsg);
@@ -559,7 +588,7 @@ BEGIN
 	Printer3.Rect3D(R, Display3.topC, Display3.bottomC, x, y, w, h, P(1), Display.replace); 
 	Printer3.ReplConst(R, Display3.textbackC, x+P(1), y+P(1), w - P(2), h-P(2), Display.replace);
 	Display3.AdjustMask(R, x+P(1), y+P(1), w-P(2), h-P(2));
-	Printer3.String(R, Display3.textC, x + P(Xoffset), y + P(Yoffset(F)), Fonts.Default, F.val, Display.replace)
+	Printer3.String(R, Display3.textC, x + P(Xoffset + XtraOffset), y + P(Yoffset(F)), Fonts.Default, F.val, Display.replace)
 END PrintNamePlate;
 
 PROCEDURE CopyNamePlate*(VAR M: Objects.CopyMsg; from, to: NamePlate);
@@ -575,6 +604,7 @@ END CopyNamePlate;
 PROCEDURE NamePlateHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
 VAR F2: NamePlate; x, y, w, h: INTEGER; R: Display3.Mask; ver: LONGINT; obj: Objects.Object; A: Objects.AttrMsg;
 BEGIN
+	IF Oberon.New THEN XtraOffset := TextGadgets0.sliderW ELSE XtraOffset := 0 END;
 	WITH F: NamePlate DO
 		IF M IS  Objects.AttrMsg THEN
 			WITH M: Objects.AttrMsg DO NamePlateAttr(F, M) END;
@@ -631,13 +661,13 @@ BEGIN
 				ELSIF M IS Oberon.ControlMsg THEN
 					WITH M: Oberon.ControlMsg DO
 						IF (M.id = Oberon.defocus) & (F.carpos >= 0) THEN F.carpos := -1; F.start := 0;
-(*ejz*)PlateToDoc(F); DocToPlate(F);
+							(*ejz*)PlateToDoc(F); DocToPlate(F);
 							Gadgets.Update(F);
 						ELSIF (M.id = Oberon.neutralize) & (F.carpos >= 0) THEN F.carpos := -1; F.start := 0; (* hack @@@ *)
-(*ejz*)PlateToDoc(F); DocToPlate(F);
+							(*ejz*)PlateToDoc(F); DocToPlate(F);
 							F.selbeg := -1; Gadgets.Update(F); 
 						ELSIF (M.id = Oberon.neutralize) & (F.selbeg >= 0) THEN F.carpos := -1; F.start := 0;
-(*ejz*)PlateToDoc(F); DocToPlate(F);
+							(*ejz*)PlateToDoc(F); DocToPlate(F);
 							F.selbeg := -1; Gadgets.Update(F);
 						ELSIF M.id = Oberon.mark THEN Oberon.DrawCursor(Oberon.Pointer, Oberon.Star, M.X, M.Y);
 						END;
@@ -675,7 +705,7 @@ BEGIN
 					END
 				ELSIF M IS Oberon.SelectMsg THEN
 					WITH M: Oberon.SelectMsg DO
-						IF (F.selbeg >=0) & (F.time > M.time) THEN GetSelection(F, M.text, M.beg, M.end, M.time) END
+						IF (F.selbeg >= 0) & (F.time - M.time > 0) THEN GetSelection(F, M.text, M.beg, M.end, M.time) END
 					END
 				ELSIF M IS Oberon.ConsumeMsg THEN
 					WITH M: Oberon.ConsumeMsg DO
@@ -688,28 +718,31 @@ BEGIN
 				ELSIF M IS Oberon.InputMsg THEN
 					WITH M: Oberon.InputMsg DO
 						IF (M.id = Oberon.track) & (Gadgets.InActiveArea(F, M) OR (2 IN M.keys)) THEN
-							IF (2 IN M.keys) &
-								((M.X-x) >= Xoffset) & ((F.W-M.X+x) >= Xoffset) & ((M.Y-y) >= Yoffset(F)) & ((F.H-M.Y+y) >= Yoffset(F)) THEN
-								Oberon.Defocus();
-								Gadgets.MakeMask(F, x, y, M.dlink, R);
-								TrackCaret(R, F, x, y); M.res := 0;
-							ELSIF 0 IN M.keys THEN
-								Gadgets.MakeMask(F, x, y, M.dlink, R);
-								TrackSelection(R, F, x, y); M.res := 0;
-							ELSE Gadgets.framehandle(F, M)
+							IF M.X-x > XtraOffset THEN
+								IF (2 IN M.keys) &
+									((M.X-x) >= Xoffset + XtraOffset) & ((F.W-M.X+x) >= Xoffset + XtraOffset) & ((M.Y-y) >= Yoffset(F)) & ((F.H-M.Y+y) >= Yoffset(F)) THEN
+									Oberon.Defocus();
+									Gadgets.MakeMask(F, x, y, M.dlink, R);
+									TrackCaret(R, F, x, y); M.res := 0
+								ELSIF 0 IN M.keys THEN
+									Gadgets.MakeMask(F, x, y, M.dlink, R);
+									TrackSelection(R, F, x, y); M.res := 0
+								ELSE Gadgets.framehandle(F, M)
+								END
+							ELSE (* ignore *)
 							END
 						ELSIF (M.id = Oberon.consume) & (F.carpos >= 0) THEN
-							ConsumeChar(F, M.ch); M.res := 0;
+							ConsumeChar(F, M.ch); M.res := 0
 						ELSIF ~(Gadgets.selected IN F.state) THEN
 							Gadgets.framehandle(F, M)
 						END
 					END
 				ELSE
-					Gadgets.framehandle(F, M);
+					Gadgets.framehandle(F, M)
 				END
 			END
 		ELSE
-			Gadgets.framehandle(F, M);
+			Gadgets.framehandle(F, M)
 		END
 	END
 END NamePlateHandler;
@@ -728,5 +761,7 @@ BEGIN
 	NEW(B); InitNamePlate(B); Objects.NewObj := B
 END NewNamePlate;
 
-BEGIN Texts.OpenWriter(W); invTF := 15 - 14
+BEGIN
+	Texts.OpenWriter(W); invTF := 15 - 14;
+	XtraOffset := 0
 END NamePlates.

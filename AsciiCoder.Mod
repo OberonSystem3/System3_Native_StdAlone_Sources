@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE AsciiCoder;	(** portable *) (* Wolfgang Weck 14 Dec 93, compression due to Stefan Ludwig/ jm modified for System 3 *)
 	
@@ -124,7 +112,8 @@ MODULE AsciiCoder;	(** portable *) (* Wolfgang Weck 14 Dec 93, compression due t
 	BEGIN NEW(names); last := names; Texts.OpenScanner(s, t, beg); pos := beg; Texts.Scan(s);
 		WHILE (pos < end) & ((s.class = Texts.String) OR (s.class = Texts.Name)) DO NEW(n); last.next := n; last := n;
 			COPY(s.s, n.name);
-			pos := Texts.Pos(s); Texts.Scan(s)
+			pos := Texts.Pos(s); Texts.Scan(s);
+			IF (s.class = Texts.Char) & (s.c = ",") THEN Texts.Scan(s) END
 		END;
 		last.next := NIL; names := names.next; pos := Texts.Pos(s)
 	END ReadFileNames;
@@ -149,6 +138,14 @@ MODULE AsciiCoder;	(** portable *) (* Wolfgang Weck 14 Dec 93, compression due t
 				END;
 				Texts.WriteLn(w); Texts.Append(Oberon.Log, w.buf); n := n.next
 			UNTIL n = NIL;
+			Texts.WriteString(w,"To: "); Texts.WriteLn(w);
+			Texts.WriteString(w,"Subject:");
+			n := names;
+			WHILE n # NIL DO
+				IF n.name # "" THEN Texts.Write(w, " "); Texts.WriteString(w, n.name) END;
+				n := n.next
+			END;
+			Texts.WriteLn(w); Texts.WriteLn(w);
 			Texts.WriteString(w,"AsciiCoder.DecodeFiles ");
 			IF compress THEN Texts.WriteString(w, "% ") END;
 			REPEAT
@@ -203,6 +200,8 @@ MODULE AsciiCoder;	(** portable *) (* Wolfgang Weck 14 Dec 93, compression due t
 				Files.Write(r, 0F0X); Files.Write(r, 01X); Texts.Store(r, t); *)
 				Texts.Store(t, f, 0, len);
 				NEW(text); Texts.Open(text, "");
+				Texts.WriteString(w,"To: "); Texts.WriteLn(w);
+				Texts.WriteString(w,"Subject: "); Texts.WriteLn(w); Texts.WriteLn(w);
 				Texts.WriteString(w, "AsciiCoder.DecodeText");
 				IF compress THEN Texts.WriteString(w, " %") END;
 				Texts.WriteLn(w); Texts.WriteLn(w); Texts.Append(text, w.buf);

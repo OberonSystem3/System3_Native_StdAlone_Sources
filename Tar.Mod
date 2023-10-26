@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Tar;	(** portable *)	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, V4,  modified for S3 C.Hoffmann, 21.9.95 *)
 
@@ -127,7 +115,15 @@ MODULE Tar;	(** portable *)	(* Copyright (c) Jacques Supcik, 1995 / js 19.9.95, 
 PROCEDURE DocHandler*(D: Objects.Object; VAR M: Objects.ObjMsg);	(** Handle  D: Document *)
 BEGIN
 	WITH D: Documents.Document DO
-		IF M IS Objects.LinkMsg THEN
+		IF M IS Objects.AttrMsg THEN
+			WITH M: Objects.AttrMsg DO
+				IF (M.id = Objects.get) & (M.name = "Gen") THEN
+					M.class := Objects.String; M.name := "Tar.NewDoc"; M.res := 0
+				ELSE
+					Documents.Handler(D,M)
+				END
+			END
+		ELSIF M IS Objects.LinkMsg THEN
 			WITH M: Objects.LinkMsg DO
 				IF (M.id = Objects.get) & (M.name = "DeskMenu") THEN
 					M.obj := Desktops.NewMenu(Menu); M.res := 0
@@ -139,9 +135,9 @@ BEGIN
 				END
 			END
 		ELSE
-			Documents.Handler(D,M);
-		END;
-	END;
+			Documents.Handler(D,M)
+		END
+	END
 END DocHandler;
 
 PROCEDURE Load(D: Documents.Document);

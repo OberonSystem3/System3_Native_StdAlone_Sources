@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Hex;	(** portable *) (* ps /   *)
+MODULE Hex; (** portable *)	(* ps /   *)
 
 (* still to do:
 	- problems with empty files
@@ -788,12 +776,9 @@ VAR F: Frame;
 BEGIN NEW(F); InitFrame(F, NIL); Objects.NewObj := F
 END NewFrame;
 
-(** ------------ document stuff ------------ *)
-PROCEDURE LoadDoc (D: Documents.Document);
-VAR main: Frame; F: Files.File; T: Texts.Text; R: Files.Rider; i: LONGINT;
+PROCEDURE LoadDoc0(D: Documents.Document; F: Files.File);
+VAR main: Frame; T: Texts.Text; R: Files.Rider; i: LONGINT;
 BEGIN
-	F := Files.Old(D.name);
-	IF F = NIL THEN F := Files.New("") END;
 	Files.Set(R, F, 0); Files.ReadBytes(R, buf, bufSize);
 	WHILE ~R.eof DO
 		i := 0;
@@ -805,6 +790,15 @@ BEGIN
 	NEW(T); Texts.Open(T, ""); Texts.Append(T, W.buf);
 	NEW(main); InitFrame(main, T);
 	Documents.Init(D, main)
+END LoadDoc0;
+
+(** ------------ document stuff ------------ *)
+PROCEDURE LoadDoc (D: Documents.Document);
+VAR F: Files.File;
+BEGIN
+	F := Files.Old(D.name);
+	IF F = NIL THEN F := Files.New("") END;
+	LoadDoc0(D, F)
 END LoadDoc;
 
 PROCEDURE StoreDoc (D: Documents.Document);
@@ -1006,12 +1000,16 @@ BEGIN
 	END
 END DocHandler;
 
+PROCEDURE InitDoc(D: Documents.Document);
+BEGIN
+	D.Load := LoadDoc; D.Store := StoreDoc; D.handle := DocHandler;
+	D.W := 590; D.H := 200
+END InitDoc;
+
 PROCEDURE NewDoc*;
 VAR D: Documents.Document;
 BEGIN
-	NEW(D);
-	D.Load := LoadDoc; D.Store := StoreDoc; D.handle := DocHandler;
-	D.W := 590; D.H := 200;
+	NEW(D); InitDoc(D);
 	Objects.NewObj := D
 END NewDoc;
 
@@ -1026,21 +1024,30 @@ BEGIN
 	END;
 END GetFrame;
 
+PROCEDURE OpenFile*(F: Files.File);
+	VAR D: Documents.Document;
+BEGIN
+	ASSERT(F # NIL);
+	NEW(D); InitDoc(D);
+	Files.GetName(F, D.name);
+	LoadDoc0(D, F);
+	Desktops.ShowDoc(D)
+END OpenFile;
+
+PROCEDURE OpenThis (name: ARRAY OF CHAR);
+	VAR D: Documents.Document;
+BEGIN
+	NEW(D); InitDoc(D);
+	COPY(name, D.name);
+	D.Load(D);
+	Desktops.ShowDoc(D)
+END OpenThis;
+
 (** Opens the given file in a hex document.
 	Usage: Hex.Open '^' | file
 *)
 PROCEDURE Open*;
 VAR T: Texts.Text; time, beg, end: LONGINT; S: Texts.Scanner;
-
-	PROCEDURE OpenThis (name: ARRAY OF CHAR);
-	VAR D: Documents.Document;
-	BEGIN
-		NewDoc; D := Objects.NewObj(Documents.Document);
-		COPY(S.s, D.name);
-		D.Load(D);
-		Desktops.ShowDoc(D)
-	END OpenThis;
-
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan(S);

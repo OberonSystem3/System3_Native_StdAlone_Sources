@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Objects;	(** portable *) (* JG 21.9.93/comments jm 28.2.95 *)
 
@@ -142,7 +130,7 @@ Most entities in Oberon are derived from this base type.
 	GenName = ARRAY 64 OF CHAR;
 
     LibDesc* = RECORD	(** Container for persistent objects. *)
-      next: Library; (* offset used by Fonts.GetCharObj, also next offset *)
+      next[UNTRACED]: Library; (* offset used by Fonts.GetCharObj, also next offset *)
       ind*: Index;	(** Library contents. *)
       f: Files.File;	(* file containing data *)
       R: Files.Rider;	(* a rider on the lib file *)
@@ -179,7 +167,7 @@ Most entities in Oberon are derived from this base type.
 	AliasDesc = RECORD
 		next: Alias;
 		name: Name;
-		lib: Library
+		lib[UNTRACED]: Library
 	END;
 	
   VAR
@@ -234,7 +222,7 @@ Most entities in Oberon are derived from this base type.
 
 (** Search, load and cache a public library. *)
   PROCEDURE ThisLibrary* (name: ARRAY OF CHAR): Library;
-    VAR L: Library; len, n, n0, t, i, j: INTEGER; proc: NewProc;  A: Alias;
+    VAR L: Library; len, n, n0, t: INTEGER; proc: NewProc;  A: Alias;
   BEGIN
     A := FirstAlias.next;
     WHILE (A # NIL) & (name # A.name) DO A := A.next END;
@@ -260,9 +248,9 @@ Most entities in Oberon are derived from this base type.
             L.next := FirstLib.next; FirstLib.next := L
           ELSE
             NEW(A); COPY(name, A.name); A.lib := L; A.next := FirstAlias.next; FirstAlias.next := A;
-            Kernel.WriteString("Alias: ");
+            (*Kernel.WriteString("Alias: ");
             Kernel.WriteString(name);  Kernel.WriteString(" -> ");  Kernel.WriteString(L.name);
-            Kernel.WriteLn
+            Kernel.WriteLn*)
           END
         END
       END
@@ -532,7 +520,7 @@ Most entities in Oberon are derived from this base type.
 			dict := L.dict(ListDict);
 			Files.Set(R, f, dorg);
 			Files.ReadInt(R, key);
-			WHILE key # MIN(INTEGER) DO
+			WHILE (key # MIN(INTEGER)) & ~R.eof DO
 				NEW(entry);
 				Files.ReadString(R, entry.name);
 				entry.key := key;
@@ -732,9 +720,7 @@ Most entities in Oberon are derived from this base type.
 
 BEGIN LibBlockId := 0DBX;
 	NEW(FirstLib);  FirstLib.next := NIL;
-	Kernel.DisableTracing(SYSTEM.ADR(FirstLib^), SYSTEM.ADR(FirstLib.next));
 	NEW(FirstAlias);  FirstAlias.next := NIL;
-	Kernel.DisableTracing(SYSTEM.ADR(FirstAlias^), SYSTEM.ADR(FirstAlias.lib));
 	stamp := MIN(LONGINT);
 	NEW(NoObj);
 	nofreg := 0;

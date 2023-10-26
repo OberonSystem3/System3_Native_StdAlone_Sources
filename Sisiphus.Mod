@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Sisiphus;	(** portable *) (* gri 18.3.91 / 30.1.92 / 27.4.92 / jt/jm 7.11.95*)
 
@@ -168,7 +156,9 @@ MODULE Sisiphus;	(** portable *) (* gri 18.3.91 / 30.1.92 / 27.4.92 / jt/jm 7.11
 		IF X0-X > X+W-X0 THEN dx := X0-X ELSE dx := X+W-X0 END;
 		IF Y0-Y > Y+H-Y0 THEN dy := Y0-Y ELSE dy := Y+H-Y0 END;
 		r := SHORT(ENTIER(Math.sqrt(dx*dx + dy*dy)));
-		WHILE r > 0 DO Circle(X0, Y0, r, Display3.black, Display.replace); DEC(r, d) END
+		WHILE (r > 0) & (Input.Available() = 0) DO
+			Circle(X0, Y0, r, Display3.black, Display.replace); DEC(r, d)
+		END
 	END HotSpot;
 	
 	PROCEDURE SaveScreen (x0, y0: INTEGER; keys: SET; col: INTEGER; VAR State: LONGINT);
@@ -182,8 +172,8 @@ MODULE Sisiphus;	(** portable *) (* gri 18.3.91 / 30.1.92 / 27.4.92 / jt/jm 7.11
 		UNTIL keys = {};
 		Display.ReplConst(Display3.black, x0, y0, 52, 52, Display.invert);
 		IF sum # {left, middle, right} THEN
-			x := Oberon.UserTrack(x0); w := Oberon.DisplayWidth(x0);
-			y := Display.Bottom; h := Oberon.DisplayHeight(x0);
+			x := 0; w := Oberon.DisplayWidth(x0);
+			y := 0; h := Oberon.DisplayHeight(x0);
 			Oberon.RemoveMarks(x, y, w, h);
 			msg.id := Display.suspend; Display.Broadcast(msg);
 			HotSpot(x, y, w, h, x0 + Side DIV 2, y0 + Side DIV 2);
@@ -344,10 +334,10 @@ BEGIN
 END Cleanup;
 
 BEGIN
-	LoadFig("Sisiphus.Data");
-	NEW(Task); Task.time := 0; Task.safe := FALSE; Task.handle := Step; Oberon.Install(Task);
+	LoadFig("Sisyphus.Data");
+	NEW(Task); Task.time := Oberon.Time(); Task.safe := FALSE; Task.handle := Step; Oberon.Install(Task);
 	Modules.InstallTermHandler(Cleanup)
-END Sisiphus.Insert
+END Sisiphus.
 
 System.Free Sisiphus ~
 Gadgets.Insert Sisiphus.New ~

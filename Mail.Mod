@@ -1,25 +1,14 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;type=A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Mail; (** portable *)	(* ejz,   *)
 	IMPORT Kernel, Files, Strings, Dates, Objects, Display, Fonts, Texts, Oberon, NetSystem, NetTools, MIME, Streams,
 		TextStreams, Display3, Attributes, Links, Gadgets, ListRiders, ListGadgets, AsciiCoder, TextGadgets, TextDocs, Documents,
-		Desktops, HyperDocs, MD5, FileDir;
+		Desktops, HyperDocs, MD5, Modules, FileDir, SYSTEM;
 
 	CONST
 		MsgFile = "MailMessages";
+		IndexFile = "MailMessages.idx"; IndexFileKey=74EF5A0DH;
 		DefPOPPort = 110;
 		OberonStart* = "--- start of oberon mail ---";
 		BufLen = 4096;
@@ -28,18 +17,23 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		Version = 0;
 		eq = 1; leq = 2; le = 3; geq = 4; ge = 5; neq = 6; or = 7; and = 8;
 		from = 20; subject = 21; date = 22; time = 23; text = 24; topic = 25; notopic = 26; readFlag = 27;
-		Menu = "Desktops.Copy[Copy] TextDocs.Search[Search] Mail.Show[Source] Mail.Reply[Reply] Desktops.StoreDoc[Store]";
+		Menu = "Desktops.Copy[Copy] TextDocs.Search[Search] TextDocs.Replace[Rep] Mail.Show[Source] Mail.Reply[Reply] Desktops.StoreDoc[Store]";
 		SysMenu = "Desktops.Copy[Copy] Mail.Reply[Reply] Desktops.StoreDoc[Store]";
 		DefSMTPPort* = 25;
 		simpler = TRUE;
 
 	TYPE
 		UIDL = ARRAY 64 OF CHAR;
+		ServerName* = ARRAY HyperDocs.ServerStrLen OF CHAR;
+		UserName = ARRAY 64 OF CHAR;
+		AdrString* = ARRAY HyperDocs.PathStrLen OF CHAR;
+
 		UIDLList = POINTER TO ARRAY OF UIDL;
 		UIDLSet = POINTER TO UIDLSetDesc;
 		UIDLSetDesc = RECORD
 			F: Files.File;
-			pop, user: ARRAY 64 OF CHAR;
+			pop: ServerName;
+			user: UserName;
 			nouidls: LONGINT;
 			uidls: UIDLList;
 			next: UIDLSet
@@ -49,7 +43,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			pos, len (* - From head *), state, stamp: LONGINT;
 			flags, topics: SET;
 			date, time: LONGINT;
-			replyTo, subject: ARRAY 64 OF CHAR
+			replyTo, subject: LONGINT
 		END;
 		MsgHeadList = POINTER TO ARRAY OF MsgHead;
 
@@ -70,8 +64,11 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			sort: SortList
 		END;
 
+		QueryString = ARRAY 128 OF CHAR;
+		ValueString = ARRAY 64 OF CHAR;
+
 		ConnectMsg = RECORD (ListRiders.ConnectMsg)
-			query: ARRAY 128 OF CHAR;
+			query: QueryString;
 			sortBy: INTEGER; (* SortByDateTime, SortByReplyTo, SortBySubject *)
 			ascending: BOOLEAN
 		END;
@@ -92,7 +89,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 
 		Cond = POINTER TO CondDesc;
 		CondDesc = RECORD
-			val: ARRAY 64 OF CHAR;
+			val: ValueString;
 			date, time: LONGINT;
 			op, field: LONGINT;
 			value, eval: BOOLEAN;
@@ -105,21 +102,29 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		END;
 
 		Query = RECORD
-			query: ARRAY 128 OF CHAR;
+			query: QueryString;
 			conds, root: Cond;
 			error: BOOLEAN
 		END;
 
 		SMTPSession* = POINTER TO SMTPSessionDesc;
 		SMTPSessionDesc* = RECORD (NetTools.SessionDesc)
-			from*: ARRAY 64 OF CHAR
+			from*: AdrString
 		END;
+
+		Buffer = POINTER TO ARRAY OF CHAR;
+		Index = POINTER TO ARRAY OF LONGINT;
+		Heap = RECORD
+				buffer: Buffer; bufLen: LONGINT;
+				index: Index; idxLen: LONGINT
+			END;
 
 	VAR
 		msgs: MsgHeadList;
 		noMsgs, delMsgs: LONGINT;
 		msgsF: Files.File;
 		msgList: Model;
+		heap: Heap;
 
 		topicList: Model;
 		topics: Topic;
@@ -132,9 +137,115 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		vMethod: ListGadgets.Method;
 
 		textFnt, headFnt, fieldFnt: Fonts.Font;
-		mailer: ARRAY 64 OF CHAR;
+		mailer: ValueString;
+
+		count: LONGINT;
 
 		trace: BOOLEAN;
+
+(* String Heap *)
+
+	PROCEDURE Open(VAR heap: Heap);
+	BEGIN
+		NEW(heap.buffer, 512); heap.bufLen := 0;
+		NEW(heap.index, 64); heap.idxLen := 0
+	END Open;
+
+	PROCEDURE Append(VAR heap: Heap; idx: LONGINT; VAR str: ARRAY OF CHAR);
+		VAR buffer: Buffer; index: Index; len, i, j: LONGINT;
+	BEGIN
+		len := heap.idxLen; INC(heap.idxLen);
+		IF heap.idxLen >= LEN(heap.index^) THEN
+			NEW(index, 2*heap.idxLen);
+			IF len > 0 THEN
+				SYSTEM.MOVE(SYSTEM.ADR(heap.index[0]), SYSTEM.ADR(index[0]), len*SIZE(LONGINT))
+			END;
+			heap.index := index
+		END;
+		WHILE len > idx DO
+			heap.index[len] := heap.index[len-1]; DEC(len)
+		END;
+		heap.index[idx] := heap.bufLen;
+		IF (heap.bufLen+LEN(str)) >= LEN(heap.buffer^) THEN
+			NEW(buffer, 2*(heap.bufLen+LEN(str)));
+			SYSTEM.MOVE(SYSTEM.ADR(heap.buffer[0]), SYSTEM.ADR(buffer[0]), heap.bufLen*SIZE(CHAR));
+			heap.buffer := buffer
+		END;
+		i := 0; j := heap.bufLen;
+		WHILE str[i] # 0X DO
+			heap.buffer[j] := str[i];
+			INC(i); INC(j)
+		END;
+		heap.buffer[j] := 0X; heap.bufLen := j+1
+	END Append;
+
+	PROCEDURE Compare(VAR heap: Heap; ofs: LONGINT; VAR str: ARRAY OF CHAR): LONGINT;
+		VAR i: LONGINT; cb, cs: CHAR;
+	BEGIN
+		cb := heap.buffer[ofs];
+		i := 0; cs := str[0];
+		WHILE (cb # 0X) & (cs # 0X) & (cb = cs) DO
+			INC(ofs); cb := heap.buffer[ofs];
+			INC(i); cs := str[i]
+		END;
+		RETURN ORD(cb)-ORD(cs)
+	END Compare;
+
+	PROCEDURE Insert(VAR heap: Heap; str: ARRAY OF CHAR; VAR ofs: LONGINT);
+		VAR l, r, m, c, idx: LONGINT;
+	BEGIN
+		l := 0; r := heap.idxLen-1; c := 1; idx := 0;
+		WHILE (l <= r) & (c # 0) DO
+			m := (l+r) DIV 2; idx := m;
+			c := Compare(heap, heap.index[m], str);
+			IF c < 0 THEN
+				l := m+1
+			ELSIF c > 0 THEN
+				r := m-1
+			END
+		END;
+		IF c # 0 THEN
+			IF c < 0 THEN INC(idx) END;
+			Append(heap, idx, str)
+		END;
+		ofs := heap.index[idx]
+	END Insert;
+
+	PROCEDURE Copy(VAR heap: Heap; ofs: LONGINT; VAR str: ARRAY OF CHAR);
+		VAR i, l: LONGINT;
+	BEGIN
+		i := 0; l := LEN(str)-1;
+		WHILE (heap.buffer[ofs] # 0X) & (i < l) DO
+			str[i] := heap.buffer[ofs]; INC(i); INC(ofs)
+		END;
+		str[i] := 0X
+	END Copy;
+
+	PROCEDURE Store(VAR R: Files.Rider; VAR heap: Heap);
+		VAR i: LONGINT;
+	BEGIN
+		Files.WriteLInt(R, heap.bufLen);
+		Files.WriteBytes(R, heap.buffer^, heap.bufLen);
+		Files.WriteLInt(R, heap.idxLen);
+		i := 0;
+		WHILE i < heap.idxLen DO
+			Files.WriteLInt(R, heap.index[i]); INC(i)
+		END
+	END Store;
+
+	PROCEDURE Load(VAR R: Files.Rider; VAR heap: Heap);
+		VAR i: LONGINT;
+	BEGIN
+		Files.ReadLInt(R, heap.bufLen);
+		NEW(heap.buffer, heap.bufLen);
+		Files.ReadBytes(R, heap.buffer^, heap.bufLen);
+		Files.ReadLInt(R, heap.idxLen);
+		NEW(heap.index, heap.idxLen);
+		i := 0;
+		WHILE i < heap.idxLen DO
+			Files.ReadLInt(R, heap.index[i]); INC(i)
+		END
+	END Load;
 
 	PROCEDURE NrToArg(nr: LONGINT; VAR arg: ARRAY OF CHAR);
 	BEGIN
@@ -192,7 +303,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		VAR
 			cont: MD5.Context;
 			digest: MD5.Digest;
-			stamp, login: ARRAY 64 OF CHAR;
+			stamp, login: ARRAY 128 OF CHAR;
 			i, j: LONGINT;
 	BEGIN
 		i := 0;
@@ -214,10 +325,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	END APOP;
 
 	PROCEDURE OpenPOP(VAR S: NetTools.Session; host, user, passwd: ARRAY OF CHAR; port: INTEGER; apop: BOOLEAN);
-		VAR
-			hostIP: NetSystem.IPAdr;
-			i: LONGINT;
-			login: BOOLEAN;
+		VAR hostIP: NetSystem.IPAdr; login: BOOLEAN;
 	BEGIN
 		IF trace THEN
 			Texts.WriteString(W, "--- POP");
@@ -243,14 +351,13 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 							login := FALSE
 						END
 					END;
-					IF login & ReadState(S) THEN
-						S.reply := "connected"; S.res := NetTools.Done;
-						RETURN
-					END;
-					i := 0;
-					Strings.Search("assword", S.reply, i);
-					IF i > 0 THEN
-						NetSystem.DelPassword("pop", host, user)
+					IF login THEN
+						IF ReadState(S) THEN
+							S.reply := "connected"; S.res := NetTools.Done;
+							RETURN
+						ELSE
+							NetSystem.DelPassword("pop", host, user)
+						END
 					END
 				ELSIF S.reply[0] = 0X THEN
 					S.reply := "timed out"
@@ -315,7 +422,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	END ReadText;
 
 	PROCEDURE DeleteMail(S: NetTools.Session; no: LONGINT);
-		VAR arg: ARRAY 4 OF CHAR;
+		VAR arg: ARRAY 12 OF CHAR;
 	BEGIN
 		NrToArg(no, arg); SendCmd(S, "DELE", arg);
 		IF ~ReadState(S) THEN
@@ -323,7 +430,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	END DeleteMail;
 
 	PROCEDURE ReceiveMail(S: NetTools.Session; no: LONGINT; VAR R: Files.Rider);
-		VAR arg: ARRAY 8 OF CHAR;
+		VAR arg: ARRAY 12 OF CHAR;
 	BEGIN
 		NrToArg(no, arg); SendCmd(S, "RETR", arg);
 		IF ReadState(S) THEN
@@ -333,7 +440,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 
 	PROCEDURE MessageSize(S: NetTools.Session; no: LONGINT): LONGINT;
 		VAR
-			arg: ARRAY 8 OF CHAR;
+			arg: ARRAY 12 OF CHAR;
 			size: LONGINT;
 			i: INTEGER;
 	BEGIN
@@ -362,15 +469,30 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		END
 	END GetUIDLs;
 
+	PROCEDURE ValidChar(ch: CHAR): BOOLEAN;
+	BEGIN
+		RETURN ((CAP(ch) >= "A") & (CAP(ch) <= "Z")) OR ((ch >= "0") & (ch <= "9")) OR (ch = ".")
+	END ValidChar;
+
 	PROCEDURE UIDLFile(VAR pop, user: ARRAY OF CHAR; new: BOOLEAN): Files.File;
 		VAR
 			F: Files.File;
 			name: FileDir.FileName;
+			num: ARRAY 20 OF CHAR;
+			ip: NetSystem.IPAdr;
+			i: LONGINT;
 	BEGIN
-		COPY(pop, name);
+		NetSystem.GetIP(pop, ip);	(* assume server has a single IP address *)
+		NetSystem.ToNum(ip, num);
+		name := "UIDL.";
+		Strings.Append(name, num);
 		Strings.AppendCh(name, ".");
 		Strings.Append(name, user);
-		Strings.Append(name, ".UIDLs");
+		i := 0;
+		WHILE name[i] # 0X DO
+			IF ~ValidChar(name[i]) THEN name[i] := "X" END;
+			INC(i)
+		END;
 		F := Files.Old(name);
 		IF F # NIL THEN
 			Files.GetName(F, name)
@@ -448,7 +570,6 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			END;
 			set.uidls := uidll
 		END;
-		(*COPY(uidl, set.uidls[set.nouidls]);*)
 		set.uidls[set.nouidls] := uidl;
 		INC(set.nouidls)
 	END AddUIDL;
@@ -487,9 +608,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	END FlushUIDL;
 
 	PROCEDURE ParseContent*(h: MIME.Header; VAR cont: MIME.Content);
-		VAR
-			val: ARRAY 32 OF CHAR;
-			pos: LONGINT;
+		VAR val: ValueString; pos: LONGINT;
 	BEGIN
 		cont := NIL;
 		pos := MIME.FindField(h, "X-Content-Type");
@@ -538,7 +657,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			cont: MIME.Content;
 			nmsgs: MsgHeadList;
 			len, i, v: LONGINT;
-			str: ARRAY 16 OF CHAR;
+			str: ARRAY BufLen OF CHAR;
 	BEGIN
 		S := Streams.OpenFileReader(msgsF, pos);
 		MIME.ReadHeader(S, NIL, h, len);
@@ -557,17 +676,23 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		msgs[noMsgs].len := -1;
 
 		pos := MIME.FindField(h, "Reply-To");
+		IF pos >= 0 THEN
+			MIME.ExtractEMail(h, pos, str);
+			IF str = "" THEN pos := -1 END
+		END;
 		IF pos < 0 THEN
 			pos := MIME.FindField(h, "From")
 		END;
 		(* ASSERT(pos > 0); *)
-		MIME.ExtractEMail(h, pos, msgs[noMsgs].replyTo);
+		MIME.ExtractEMail(h, pos, str);
+		Insert(heap, str, msgs[noMsgs].replyTo);
 
 		pos := MIME.FindField(h, "Date");
 		MIME.ExtractGMTDate(h, pos, msgs[noMsgs].time, msgs[noMsgs].date);
 
 		pos := MIME.FindField(h, "Subject");
-		MIME.ExtractValue(h, pos, msgs[noMsgs].subject);
+		MIME.ExtractValue(h, pos, str);
+		Insert(heap, str, msgs[noMsgs].subject);
 
 		pos := MIME.FindField(h, "X-Oberon-Status");
 		msgs[noMsgs].flags := {}; msgs[noMsgs].topics := {};
@@ -667,8 +792,8 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			S: NetTools.Session;
 			set, newSet: UIDLSet;
 			uidl: UIDL;
-			pop, user: ARRAY 64 OF CHAR;
-			passwd: ARRAY 16 OF CHAR;
+			pop: ServerName;
+			user: UserName; passwd: ValueString;
 			Ri: Files.Rider;
 			uT: Texts.Text;
 			Sc: Texts.Scanner;
@@ -682,9 +807,12 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		trace := NetTools.QueryBool("TraceMail");
 		GetSetting("POPMode", pop, FALSE); Strings.Upper(pop, pop);
 		apop := pop = "APOP";
-		GetSetting("MaxMsgSize", user, TRUE);
+		GetSetting("MaxMsgSize", user, FALSE);
 		Strings.StrToInt(user, maxSize);
-		GetSetting("LeaveOnServer", user, TRUE);
+		GetSetting("LeaveOnServer", user, TRUE);	(* first check local in Mail.Panel *)
+		IF user = "No" THEN	(* not set, check config file for final setting *)
+			IF ~NetTools.QueryString("LeaveOnServer", user) THEN user[0] := 0X END
+		END;
 		IF user # "" THEN
 			Strings.StrToBool(user, onServer)
 		ELSE
@@ -734,8 +862,9 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 							Texts.Append(Oberon.Log, W.buf); add := FALSE
 						END
 					ELSIF set.uidls[k][63] # 0X THEN
-						FlushUIDL(newSet); set^ := newSet^;
-						HALT(99)
+						Texts.WriteString(W, "message "); Texts.WriteInt(W, i, 0);
+						Texts.WriteString(W, " ignored (UIDL not unique)"); Texts.WriteLn(W);
+						Texts.Append(Oberon.Log, W.buf); add := FALSE
 					ELSE
 						set.uidls[k][63] := 01X
 					END;
@@ -773,8 +902,8 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			S: NetTools.Session;
 			set, newSet: UIDLSet;
 			uidl: UIDL;
-			pop, user: ARRAY 64 OF CHAR;
-			passwd: ARRAY 16 OF CHAR;
+			pop: ServerName;
+			user: UserName; passwd: ValueString;
 			uT: Texts.Text;
 			Sc: Texts.Scanner;
 			R: Texts.Reader;
@@ -889,7 +1018,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 
 	PROCEDURE WriteField(VAR h: MIME.Header; field: ARRAY OF CHAR; empty, long: BOOLEAN);
 		VAR
-			caption, value: ARRAY 128 OF CHAR;
+			caption: ARRAY 64 OF CHAR; value: ARRAY 128 OF CHAR;
 			pos: LONGINT; first: BOOLEAN;
 	BEGIN
 		COPY(field, caption);
@@ -924,7 +1053,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		VAR
 			F, Fc: Files.File;
 			R: Texts.Reader;
-			str: ARRAY 64 OF CHAR;
+			str: ValueString;
 			style: TextGadgets.Style;
 			topic: Topic;
 			pos, len: LONGINT;
@@ -1024,7 +1153,10 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		S.mode := Streams.binary;
 		cont.len := msgs[no].len;
 		IF plain THEN
-			Texts.SetFont(W, Fonts.Default)
+			Texts.SetFont(W, Fonts.Default);
+			Texts.WriteString(W, "[Message "); Texts.WriteInt(W, no, 1);
+			Texts.WriteString(W, ", pos "); Texts.WriteInt(W, msgs[no].pos-7, 1);
+			Texts.WriteString(W, "]"); Texts.WriteLn(W)
 		ELSE
 			Texts.SetFont(W, textFnt)
 		END;
@@ -1048,7 +1180,15 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE *DocHandler(D: Objects.Object; VAR M: Objects.ObjMsg);
 	BEGIN
 		WITH D: Documents.Document DO
-			IF M IS Objects.LinkMsg THEN
+			IF M IS Objects.AttrMsg THEN
+				WITH M: Objects.AttrMsg DO
+					IF (M.id = Objects.get) & (M.name = "Gen") THEN
+						M.class := Objects.String; M.s := "Mail.NewMsgDoc"; M.res := 0
+					ELSE
+						TextDocs.DocHandler(D, M)
+					END
+				END
+			ELSIF M IS Objects.LinkMsg THEN
 				WITH M: Objects.LinkMsg DO
 					IF M.id = Objects.get THEN
 						IF M.name = "DeskMenu" THEN
@@ -1060,7 +1200,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 							IF M.obj = NIL THEN M.obj := Desktops.NewMenu(SysMenu) END;
 							M.res := 0
 						ELSIF M.name = "UserMenu" THEN
-							M.obj := Gadgets.CopyPublicObject("NetDosc.MailUserMenu", TRUE);
+							M.obj := Gadgets.CopyPublicObject("NetDocs.MailUserMenu", TRUE);
 							IF M.obj = NIL THEN M.obj := Desktops.NewMenu(Menu) END;
 							M.res := 0
 						ELSE
@@ -1097,11 +1237,24 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			F: Texts.Finder;
 			no: LONGINT;
 			plain: BOOLEAN;
+			line: ListGadgets.Line;
 	BEGIN
 		Attributes.OpenScanner(S, Oberon.Par.text,Oberon.Par.pos);
 		Attributes.Scan(S);
 		IF S.class = Attributes.Int THEN
 			IF (S.i >= 0) & (S.i < noMsgs) THEN
+				obj := FindObj("MailList");
+				IF obj # NIL THEN
+					WITH obj: ListGadgets.Frame DO
+						line := obj.lines;
+						REPEAT
+							line.sel := msgs[S.i].pos = line.key;
+							line := line.next
+						UNTIL line = obj.lines;
+						obj.sel := TRUE; obj.time := Oberon.Time();
+						Gadgets.Update(obj)
+					END
+				END;
 				decodeMessage(S.i, T, FALSE);
 				ShowText("Mail.Text", T, TRUE)
 			END
@@ -1132,7 +1285,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		VAR
 			F: Files.File;
 			R: Files.Rider;
-			bak: ARRAY 64 OF CHAR;
+			msg, bak: FileDir.FileName;
 			beg, end, offs, i: LONGINT;
 			res: INTEGER;
 			ch, old: CHAR;
@@ -1154,9 +1307,10 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		END Copy;
 	BEGIN
 		ShowStatus("shrinking message file");
-		COPY(MsgFile, bak); Strings.Append(bak, ".Bak");
-		Files.Rename(MsgFile, bak, res); ASSERT(res = 0);
-		F := Files.New(MsgFile); i := 0;
+		Files.GetName(msgsF, msg); 
+		COPY(msg, bak); Strings.Append(bak, ".Bak");
+		Files.Rename(msg, bak, res); ASSERT(res = 0);
+		F := Files.New(msg); i := 0;
 		msgsF := Files.Old(bak); Files.Set(R, msgsF, 0);
 		old := Strings.LF; beg := MAX(LONGINT);
 		Files.Read(R, ch);
@@ -1283,7 +1437,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			S: Streams.Stream;
 			R: Texts.Reader;
 			h: MIME.Header;
-			t: ARRAY 512 OF CHAR;
+			t: ARRAY BufLen OF CHAR;
 			pos, len: LONGINT;
 			ch: CHAR;
 	BEGIN
@@ -1337,6 +1491,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			obj: Objects.Object;
 			beg, end, time: LONGINT;
 			fnt: Objects.Library;
+			str: AdrString;
 	BEGIN
 		fnt := W.lib; Texts.SetFont(W, textFnt);
 		NEW(T); Texts.Open(T, "");
@@ -1344,8 +1499,10 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		Attributes.Scan(S);
 		IF S.class = Attributes.Int THEN
 			IF (S.i >= 0) & (S.i < noMsgs) THEN
-				Texts.WriteString(W, "To: "); Texts.WriteString(W, msgs[S.i].replyTo); Texts.WriteLn(W);
-				Texts.WriteString(W, "Subject: "); Re(W, msgs[S.i].subject); Texts.WriteLn(W)
+				Copy(heap, msgs[S.i].replyTo, str);
+				Texts.WriteString(W, "To: "); Texts.WriteString(W, str); Texts.WriteLn(W);
+				Copy(heap, msgs[S.i].subject, str);
+				Texts.WriteString(W, "Subject: "); Re(W, str); Texts.WriteLn(W)
 			END
 		ELSIF Desktops.IsInMenu(Gadgets.context) THEN
 			D := Desktops.CurDoc(Gadgets.context);
@@ -1424,12 +1581,93 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		DoTopic(FALSE)
 	END ClearTopic;
 
+	(* Move mail(s) from current topic to another topic.  It's only allowed if your current query is a topic. (es, 22.10.2000 *)
+	
+	PROCEDURE MoveTopic*;
+		VAR
+			S: Attributes.Scanner;
+			mailL: Objects.Object;
+			topic: Topic;
+			C: ListRiders.ConnectMsg;
+			R: ListRiders.Rider;
+			mLine: ListGadgets.Line;
+			h: MIME.Header;
+			currentNo, no: LONGINT;
+			queryObj: Objects.Object;
+			queryStr: ARRAY 128 OF CHAR;
+			
+		PROCEDURE GetTopicNo(queryStr: ARRAY OF CHAR): LONGINT;
+		VAR topic: Topic; name: ARRAY 128 OF CHAR; i, j: LONGINT; ch: CHAR;
+		BEGIN
+			(* drop 'topic="' and '"' from query string *)
+			IF queryStr[6] = 22X THEN ch := 22X; j := 7 ELSE ch := " "; j := 6 END;
+			i := 0;
+			WHILE (queryStr[j] # ch) & (queryStr[j] # 0X) DO
+				name[i] := queryStr[j]; INC(i); INC(j)
+			END;
+			name[i] := 0X;
+			topic := topics;
+			WHILE (topic # NIL) & (topic.topic.s # name) DO
+				topic := topic.next
+			END;
+			IF topic # NIL THEN
+				RETURN topic.no
+			ELSE
+				COPY("Topic not found: ", queryStr); Strings.Append(queryStr, name); ShowStatus(queryStr);
+				RETURN -1
+			END
+		END GetTopicNo;
+
+	BEGIN
+		queryObj := FindObj("Query");
+		IF queryObj # NIL THEN
+			Attributes.GetString(queryObj, "Value", queryStr);
+			IF ~Strings.Prefix("topic=", queryStr) THEN
+				ShowStatus("must show single topic first"); RETURN
+			ELSE
+				currentNo := GetTopicNo(queryStr)
+			END
+		ELSE
+			ShowStatus("no query value found"); RETURN;
+		END;
+		Attributes.OpenScanner(S, Oberon.Par.text,Oberon.Par.pos);
+		Attributes.Scan(S);
+		IF S.class IN {Attributes.Name, Attributes.String} THEN
+			mailL := FindObj(S.s);
+			Attributes.Scan(S);
+			IF S.class IN {Attributes.Name, Attributes.String} THEN
+				topic := topics;
+				WHILE (topic # NIL) & (topic.topic.s # S.s) DO
+					topic := topic.next
+				END;
+				IF topic # NIL THEN
+					WITH mailL: ListGadgets.Frame DO
+						C.R := NIL; Objects.Stamp(C); mailL.obj.handle(mailL.obj, C); R := C.R;
+						mLine := mailL.lines;
+						REPEAT
+							IF mLine.sel THEN
+								R.do.Seek(R, mLine.key);
+								no := R.d(ListRiders.Int).i;
+								IF currentNo > -1 THEN EXCL(msgs[no].topics, currentNo) END;
+								INCL(msgs[no].topics, topic.no);
+								ScanHeader(no, h); 
+								WriteStatus(h, no)
+							END;
+							mLine := mLine.next
+						UNTIL mLine = mailL.lines;
+						Files.Close(msgsF); Gadgets.Update(msgList)
+					END
+				END
+			END
+		END
+	END MoveTopic;
+	
 	PROCEDURE QueryTopic*;
 		VAR
 			S: Attributes.Scanner;
 			obj: Objects.Object;
 			topic: Topic;
-			query: ARRAY 64 OF CHAR;
+			query: QueryString;
 	BEGIN
 		Attributes.OpenScanner(S, Oberon.Par.text,Oberon.Par.pos);
 		Attributes.Scan(S);
@@ -1452,73 +1690,116 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		END
 	END QueryTopic;
 
-(*	PROCEDURE LoadMsgs();
-		VAR
-			R: Files.Rider;
-			p: LONGINT;
-			ch, old: CHAR;
+	PROCEDURE SaveIndexFile();
+		VAR f: Files.File; r: Files.Rider; i, t, d, len: LONGINT; new: BOOLEAN;
 	BEGIN
-		uidls := NIL;
-		NEW(msgs, 128); noMsgs := 0; delMsgs := 0;
-		msgsF := Files.Old(MsgFile);
-		IF msgsF = NIL THEN
-			msgsF := Files.New(MsgFile); Files.Register(msgsF)
-		END;
-		Files.Set(R, msgsF, 0);
-		old := Strings.LF; Files.Read(R, ch);
-		WHILE ~R.eof DO
-			p := Files.Pos(R)-1;
-			IF (ch = "F") & (old = Strings.LF) THEN
-				Files.Read(R, ch);
-				IF ch = "r" THEN
-					Files.Read(R, ch);
-					IF ch = "o" THEN
-						Files.Read(R, ch);
-						IF ch = "m" THEN
-							Files.Read(R, ch);
-							IF ch = " " THEN
-								WHILE ~R.eof & (ch >= " ") DO
-									Files.Read(R, ch)
-								END;
-								WHILE ~R.eof & (ch < " ") DO
-									Files.Read(R, ch)
-								END;
-								IF (noMsgs > 0) & (msgs[noMsgs-1].len <= 0) THEN
-									msgs[noMsgs-1].len := p-msgs[noMsgs-1].pos
-								END;
-								AddMsgHead(Files.Pos(R)-1)
-							END
-						END
-					END
-				END
+		ASSERT(msgsF # NIL);
+		f := Files.Old(IndexFile); new := FALSE;
+		IF f = NIL THEN f := Files.New(IndexFile); new := TRUE END;
+		IF f # NIL THEN
+			Files.GetDate(msgsF, t, d); len := Files.Length(msgsF);
+			Files.Set(r, f, 0);
+			Files.WriteLInt(r, IndexFileKey);
+			Files.WriteNum(r, t); Files.WriteNum(r, d); Files.WriteNum(r, len);
+			Files.WriteNum(r, noMsgs); Files.WriteNum(r, delMsgs);
+			Files.WriteNum(r, LEN(msgs^));	(* size of msgs array *)
+			Files.WriteNum(r, noMsgs);
+			FOR i := 0 TO noMsgs - 1 DO
+				Files.WriteNum(r, i);
+				Files.WriteNum(r, msgs[i].pos);
+				Files.WriteNum(r, msgs[i].len);
+				Files.WriteNum(r, msgs[i].state);
+				Files.WriteNum(r, msgs[i].stamp);
+				Files.WriteSet(r, msgs[i].flags);
+				Files.WriteSet(r, msgs[i].topics);
+				Files.WriteNum(r, msgs[i].date);
+				Files.WriteNum(r, msgs[i].time);
+				Files.WriteLInt(r, msgs[i].replyTo);
+				Files.WriteLInt(r, msgs[i].subject);
+				Files.WriteLInt(r, 0FFFFFFFFH)
 			END;
-			old := ch; Files.Read(R, ch)
-		END;
-		IF (noMsgs > 0) & (msgs[noMsgs-1].len <= 0) THEN
-			msgs[noMsgs-1].len := p-msgs[noMsgs-1].pos
+			Store(r, heap);
+			IF new THEN Files.Register(f) ELSE Files.Close(f) END
 		END
-	END LoadMsgs;	*)
+	END SaveIndexFile;
+	
+	PROCEDURE TryLoadIndexFile(): BOOLEAN;
+		VAR 
+			f: Files.File; r: Files.Rider; 
+			t0, d0, len0, key, i, t, d, len: LONGINT;
+		
+		PROCEDURE err(n: INTEGER);
+		BEGIN
+			Texts.WriteString(W, "Reparsing Mail: ");
+			CASE n OF
+			 	1: Texts.WriteString(W, "(1) MailMessages.idx not found.");
+			|	2: Texts.WriteString(W, "(2) MailMessages not open.");
+			|	3: Texts.WriteString(W, "(3) MailMessages.idx lacks proper key.");
+					Texts.WriteHex(W, key); Texts.WriteString(W, " # "); Texts.WriteHex(W, IndexFileKey);
+			|	4: Texts.WriteString(W, "(4) MailMessages has changed since index was saved.");
+			|	5: Texts.WriteString(W, "(5) MailMessages.idx internally corrupted.");
+			|	6: Texts.WriteString(W, "(6) MailMessages.idx sequence number corrupted.");
+			|	7: Texts.WriteString(W, "(7) MailMessages.idx internally corrupted.")
+			|	8: Texts.WriteString(W, "(8) readcount is too large.");
+			ELSE
+				Texts.WriteString(W, "Unknown problem.");
+			END;
+			Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf);
+		END err;
+			
+	BEGIN
+		f := Files.Old(IndexFile);
+		IF f = NIL THEN err(1); RETURN FALSE END;
+		IF msgsF = NIL THEN msgsF := Files.Old(MsgFile) END;
+		IF msgsF = NIL THEN err(2); RETURN FALSE END;
+		Files.Set(r, f, 0);
+		Files.ReadLInt(r, key);
+		IF key # IndexFileKey THEN err(3); RETURN FALSE END;
+		Files.GetDate(msgsF, t, d); len := Files.Length(msgsF);
+		Files.ReadNum(r, t0); Files.ReadNum(r, d0); Files.ReadNum(r, len0);
+		IF (* (t0 # t) OR (d0 # d) OR *) (len0 # len) THEN err(4); RETURN FALSE END;
+		Files.ReadNum(r, noMsgs); Files.ReadNum(r, delMsgs);
+		Files.ReadNum(r, len); 	(* size of msgs array *)
+		IF (msgs = NIL) OR (LEN(msgs^) < len) THEN NEW(msgs, len) END;
+		Files.ReadNum(r, len);	(* number of elements to be read *)
+		IF (len > LEN(msgs^)) THEN err(8); RETURN FALSE END;
+		FOR i := 0 TO len - 1 DO
+			Files.ReadNum(r, t); IF (t # i) THEN err(6); RETURN FALSE END;
+			Files.ReadNum(r, msgs[i].pos);
+			Files.ReadNum(r, msgs[i].len);
+			Files.ReadNum(r, msgs[i].state);
+			Files.ReadNum(r, msgs[i].stamp);
+			Files.ReadSet(r, msgs[i].flags);
+			Files.ReadSet(r, msgs[i].topics);
+			Files.ReadNum(r, msgs[i].date);
+			Files.ReadNum(r, msgs[i].time);
+			Files.ReadLInt(r, msgs[i].replyTo);
+			Files.ReadLInt(r, msgs[i].subject);
+			Files.ReadLInt(r, d); IF (d # 0FFFFFFFFH) THEN err(7); RETURN FALSE END
+		END;
+		Load(r, heap);
+		RETURN TRUE
+	END TryLoadIndexFile;
 
 	PROCEDURE LoadMsgs();
-(* to do: From at end of buf (cur)
-	first msg *)
-		CONST BufSize = 4*1024;
 		VAR
 			R: Files.Rider;
-			buf: ARRAY BufSize+4 OF CHAR;
-			pat: ARRAY 8 OF CHAR;
-			div: ARRAY 8 OF LONGINT;
-			pos: LONGINT;
+			buf: ARRAY BufLen+4 OF CHAR;
+			pat: ARRAY 16 OF CHAR;
+			div: ARRAY 16 OF LONGINT;
+			pos, patlen: LONGINT;
+			
 		PROCEDURE Search(VAR pos: LONGINT);
 			VAR
 				i: LONGINT;
 				ch: CHAR;
 		BEGIN
 			ch := buf[pos]; i := 0;
-			WHILE (i # 6) & (ch # 0X) DO
+			WHILE (i # patlen) & (ch # 0X) DO
 				IF ch = pat[i] THEN
 					INC(i);
-					IF i < 6 THEN
+					IF i < patlen THEN
 						INC(pos); ch := buf[pos]
 					END
 				ELSIF i = 0 THEN
@@ -1527,7 +1808,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 					i := i - div[i]
 				END
 			END;
-			IF i # 6 THEN
+			IF i # patlen THEN
 				pos := -1
 			END
 		END Search;
@@ -1556,26 +1837,26 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 				Search(i)
 			END;
 			IF ~R.eof THEN
-				i := BufSize-5;
-				WHILE (i < BufSize) & (buf[i] # Strings.LF) DO
+				i := BufLen-5;
+				WHILE (i < BufLen) & (buf[i] # Strings.LF) DO
 					INC(i)
 				END;
-				IF i < BufSize THEN
+				IF i < BufLen THEN
 					pos := pos+i;
 					Files.Set(R, msgsF, pos);
 					RETURN
 				END
 			END;
-			INC(pos, BufSize);
+			INC(pos, BufLen);
 			Files.Set(R, msgsF, pos)
 		END AddMsgs;
 		PROCEDURE CalcDispVec();
 			VAR i, j, d: LONGINT;
 		BEGIN
 			i := 1; d := 1;
-			WHILE i <= 6 DO
+			WHILE i <= patlen DO
 				j := 0; 
-				WHILE ((j + d) < 6) & (pat[j] = pat[j+d]) DO
+				WHILE ((j + d) < patlen) & (pat[j] = pat[j+d]) DO
 					INC(j)
 				END;
 				WHILE i <= j + d DO
@@ -1585,33 +1866,41 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			END
 		END CalcDispVec;
 	BEGIN
-		uidls := NIL; pat := " From "; pat[0] := Strings.LF;
-		NEW(msgs, 128); noMsgs := 0; delMsgs := 0;
-		msgsF := Files.Old(MsgFile);
-		IF msgsF = NIL THEN
-			msgsF := Files.New(MsgFile); Files.Register(msgsF)
-		END;
-		CalcDispVec();
-		Files.Set(R, msgsF, 0); buf[BufSize] := 0X;
-		IF Files.Length(msgsF) > 7 THEN
-			AddMsgHead(7)
-		END;
-		pos := 0; Files.ReadBytes(R, buf, BufSize);
-		WHILE ~R.eof DO
+		uidls := NIL; Open(heap);
+		IF ~TryLoadIndexFile() THEN
+			Texts.WriteString(W, "Generating mail index..."); Texts.WriteLn(W);
+			Texts.Append(Oberon.Log, W.buf);
+			pat := "xx.xxFrom ";
+			pat[0] := Strings.CR; pat[1] := Strings.LF;
+			pat[3] := Strings.CR; pat[4] := Strings.LF;
+			patlen := 0; WHILE pat[patlen] # 0X DO INC(patlen) END;
+			NEW(msgs, 128); noMsgs := 0; delMsgs := 0;
+			msgsF := Files.Old(MsgFile);
+			IF msgsF = NIL THEN
+				msgsF := Files.New(MsgFile); Files.Register(msgsF)
+			END;
+			CalcDispVec();
+			Files.Set(R, msgsF, 0); buf[BufLen] := 0X;
+			IF Files.Length(msgsF) > 7 THEN
+				AddMsgHead(7)
+			END;
+			pos := 0; Files.ReadBytes(R, buf, BufLen);
+			WHILE ~R.eof DO
+				AddMsgs();
+				Files.ReadBytes(R, buf, BufLen)
+			END;
+			buf[BufLen-R.res] := 0X;
 			AddMsgs();
-			Files.ReadBytes(R, buf, BufSize)
-		END;
-		buf[BufSize-R.res] := 0X;
-		AddMsgs();
-		IF (noMsgs > 0) & (msgs[noMsgs-1].len <= 0) THEN
-			msgs[noMsgs-1].len := Files.Length(msgsF)-1-msgs[noMsgs-1].pos
+			IF (noMsgs > 0) & (msgs[noMsgs-1].len <= 0) THEN
+				msgs[noMsgs-1].len := Files.Length(msgsF)-1-msgs[noMsgs-1].pos
+			END;
+			SaveIndexFile()
 		END
 	END LoadMsgs;
 
 	PROCEDURE LoadTopics();
 		VAR
-			key: ARRAY 32 OF CHAR;
-			value: ARRAY 64 OF CHAR;
+			key, value: ValueString;
 			topic: Topic;
 			i: LONGINT;
 	BEGIN
@@ -1802,7 +2091,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			eof = 0; colon = 9; name = 10; string = 11; number = 12; dot = 13; today = 14; now = 15;
 			read = 16; unread = 17;
 		VAR
-			str, keyw: ARRAY 64 OF CHAR;
+			str, keyw: ValueString;
 			pos, num, d, m, y, h, s, sym: LONGINT;
 			ch: CHAR;
 		PROCEDURE GetName();
@@ -2086,17 +2375,18 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		VAR
 			cond: Cond;
 			pos, i: LONGINT;
+			str: ValueString;
 			txt: BOOLEAN;
 	BEGIN
 		cond := Q.conds; txt := FALSE;
 		WHILE cond # NIL DO (* evaluate simple conditions *)
 			cond.eval := TRUE;
 			CASE cond.field OF
-				from: pos := 0;
-						Strings.Search(cond.val, msg.replyTo, pos);
+				from: pos := 0; Copy(heap, msg.replyTo, str);
+						Strings.Search(cond.val, str, pos);
 						cond.value := ((cond.op = eq) & (pos >= 0)) OR ((cond.op = neq) & (pos < 0))
-				|subject: pos := 0;
-							Strings.Search(cond.val, msg.subject, pos);
+				|subject: pos := 0; Copy(heap, msg.subject, str);
+							Strings.Search(cond.val, str, pos);
 							cond.value := ((cond.op = eq) & (pos >= 0)) OR ((cond.op = neq) & (pos < 0))
 				|topic: cond.value := ((cond.op = eq) & (cond.time IN msg.topics)) OR ((cond.op = neq) & ~(cond.time IN msg.topics))
 				|notopic: cond.value := msg.topics = {}
@@ -2277,8 +2567,8 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE *DisplayLine(F: ListGadgets.Frame; Q: Display3.Mask; x, y, w, h: INTEGER; R: ListRiders.Rider; L: ListGadgets.Line);
 		VAR
 			Q2: Display3.Mask;
-			str: ARRAY 16 OF CHAR;
-			textC: INTEGER;
+			str: ValueString;
+			textC, sw, sh, dsr: INTEGER;
 	BEGIN
 		Display3.ReplConst(Q, F.backC, x, y, w-50, h, Display.replace);
 		WITH R: Rider DO
@@ -2287,12 +2577,15 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			ELSE
 				textC := Display3.red
 			END;
-			Display3.String(Q, textC, x + (w DIV 3) + 8, y + L.dsr, F.fnt, msgs[R.pos].subject, Display.paint);
+			Copy(heap, msgs[R.pos].subject, str);
+			Display3.String(Q, textC, x + (w DIV 3) + 8, y + L.dsr, F.fnt, str, Display.paint);
 			Display3.Copy(Q, Q2); Display3.AdjustMask(Q2, x, y, w DIV 3, h);
-			Display3.String(Q2, textC, x, y + L.dsr, F.fnt, msgs[R.pos].replyTo, Display.paint);
+			Copy(heap, msgs[R.pos].replyTo, str);
+			Display3.String(Q2, textC, x, y + L.dsr, F.fnt, str, Display.paint);
 			Strings.DateToStr(msgs[R.pos].date, str);
-			Display3.ReplConst(Q, F.backC, x+w-50, y, 50, h, Display.replace);
-			Display3.String(Q, textC, x+w-42, y + L.dsr, F.fnt, str, Display.paint)
+			Display3.StringSize(str, F.fnt, sw, sh, dsr);
+			Display3.ReplConst(Q, F.backC, x+w-sw-8, y, sw+8, h, Display.replace);
+			Display3.String(Q, textC, x+w-sw, y + L.dsr, F.fnt, str, Display.paint)
 		END
 	END DisplayLine;
 
@@ -2528,7 +2821,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE Recipient(VAR i: LONGINT; VAR s, rcpt: ARRAY OF CHAR);
 		VAR
 			j, k, end, dom: LONGINT;
-			candidate: ARRAY 128 OF CHAR;
+			candidate: AdrString;
 			special: BOOLEAN;
 			ch, old, close: CHAR;
 	BEGIN
@@ -2651,7 +2944,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 
 	PROCEDURE ReadResponse(S: SMTPSession);
 		VAR
-			reply: ARRAY NetTools.MaxLine OF CHAR;
+			reply: ARRAY BufLen OF CHAR;
 			l: LONGINT;
 	BEGIN
 		NetSystem.ReadString(S.C, S.reply);
@@ -2750,13 +3043,68 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		AsciiCoder.Code(F, ascii)
 	END MakeAscii;
 
+	PROCEDURE SendMsgId(S: SMTPSession);
+	VAR t, d: LONGINT; s: ARRAY 20 OF CHAR; id: ARRAY 80 OF CHAR;
+	BEGIN
+		id := "<";
+		t := 0; d := 0; WHILE S.from[t] # 0X DO d := (d + ORD(S.from[t])) MOD 65536; INC(t) END;
+		Strings.IntToStr(d, s); Strings.Append(id, s);
+		Oberon.GetClock(t, d);
+		Strings.IntToStr(d, s); Strings.Append(id, s); Strings.AppendCh(id, ".");
+		Strings.IntToStr(t, s); Strings.Append(id, s); Strings.AppendCh(id, ".");
+		Strings.IntToStr(count, s); Strings.Append(id, s); Strings.AppendCh(id, "."); INC(count);
+		Strings.AppendCh(id, "@");
+		IF NetSystem.hostName # "" THEN
+			Strings.Append(id, NetSystem.hostName)
+		ELSE
+			NetSystem.ToNum(NetSystem.hostIP, s); Strings.Append(id, s)
+		END;
+		Strings.AppendCh(id, ">");
+		SendCmd(S, "Message-ID:", id)
+	END SendMsgId;
+	
+	PROCEDURE Append2(VAR to: ARRAY OF CHAR; x: LONGINT);
+	BEGIN
+		Strings.AppendCh(to, CHR(ORD("0")+x DIV 10 MOD 10));
+		Strings.AppendCh(to, CHR(ORD("0")+x MOD 10))
+	END Append2;
+	
+	PROCEDURE FormatTime(time, date: LONGINT; VAR s: ARRAY OF CHAR);	(* RFC 2822 format *)
+	VAR t: ARRAY 20 OF CHAR; year, mon, day, hour, min, sec: INTEGER; diff: LONGINT;
+	BEGIN
+		s[0] := 0X;
+		Dates.ToHMS(time, hour, min, sec);
+		Dates.ToYMD(date, year, mon, day);
+		Strings.DayToStr(Dates.DayOfWeek(date), t, TRUE); Strings.Append(s, t); Strings.Append(s, ", ");
+		Strings.IntToStr(day, t); Strings.Append(s, t); Strings.AppendCh(s, " ");
+		Strings.MonthToStr(mon, t, TRUE); Strings.Append(s, t); Strings.AppendCh(s, " ");
+		Strings.IntToStr(year, t); Strings.Append(s, t); Strings.AppendCh(s, " ");
+		Append2(s, hour); Strings.AppendCh(s, ":");
+		Append2(s, min); Strings.AppendCh(s, ":");
+		Append2(s, sec); Strings.AppendCh(s, " ");
+		diff := Dates.TimeDiff;
+		IF diff < 0 THEN Strings.AppendCh(s, "-"); diff := -diff ELSE Strings.AppendCh(s, "+") END;
+		Append2(s, diff DIV 60);
+		Append2(s, diff MOD 60)
+	END FormatTime;
+	
+	PROCEDURE SendDate(S: SMTPSession);
+	VAR t, d: LONGINT; s: ARRAY 64 OF CHAR;
+	BEGIN
+		Oberon.GetClock(t, d);
+		FormatTime(t, d, s);
+		SendCmd(S, "Date:", s)
+	END SendDate;
+	
 	PROCEDURE SendText*(S: SMTPSession; head, body: Texts.Text; beg, end: LONGINT; cont: MIME.Content);
 		VAR
 			enc: LONGINT;
 			ascii: Texts.Text;
 	BEGIN
 		enc := cont.encoding; cont.len := MAX(LONGINT);
-		SendCmd(S,"From: ", S.from);
+		SendCmd(S,"From:", S.from);	(* no space after ":" *)
+		SendDate(S);
+		SendMsgId(S);
 		SendCmd(S, "X-Mailer:", mailer);
 		IF enc IN {MIME.EncAsciiCoder, MIME.EncAsciiCoderC, MIME.EncAsciiCoderCPlain} THEN
 			SendCmd(S, "X-Content-Type:", MIME.OberonMime);
@@ -2787,16 +3135,16 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE SendMail*(S: SMTPSession; T: Texts.Text; cont: MIME.Content; autoCc: BOOLEAN);
 		VAR
 			R: Texts.Reader;
-			t: ARRAY 2048 OF CHAR;
+			t: ARRAY BufLen OF CHAR;
 			pos: LONGINT;
 			head: Texts.Text;
 			ch, old: CHAR;
 		PROCEDURE Recipients(VAR pos: LONGINT): BOOLEAN;
 			VAR
 				R: Texts.Reader;
-				t: ARRAY 2048 OF CHAR;
+				t: ARRAY BufLen OF CHAR;
 				i: LONGINT;
-				rcpt: ARRAY 64 OF CHAR;
+				rcpt: AdrString;
 				first: BOOLEAN;
 		BEGIN
 			Texts.OpenReader(R, T, pos); ReadString(R, t); first := TRUE;
@@ -2874,7 +3222,9 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	(** (es), Mail.Send ( @ | ^ | {mailfile} ~ ) *)
 	PROCEDURE Send*;
 		VAR
-			email, server, val: ARRAY 64 OF CHAR;
+			email: AdrString;
+			server: ServerName;
+			val: ValueString;
 			S: SMTPSession;
 			cont: MIME.Content;
 			Sc: Texts.Scanner;
@@ -3010,7 +3360,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			S: Attributes.Scanner;
 			T: Texts.Text;
 			R: Texts.Reader;
-			pos, n, l: LONGINT;
+			pos, crpos, n, l: LONGINT;
 			ch: CHAR;
 	BEGIN
 		T := Oberon.MarkedText();
@@ -3030,12 +3380,12 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			n := 80
 		END;
 		Texts.OpenReader(R, T, 0); Texts.Read(R, ch);
-		pos := 0; l := 1;
+		pos := 0; crpos := 0; l := 1;
 		WHILE ~R.eot DO
 			IF R.lib IS Fonts.Font THEN
 				IF ch = Strings.CR THEN
-					l := 0
-				ELSIF l >= n THEN
+					l := 0; pos := Texts.Pos(R); crpos := pos
+				ELSIF (l >= n) & (pos # crpos) THEN
 					Texts.WriteLn(W); Texts.Insert(T, pos, W.buf);
 					Texts.OpenReader(R, T, Texts.Pos(R)+1);
 					l := Texts.Pos(R)-pos
@@ -3053,7 +3403,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE SplitMailTo*(VAR url, mailadr: ARRAY OF CHAR): LONGINT;
 		VAR
 			key, i, j, l: LONGINT;
-			buffer: ARRAY NetTools.MaxLine OF CHAR;
+			buffer: ARRAY BufLen OF CHAR;
 			iskey: BOOLEAN;
 		PROCEDURE Blanks();
 		BEGIN
@@ -3143,7 +3493,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 	PROCEDURE SplitMailServer*(VAR url, mailadr, subject, body: ARRAY OF CHAR): LONGINT;
 		VAR
 			key, i, j, l: LONGINT;
-			buffer: ARRAY NetTools.MaxLine OF CHAR;
+			buffer: ARRAY BufLen OF CHAR;
 			iskey: BOOLEAN;
 		PROCEDURE Blanks();
 		BEGIN
@@ -3263,7 +3613,7 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 			T, text: Texts.Text;
 			objb: Objects.Object;
 			mailadr, subject, body: ARRAY NetTools.PathStrLen OF CHAR;
-			buffer: ARRAY NetTools.MaxLine OF CHAR;
+			buffer: ARRAY BufLen OF CHAR;
 			key, beg, end, time, i: LONGINT;
 			node: HyperDocs.Node;
 	BEGIN
@@ -3324,12 +3674,12 @@ MODULE Mail; (** portable *)	(* ejz,   *)
 		VAR D: Objects.Object;
 	BEGIN
 		D := Gadgets.CreateObject("TextDocs.NewDoc");
-		WITH D: Documents.Document DO
-			D.Load := LoadDoc
-		END
+		D(Documents.Document).Load := LoadDoc
 	END NewDoc;
 
 BEGIN
+	Oberon.GetClock(count, lastUIDL);	(* count := time, throw away date *)
+	Modules.InstallTermHandler(SaveIndexFile);
 	trace := NetTools.QueryBool("TraceMail");
 	mailer := "Oberon Mail (ejz) on "; Strings.Append(mailer, Kernel.version);
 	headFnt := Fonts.This("Default12b.Scn.Fnt");
@@ -3355,8 +3705,6 @@ BEGIN
 	tmMethod.DeleteLink := TopicDeleteLink;
 	NEW(topicList); topicList.handle := TopicModelHandler
 END Mail.
-
-System.Free News Mail NetTools HyperDocs MIME ~
 
 !System.CopyFiles MailMessages => ejz.MailMessages ~
 !System.CopyFiles ejz.MailMessages => MailMessages ~
@@ -3393,22 +3741,25 @@ LayLa.OpenAsDoc	( CONFIG { Mail.Panel }
 	(DEF LW 80) (DEF LH 100) (DEF SW 376) (DEF SH 192)
 	(DEF mailmodel (NEW Mail.NewModel))
 	(DEF topicmodel (NEW Mail.NewTopicModel))
-	(DEF query (NEW String (ATTR Name="Query" Value="")))
+	(DEF query (NEW String (ATTR Name="Query" Value="topic=ToDo")))
 	(DEF vpos (NEW Integer))
 	(DEF vrange (NEW Integer))
 	(DEF sortby (NEW Integer (ATTR Value=1)))
-	(DEF ascend (NEW Boolean (ATTR Value=TRUE)))
+	(DEF ascend (NEW Boolean (ATTR Value=FALSE)))
 	(DEF cont (NEW Integer (ATTR Name="ContType" Value=3)))
 	
 		{ Iconizer front panels }
 	( DEF set0 (HLIST Panel (w=IW h=BH vjustify=CENTER hjustify=CENTER) (ATTR Locked=TRUE) 
 		(NEW Caption (ATTR Value="Set")))
 	)
+	( DEF move0 (HLIST Panel (w=IW h=BH vjustify=CENTER hjustify=CENTER) (ATTR Locked=TRUE) 
+		(NEW Caption (ATTR Value="Move")))
+	)
 	( DEF clear0 (HLIST Panel (w=IW h=BH vjustify=CENTER hjustify=CENTER) (ATTR Locked=TRUE) 
 		(NEW Caption (ATTR Value="Clear")))
 	)
 	( DEF query0 (HLIST Panel (w=IW h=BH vjustify=CENTER hjustify=CENTER) (ATTR Locked=TRUE) 
-		(NEW Caption (ATTR Value="Query")))
+		(NEW Caption (ATTR Value="Topic")))
 	)
 	( DEF conf0 (HLIST Panel (w=IW2 h=BH vjustify=CENTER hjustify=CENTER) (ATTR Locked=TRUE) 
 		(NEW Caption (ATTR Value="Settings")))
@@ -3416,13 +3767,16 @@ LayLa.OpenAsDoc	( CONFIG { Mail.Panel }
 	
 		{ Iconizer insides }
 	( DEF set1
-		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.SetTopic MailList '#Point '"))
+		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.SetTopic MailList '#Point '" Locked=TRUE))
+	)
+	( DEF move1
+		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.MoveTopic MailList '#Point '" Locked=TRUE))
 	)
 	( DEF clear1
-		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.ClearTopic MailList '#Point '"))
+		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.ClearTopic MailList '#Point '" Locked=TRUE))
 	)
 	( DEF query1
-		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.QueryTopic Query '#Point '"))
+		(NEW ListGadget (w=LW h=LH) (LINKS Model=topicmodel) (ATTR Cmd="Mail.QueryTopic Query '#Point '" Locked=TRUE))
 	)
 	( DEF conf1	{ Settings panel }
 		( HLIST Panel (border=5 w=SW h=SH dist=14 vjustify=CENTER) (ATTR Locked=TRUE)
@@ -3443,7 +3797,7 @@ LayLa.OpenAsDoc	( CONFIG { Mail.Panel }
 					(NEW Caption (ATTR Value="POP User"))
 					(NEW TextField (w=[10]) (ATTR Name="User"))
 					(NEW Caption (ATTR Value="Max message size"))
-					(NEW TextField (w=[10]) (ATTR Name="MaxMsgSize" Value="80000"))
+					(NEW TextField (w=[10]) (ATTR Name="MaxMsgSize" Value="100000"))
 				)
 				( HLIST VIRTUAL (w=[])
 					(NEW Caption (ATTR Value="Leave messages on server"))
@@ -3484,10 +3838,11 @@ LayLa.OpenAsDoc	( CONFIG { Mail.Panel }
 			(NEW Scrollbar (h=[]) (ATTR Max=0 HeavyDrag=TRUE) (LINKS Min=vrange Model=vpos))
 		)
 		( HLIST VIRTUAL (w=[] vdist=5 hdist=3 vjustify=CENTER)	{ Top row }
-			(HLIST VIRTUAL (w=CW hjustify=CENTER) (NEW Caption (ATTR Value="Filter")))	
-			(NEW Button (w=BW h=BH) (ATTR Caption="Unread" Cmd="Gadgets.Set Query.Value unread"))
+			(HLIST VIRTUAL (w=CW hjustify=CENTER) (NEW Caption (ATTR Value="Show")))
+			(NEW Button (w=BW h=BH) (ATTR Caption="ToDo" Cmd="Gadgets.Set Query.Value 'topic=ToDo'"))
 			(NEW Button (w=BW h=BH) (ATTR Caption="All" Cmd="Gadgets.Set Query.Value ''"))
 			(NEW TextField (w=[]) (LINKS Model=query)) 
+			(NEW Iconizer (w=IW h=[]) (ATTR Popup=TRUE Pin=FALSE Locked=TRUE) (LINKS Closed=query0 Open=query1))
 		)
 		( HLIST VIRTUAL (w=[] vdist=5 hdist=3 vjustify=CENTER)	{ Middle row }
 			(HLIST VIRTUAL (w=CW hjustify=CENTER) (NEW Caption (ATTR Value="Text")))
@@ -3498,7 +3853,7 @@ LayLa.OpenAsDoc	( CONFIG { Mail.Panel }
 			(HLIST VIRTUAL (w=BW hjustify=CENTER) (NEW Caption (ATTR Value="Topic")))
 			(NEW Iconizer (w=IW h=[]) (ATTR Popup=TRUE Pin=FALSE Locked=TRUE) (LINKS Closed=set0 Open=set1))
 			(NEW Iconizer (w=IW h=[]) (ATTR Popup=TRUE Pin=FALSE Locked=TRUE) (LINKS Closed=clear0 Open=clear1))
-			(NEW Iconizer (w=IW h=[]) (ATTR Popup=TRUE Pin=FALSE Locked=TRUE) (LINKS Closed=query0 Open=query1))
+			(NEW Iconizer (w=IW h=[]) (ATTR Popup=TRUE Pin=FALSE Locked=TRUE) (LINKS Closed=move0 Open=move1))
 		) 
 		( HLIST VIRTUAL (w=[] vdist=5 hdist=3 vjustify=CENTER)	{ Bottom row }
 			(HLIST VIRTUAL (w=CW hjustify=CENTER) (NEW Caption (ATTR Value="Server")))
@@ -3515,3 +3870,7 @@ UIDL handling
 
 POPCollect -> remove all UIDLs -> new UIDL file
 Synchronize -> store only UIDLs current (from UIDL command) UIDL
+
+System.Directory UIDL.*
+
+System.Free News Mail NetTools HyperDocs MIME ~

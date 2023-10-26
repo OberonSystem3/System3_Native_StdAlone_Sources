@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Builder;	(** portable, except where noted *)
 
@@ -34,16 +22,19 @@ MODULE Builder;	(** portable, except where noted *)
 	06.08.96 prk - preprocessor initialisation (consequence of the changes in the compiler)
 	20.09.96 prk - Correct handling of preprocessor instructions in the WriteFileName procedure
 							- small cleanup in the preprocessor
+	12.12.99 bsm - printing support for ErrorGadgets
 *)
 
 IMPORT
-	OPS, OPM,
-	Compiler, Oberon, Display, Gadgets, Texts, Attributes, Objects, Icons, Modules, Display3, Fonts, Effects, Files, Strings;
+	OPS, OPM, Compiler, Oberon, Display, Gadgets, Texts, Attributes, Objects, Icons, Modules, Display3, Fonts, 
+	Effects, Files, Strings, Printer, Printer3, FileDir;
 	
 CONST
 	(* Native Oberon compiler *)
-	eof = 67; module = 65; import = 64;  if = 47; elsif = 45; else = 44; end = 43; semicolon = 41;
-	ident = 40; becomes = 34; not = 33; then = 26; comma = 19; or = 8; and = 5; undef = 0;
+	eof = OPS.eof; module = OPS.module; import = OPS.import;  if = OPS.if; elsif = OPS.elsif; 
+	else = OPS.else; end = OPS.end; semicolon = OPS.semicolon;
+	ident = OPS.ident; becomes = OPS.becomes; not = OPS.not; then = OPS.then; 
+	comma = OPS.comma; or = OPS.or; and = OPS.and; undef = 0;
 	
 	(* Windows & Macintosh Oberon compilers
 	eof = 64; module = 63; import = 62; if = 45; elsif = 43; else = 42; end = 41; semicolon = 39;
@@ -56,7 +47,7 @@ TYPE
 	ErrorGadget* = POINTER TO ErrorGadgetDesc;
 	ErrorGadgetDesc* = RECORD (Gadgets.FrameDesc)
 		errno*: INTEGER;
-		msg*: POINTER TO ARRAY 128 OF CHAR;
+		msg*: POINTER TO ARRAY 128 OF CHAR
 	END;
 
 	(* Module hierarchy *)
@@ -64,23 +55,24 @@ TYPE
 	Ref* = POINTER TO RefDesc;
 	RefDesc* = RECORD
 		mod*: Mod;
-		next*: Ref;
+		next*: Ref
 	END;
 	ModDesc* = RECORD 
-		name*, fname*, opts*: ARRAY 64 OF CHAR;
+		name*, fname*: FileDir.FileName;
+		opts*: ARRAY 64 OF CHAR;
 		ref*, layer*: INTEGER;
 		impl*: Ref;
-		next*: Mod;
+		next*: Mod
 	END;
 	
 	Tree* = RECORD
 		maxlayer*: INTEGER;
-		list*: Mod;
+		list*: Mod
 	END;
 
 	List = POINTER TO ListDesc;			(* list of the flags used by the preprocessor *)
 	ListDesc = RECORD
-		name: ARRAY 32 OF CHAR;
+		name: FileDir.FileName;
 		next: List
 	END;
 
@@ -134,12 +126,35 @@ BEGIN
 		Display3.CenterString(M, Display.FG, x, y, w, h, Fonts.Default, F.msg^, Display.paint)
 	ELSE
 		Strings.IntToStr(ABS(F.errno), s);
-		Display3.CenterString(M, Display.FG, x, y, w, h, Fonts.Default, s, Display.paint)
+		Display3.CenterString(M, Display.FG, x, y, w, h, Fonts.Default, s, Display3.textmode)
 	END;
 	IF Gadgets.selected IN F.state THEN
-		Display3.FillPattern(M, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
+		Display3.FillPattern(M, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display3.paint)
 	END
 END RestoreErrorGadget;
+
+PROCEDURE PrintErrorGadget(F: ErrorGadget; VAR M: Display.DisplayMsg);
+	VAR 
+		R: Display3.Mask; x, y, w, h: INTEGER; 
+		s: ARRAY 32 OF CHAR;
+		
+	PROCEDURE P(x: INTEGER): INTEGER;
+	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
+	END P;
+	
+BEGIN
+	Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
+	x := M.x; y := M.y; w := P(F.W); h := P(F.H);
+	(* Printer3.ReplConst(R, Display3.groupC, x, y, w, h, Display.replace); *)
+	Printer3.ReplConst(R, 1, x, y, w, h, Display.replace);
+	Printer3.ReplConst(R, Display.BG, x+4, y+4, w+8, h+8, Display.replace);
+	IF F.msg # NIL THEN
+		Printer3.CenterString(R,  Display.FG, x, y, w, h, Fonts.Default, F.msg^, Display3.textmode)
+	ELSE
+		Strings.IntToStr(ABS(F.errno), s);
+		Display3.CenterString(R, Display.FG, x, y, w, h, Fonts.Default, s, Display3.textmode)
+	END;
+END PrintErrorGadget;
 
 PROCEDURE CopyErrorGadget*(VAR M: Objects.CopyMsg; from, to: ErrorGadget);
 BEGIN
@@ -178,13 +193,13 @@ VAR w, h, dsr: INTEGER; A: Display.ModifyMsg;
 BEGIN
 	IF F.msg = NIL THEN
 		NEW(F.msg); GetErrMsg(F.errno, F.msg^); Display3.StringSize(F.msg^, Fonts.Default, w, h, dsr);
-		INC(w, 5);
+		INC(w, 5)
 	ELSE F.msg := NIL; w := 20
 	END;
 	A.F := F; A.id := Display.extend; A.mode := Display.display;
 	A.X := F.X; A.Y := F.Y; A.W := w; A.H := F.H;
 	A.dX := 0; A.dY := 0; A.dW := A.W - F.W; A.dH := 0;
-	Display.Broadcast(A);
+	Display.Broadcast(A)
 END FlipMsg;
 
 PROCEDURE ErrorGadgetHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
@@ -206,6 +221,7 @@ BEGIN
 									Display3.AdjustMask(R, x + M.u, y + h - 1 + M.v, M.w, M.h);
 									RestoreErrorGadget(F, R, x, y, w, h)
 								END
+							ELSIF M.device = Display.printer THEN PrintErrorGadget(F, M)
 							END
 						END
 					ELSIF M IS Oberon.InputMsg THEN
@@ -256,7 +272,7 @@ END ErrorGadgetHandler;
 
 PROCEDURE NewErrorGadget*;
 VAR F: ErrorGadget;
-BEGIN NEW(F); F.W := 20; F.H := 14; F.errno := 255;F.handle := ErrorGadgetHandler; Objects.NewObj := F;
+BEGIN NEW(F); F.W := 20; F.H := 14; F.errno := 255;F.handle := ErrorGadgetHandler; Objects.NewObj := F
 END NewErrorGadget;
 
 PROCEDURE MarkErrorPos(T: Texts.Text; pos: LONGINT; err: INTEGER);
@@ -295,6 +311,9 @@ PROCEDURE markErrors(VAR S: Texts.Scanner; errtext: Texts.Text; par: Display.Fra
 VAR c, err: INTEGER; pos, beg, l, k: LONGINT; C: Oberon.CaretMsg;  warn: BOOLEAN;
 	marked: ARRAY MaxErrors OF LONGINT;
 BEGIN
+	IF (S.class = Texts.Name) & (S.s = "compiling") THEN
+		l := S.line; REPEAT Texts.Scan(S) UNTIL (S.line # l) OR S.eot
+	END;
 	c := 0; beg := -1; marked[0] := 0;
 	WHILE (S.class = Texts.Name) & (S.s = "pos") & (c # MaxErrors) DO
 		Texts.Scan(S); pos := S.i; Texts.Scan(S);
@@ -324,7 +343,7 @@ BEGIN
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF (S.class = Texts.Char) & (S.c = "^") OR (S.line # 0) THEN
 			Oberon.GetSelection(T, beg, end, time);
-			IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
+			IF time # -1 THEN Texts.OpenScanner(S, T, beg); Texts.Scan(S) END
 		END;
 		markErrors(S, errtext, par)
 	END
@@ -518,7 +537,7 @@ END PreCopy;
 		the result of the operation. If Target is missing, Source.Pre is generated
 *)
 PROCEDURE Preprocess*;	(** non-portable *)
-	VAR source, target: ARRAY 32 OF CHAR; S: Texts.Scanner; t: Texts.Text; f: Files.File; ch: CHAR;
+	VAR source, target: FileDir.FileName; S: Texts.Scanner; t: Texts.Text; f: Files.File; ch: CHAR;
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan(S);	ResetFlags;
@@ -528,8 +547,8 @@ BEGIN
 			Texts.Scan(S);
 			Texts.Scan(S);
 			IF S.class = Texts.Name THEN InsertFlag(S.s); (*Texts.WriteString(W, "\D="); Texts.WriteString(W, S.s)*) END;
-			Texts.Scan(S);
-		END;
+			Texts.Scan(S)
+		END
 	END;
 	WHILE S.class = Texts.Name DO COPY(S.s, source);
 		Texts.Scan(S);
@@ -676,7 +695,7 @@ PROCEDURE GetOptions(VAR S: Attributes.Scanner; VAR opts: ARRAY OF CHAR);
 BEGIN
 	i := 0;
 	IF (S.class = Attributes.Char) & (S.c = Oberon.OptionChar) THEN
-		WHILE (i<LEN(opts)) & (Strings.IsAlpha(S.nextCh) OR Strings.IsDigit(S.nextCh) OR (S.nextCh = ".")) DO
+		WHILE (i<LEN(opts)) & (Strings.IsAlpha(S.nextCh) OR Strings.IsDigit(S.nextCh) OR (S.nextCh = ".") OR (S.nextCh = ":")) DO
 			opts[i] := S.nextCh; Attributes.Read(S.R, S.nextCh); INC(i)
 		END;
 		Attributes.Scan(S)
@@ -685,7 +704,7 @@ BEGIN
 END GetOptions;
 
 PROCEDURE Import(VAR T: Tree; M: Mod);
-VAR modname: ARRAY 64 OF CHAR; m: Mod; r: Ref;
+VAR modname: FileDir.FileName; m: Mod; r: Ref;
 BEGIN
 	IF sym = ident THEN (* ident *)
 		COPY(OPS.name, modname); OPS.Get(sym);
@@ -726,7 +745,7 @@ BEGIN
 	IF t.len = 0 THEN Texts.WriteString(W, s); Texts.WriteString(W, " not found"); Texts.WriteLn(W);
 		Texts.Append(Oberon.Log, W.buf);
 	ELSE
-		Texts.OpenReader(R, t, 0); OPM.Init({}, R, Oberon.Log); (* << win *)
+		Texts.OpenReader(R, t, 0); OPM.Init({}, {}, R, Oberon.Log); (* << win *)
 		InitPreprocessor; OPS.Get(sym);	(* <- preproc *)
 		IF MatchSym(module) THEN (* module *)
 			IF sym = ident THEN (* ident *)
@@ -750,7 +769,7 @@ BEGIN
 						M.next := T.list; T.list := M
 					ELSE
 						IF m.fname[0] = 0X THEN (* already in list but has no file name *)
-							M := m; COPY(s, M.fname); COPY(opts, M.opts); (* ImportList(T, M); *)
+							M := m; COPY(s, M.fname); COPY(opts, M.opts) (* ImportList(T, M); *)
 						END
 					END;
 					error := FALSE; RETURN
@@ -771,17 +790,18 @@ BEGIN
 	error := TRUE
 END AddModule;
 
-PROCEDURE Mark(VAR T: Tree; m: Mod; layer: INTEGER);
+PROCEDURE Mark(VAR T: Tree; m: Mod; layer, n: INTEGER);
 VAR r: Ref; m0: Mod;
 BEGIN
 	IF layer > m.layer THEN
+		IF layer > n THEN RETURN END;
 		IF layer > T.maxlayer THEN T.maxlayer := layer END;
 		m.layer := layer;
 		m0 := T.list;
 		WHILE m0 # NIL DO
 			r := m0.impl;
 			WHILE r # NIL DO
-				IF r.mod = m THEN Mark(T, m0, layer+1) END;
+				IF r.mod = m THEN Mark(T, m0, layer+1, n) END;
 				r := r.next
 			END;
 			m0 := m0.next
@@ -790,14 +810,18 @@ BEGIN
 END Mark;
 
 PROCEDURE Hierarchy*(VAR T: Tree);
-VAR m, m0, clist: Mod; r: Ref;
+VAR m, m0, clist: Mod; n: INTEGER; r: Ref;
 BEGIN
 	(* calculate layers *)
-	T.maxlayer := 0;
+	T.maxlayer := 0; n := 0;
 	m := T.list;
 	WHILE m # NIL DO
-		IF m.fname[0] # 0X THEN Mark(T, m, 1) END;
-		m := m.next;
+		INC(n); m := m.next
+	END;
+	m := T.list;
+	WHILE m # NIL DO
+		IF m.fname[0] # 0X THEN Mark(T, m, 1, n) END;
+		m := m.next
 	END;
 	(* process *)
 	clist := NIL;
@@ -807,21 +831,20 @@ BEGIN
 		IF m = NIL THEN
 			IF T.list # NIL THEN
 				Texts.WriteString(W, "inconsistant import hierarchy"); Texts.WriteLn(W);
-				Texts.Append(Oberon.Log, W.buf);
-			ELSE
-				EXIT
+				Texts.Append(Oberon.Log, W.buf); clist := NIL
 			END;
+			EXIT
 		ELSE (* m is a module to be compiled *)
 			(* remove m *)
-			IF T.list = m THEN (* first in list *) T.list := m.next;
-			ELSE m0.next := m.next;
+			IF T.list = m THEN (* first in list *) T.list := m.next
+			ELSE m0.next := m.next
 			END;
 			(* put in compile list *)
 			m.next := clist; clist := m;
-			r := m.impl; WHILE r # NIL DO DEC(r.mod.ref); r := r.next END; (* decrement references *)
-		END;
+			r := m.impl; WHILE r # NIL DO DEC(r.mod.ref); r := r.next END (* decrement references *)
+		END
 	END;
-	T.list := clist;
+	T.list := clist
 END Hierarchy;
 
 PROCEDURE Append(VAR list: Display.Frame; f: Display.Frame);
@@ -835,7 +858,7 @@ END Append;
 
 PROCEDURE InsertHierarchy*;
 VAR S: Attributes.Scanner; m: Mod; T: Tree; list: Display.Frame; F: Icons.Icon; x, y, layer: INTEGER; obj: Objects.Object;
-	A: Objects.AttrMsg; opts, s: ARRAY 32 OF CHAR;
+	A: Objects.AttrMsg; s: FileDir.FileName; opts: ARRAY 64 OF CHAR;
 BEGIN
 	T.list := NIL;
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
@@ -867,7 +890,7 @@ BEGIN
 END InsertHierarchy;
 
 PROCEDURE Compile*;
-VAR S: Attributes.Scanner; T: Tree; m: Mod; s, opts, options: ARRAY 64 OF CHAR; i, line: INTEGER; S1: Texts.Scanner;
+VAR S: Attributes.Scanner; T: Tree; m: Mod; s: FileDir.FileName; opts, options: ARRAY 64 OF CHAR; i, line: INTEGER; S1: Texts.Scanner;
 	fbeg, fend, ftime: LONGINT; text, ftext: Texts.Text; par: Display.Frame; R: Texts.Reader;
 
 	PROCEDURE Locate(F: Display.Frame;  T: Texts.Text;  pos: LONGINT);
@@ -882,6 +905,7 @@ VAR S: Attributes.Scanner; T: Tree; m: Mod; s, opts, options: ARRAY 64 OF CHAR; 
 	END Locate;
 		
 BEGIN
+	Oberon.GetSelection(ftext, fbeg, fend, ftime);
 	Texts.WriteString(W, "Builder.Compile ");
 	T.list := NIL; options := "";
 	ResetFlags;	(* <- preproc *)
@@ -897,7 +921,7 @@ BEGIN
 			Attributes.Scan(S)
 		ELSE
 			GetOptions(S, options);
-			Texts.WriteString(W, " \"); Texts.WriteString(W, options); 
+			Texts.WriteString(W, " \"); Texts.WriteString(W, options)
 		END
 	END;
 	Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
@@ -910,12 +934,11 @@ BEGIN
 			i := 0; WHILE (options[i] # 0X) & (options[i] # ".") & (options[i] # "f") DO INC(i) END;
 			IF options[i] = "f" THEN
 				OPM.breakpos := 0;
-				Oberon.GetSelection(ftext, fbeg, fend, ftime);
-				IF ftime >= 0 THEN
+				IF ftime # -1 THEN
 					Texts.OpenScanner(S1, ftext, fbeg); Texts.Scan(S1); line := S1.line;
 					WHILE ~S1.eot & (S1.class # Texts.Int) & (S1.line = line) DO Texts.Scan(S1) END;
 					IF S1.class = Texts.Int THEN
-						Compiler.Module(R, options, S1.i, Oberon.Log, error); Locate(par, text, OPM.breakpos); RETURN
+						Compiler.Module(R, "", options, S1.i, Oberon.Log, error); Locate(par, text, OPM.breakpos); RETURN
 					END
 				END;
 				Texts.WriteString(W, "  pc not selected"); Texts.WriteLn(W);
@@ -923,7 +946,7 @@ BEGIN
 				RETURN
 			ELSE
 				fbeg := Oberon.Log.len;
-				Compiler.Module(R, options, MAX(LONGINT), Oberon.Log, error);
+				Compiler.Module(R, "", options, MAX(LONGINT), Oberon.Log, error);
 				IF error & autoMark THEN
 					Texts.OpenScanner(S1, Oberon.Log, fbeg); Texts.Scan(S1);
 					markErrors(S1, text, par)
@@ -946,7 +969,7 @@ BEGIN
 					Texts.OpenReader(R, text, 0);
 					InitPreprocessor;
 					COPY(options, opts); Strings.Append(opts, m.opts);
-					Compiler.Module(R, opts, MAX(LONGINT), Oberon.Log, error);
+					Compiler.Module(R, m.fname, opts, MAX(LONGINT), Oberon.Log, error);
 				END;
 				m := m.next
 			END
@@ -976,7 +999,7 @@ BEGIN
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Attributes.Scan(S);
 	WHILE ~S.eot & (S.class = Attributes.Name) DO
-		AddModule(T, S.s, ""); Attributes.Scan(S);
+		AddModule(T, S.s, ""); Attributes.Scan(S)
 	END;
 	
 	Hierarchy(T);

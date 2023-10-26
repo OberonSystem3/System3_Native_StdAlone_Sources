@@ -1,23 +1,11 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE RembrandtTools;	(** portable *)
 (** Enthält alle Operationen zum Rembrandt-Editor *)
 
 IMPORT
-	D3:= Display3, Display, Oberon, Pictures, Effects, Input, Rembrandt, Gadgets, Texts, Rembrandt0, Math, RembrandtDocs,
+	D3 := Display3, Display, Oberon, Pictures, Effects, Input, Rembrandt, Gadgets, Texts, Rembrandt0, Math, RembrandtDocs,
 		Objects;
 
 CONST
@@ -919,7 +907,7 @@ PROCEDURE HandleSmear(F: Rembrandt.Frame; VAR M: Oberon.InputMsg; x, y: INTEGER)
 VAR keysum: SET; ox, oy, px, py: INTEGER;
 BEGIN
 	Rembrandt.SavePicture(F.pict, 0, 0, F.pict.width, F.pict.height);
-	ox:=M.X; oy:=M.Y;
+	ox:=M.X; oy:=M.Y; keysum := {};
 	REPEAT
 		IF (M.X#ox) OR (M.Y#oy) THEN
 			Rembrandt.ScreentoPict(F, x, y, M.X, M.Y, px, py);
@@ -949,7 +937,7 @@ BEGIN
 	Oberon.FadeCursor(Oberon.Mouse);
 	D3.Circle(Q, D3.FG, Display.solid, M.X+cdx, M.Y+cdy, r, 1, {2}, Display.invert);
 	D3.Circle(Q, D3.FG, Display.solid, M.X, M.Y, r, 1, {2}, Display.invert);
-	ox:=M.X; oy:=M.Y;
+	ox:=M.X; oy:=M.Y; keysum := {};
 	REPEAT
 		IF (M.X#ox) OR (M.Y#oy) THEN
 			Oberon.FadeCursor(Oberon.Mouse);
@@ -1032,7 +1020,7 @@ BEGIN
 	Delete(F, px, py);
 	Oberon.FadeCursor(Oberon.Mouse);
 	D3.Circle(Q, D3.FG, Display.solid, M.X, M.Y, r*zoom, 1, {0}, Display.invert);
-	ox:=M.X; oy:=M.Y;
+	ox:=M.X; oy:=M.Y; keysum := {};
 	REPEAT
 		IF (M.X#ox) OR (M.Y#oy) THEN
 			D3.Circle(Q, D3.FG, Display.solid, ox, oy, r*zoom, 1, {0}, Display.invert);
@@ -1097,7 +1085,7 @@ END HandleErease;
 PROCEDURE HandlePick(F: Rembrandt.Frame; VAR M: Oberon.InputMsg; x, y: INTEGER);
 VAR keysum: SET; ox, oy, px, py: INTEGER; obj: Objects.Object; aM: Objects.AttrMsg;
 BEGIN
-	ox:=M.X; oy:=M.Y;
+	ox:=M.X; oy:=M.Y; keysum := {};
 	Rembrandt.ScreentoPict(F, x, y, M.X, M.Y, px, py);
 	Rembrandt0.color.col:= GetColor(F.pict, px, py);
 	Gadgets.Update(Rembrandt0.color);

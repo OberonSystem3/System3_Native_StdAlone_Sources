@@ -1,28 +1,16 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE V24;	(** portable *)	(* pjm/ejz *)
+MODULE V24;	(** portable, except where noted *)	(* pjm/ejz *)
 
 (** V24/RS232 serial communications interface. *)
 
-(* Currently only supports 2 com ports *)
+(* Supports 4 COM ports / afi - 30 Jun. 2001 *)
 
 IMPORT SYSTEM, Kernel;
 
 CONST
-	(** port aliases (check with NumberOfPorts) *)
+	(** port aliases  (check with NumberOfPorts) *)
 	COM1* = 0;  COM2* = 1;  COM3* = 2;  COM4* = 3;
 	
 	(** parity *)
@@ -38,6 +26,16 @@ CONST
 	WrongStop* =  6; Failed* =  MAX(INTEGER);
 		
 	BufSize = 4096;
+
+	(* Port registers *)
+	IER = 1;	(* Interrupt Enable Register -  read / write
+						Baud Rate Divisor MSB if bit 7 of LCR is set *)
+	IIR = 2;	(* Interrupt Identification Register - read only *)
+	FCR = 2;	(* 16550 FIFO Contro Register write only *)
+	LCR = 3;	(* Line Control Register -  read / write *)
+	MCR = 4;	(* Modem Control Register -  read / write *)
+	LSR = 5;	(* Line Status Register -  read only*)
+	MSR = 4;	(* Modem Status Register - read only *)
 	
 TYPE
 	Port = POINTER TO PortDesc;
@@ -48,16 +46,20 @@ TYPE
 	END;
 
 VAR
-	ports: ARRAY 2 OF Port;
-	numports: LONGINT;
+	ports: ARRAY 4 OF Port;
+	portBase*: ARRAY 4 OF LONGINT;	 (** non-portable - port base address *)
+	irq*: ARRAY 4 OF INTEGER;	 (** non-portable - port irq *)
+	interruptHandler: ARRAY 4 OF Kernel.Proc;	 (* The Interrupt handlers assigned *)
+	numports: LONGINT;	(* Maximum number of ports *)
 
 PROCEDURE *InterruptHandler0;
 VAR p: Port;  c: CHAR;  n: LONGINT;
 BEGIN
 	LOOP
-		SYSTEM.PORTIN(3FAH, c);	(* IIR *)
+		p := ports[0];
+		SYSTEM.PORTIN(p.base+IIR, c);	(* IIR *)
 		IF ODD(ORD(c)) THEN EXIT END;	(* nothing pending *)
-		p := ports[0];  SYSTEM.PORTIN(3F8H, c);	(* RBR *)
+		SYSTEM.PORTIN(p.base, c);	(* RBR *)
 		n := (p.tail+1) MOD BufSize;
 		IF n # p.head THEN
 			p.buf[p.tail] := c;  p.tail := n
@@ -69,9 +71,10 @@ PROCEDURE *InterruptHandler1;
 VAR p: Port;  c: CHAR;  n: LONGINT;
 BEGIN
 	LOOP
-		SYSTEM.PORTIN(2FAH, c);	(* IIR *)
+		p := ports[1];
+		SYSTEM.PORTIN(p.base+IIR, c);	(* IIR *)
 		IF ODD(ORD(c)) THEN EXIT END;	(* nothing pending *)
-		p := ports[1];  SYSTEM.PORTIN(2F8H, c);
+		SYSTEM.PORTIN(p.base, c);
 		n := (p.tail+1) MOD BufSize;
 		IF n # p.head THEN
 			p.buf[p.tail] := c;  p.tail := n
@@ -79,7 +82,37 @@ BEGIN
 	END
 END InterruptHandler1;
 
-(** NumberOfPorts - Return number of ports available. *)
+PROCEDURE *InterruptHandler2;
+VAR p: Port;  c: CHAR;  n: LONGINT;
+BEGIN
+	LOOP
+		p := ports[2];
+		SYSTEM.PORTIN(p.base+IIR, c);	(* IIR *)
+		IF ODD(ORD(c)) THEN EXIT END;	(* nothing pending *)
+		SYSTEM.PORTIN(p.base, c);	(* RBR *)
+		n := (p.tail+1) MOD BufSize;
+		IF n # p.head THEN
+			p.buf[p.tail] := c;  p.tail := n
+		END
+	END
+END InterruptHandler2;
+
+PROCEDURE *InterruptHandler3;
+VAR p: Port;  c: CHAR;  n: LONGINT;
+BEGIN
+	LOOP
+		p := ports[3];
+		SYSTEM.PORTIN(p.base+IIR, c);	(* IIR *)
+		IF ODD(ORD(c)) THEN EXIT END;	(* nothing pending *)
+		SYSTEM.PORTIN(p.base, c);
+		n := (p.tail+1) MOD BufSize;
+		IF n # p.head THEN
+			p.buf[p.tail] := c;  p.tail := n
+		END
+	END
+END InterruptHandler3;
+
+(** NumberOfPorts - Return the number of ports present - 0 to 4. *)
 
 PROCEDURE NumberOfPorts*(): LONGINT;
 BEGIN
@@ -95,34 +128,33 @@ END NumberOfPorts;
 PROCEDURE Start*(port, bps, data, parity, stop: LONGINT;  VAR res: LONGINT);
 VAR p: Port;  base: LONGINT;  s: SET;
 BEGIN
-	IF (port >= 0) & (port < numports) THEN
-		IF port = 0 THEN base := 3F8H ELSE base := 2F8H END;
-		SYSTEM.PORTIN(base+4, SYSTEM.VAL(CHAR, s));
-		IF s * {5..7} = {} THEN
+	IF (port >= COM1) & (port <= COM4) & (portBase[port] # 0) & (irq[port] # 0) THEN
+		base := portBase[port];
+		IF Present(base) THEN
 			IF (bps > 0) & (115200 MOD bps = 0) THEN
 				IF (data >= 5) & (data <= 8) & (parity >= ParNo) & (parity <= ParSpace) & (stop >= Stop1) & (stop <= Stop1dot5) THEN
 					IF ports[port] = NIL THEN
 						NEW(p);  bps := 115200 DIV bps;
 						p.base := base;  p.head := 0;  p.tail := 0;
 							(* disable interrupts *)
-						SYSTEM.PORTOUT(base+3, 0X);	(* clear DLAB *)
-						SYSTEM.PORTOUT(base+1, 0X);	(* IER *)
+						SYSTEM.PORTOUT(base+LCR, 0X);	(* LCR - clear DLAB *)
+						SYSTEM.PORTOUT(base+IER, 0X);	(* IER *)
 							(* clear latches *)
-						SYSTEM.PORTIN(base+5, SYSTEM.VAL(CHAR, s));	(* LSR *)
-						SYSTEM.PORTIN(base+2, SYSTEM.VAL(CHAR, s));	(* IIR *)
-						SYSTEM.PORTIN(base+6, SYSTEM.VAL(CHAR, s));	(* MSR *)
+						SYSTEM.PORTIN(base+LSR, SYSTEM.VAL(CHAR, s));	(* LSR *)
+						SYSTEM.PORTIN(base+IIR, SYSTEM.VAL(CHAR, s));	(* IIR *)
+						SYSTEM.PORTIN(base+MSR, SYSTEM.VAL(CHAR, s));	(* MSR *)
 							(* enable FIFO & check for 16550 *)
-						SYSTEM.PORTOUT(base+2, 1X);	(* FCR *)
-						SYSTEM.PORTIN(base+2, SYSTEM.VAL(CHAR, s));	(* IIR *)
+						SYSTEM.PORTOUT(base+FCR, 1X);	(* FCR *)
+						SYSTEM.PORTIN(base+IIR, SYSTEM.VAL(CHAR, s));	(* IIR *)
 						IF s * {6,7} = {6,7} THEN
-							SYSTEM.PORTOUT(base+2, 47X)	(* 16550 setup: EnableFifo, CLRRX, CLRTX, SIZE4 *)
+							SYSTEM.PORTOUT(base+IIR, 47X)	(* 16550 setup: EnableFifo, CLRRX, CLRTX, SIZE4 *)
 						ELSE
-							SYSTEM.PORTOUT(base+2, 0X)
+							SYSTEM.PORTOUT(base+IIR, 0X)
 						END;
 							(* set parameters *)
-						SYSTEM.PORTOUT(base+3, 80X);	(* LCR *)
+						SYSTEM.PORTOUT(base+LCR, 80X);	(* LCR *)
 						SYSTEM.PORTOUT(base, CHR(bps));
-						SYSTEM.PORTOUT(base+1, CHR(bps DIV 100H));
+						SYSTEM.PORTOUT(base+IER, CHR(bps DIV 100H));
 						CASE data OF
 							5: s := {}
 							|6: s := {0}
@@ -137,15 +169,13 @@ BEGIN
 							|ParMark: s := s + {3,5}
 							|ParSpace: s := s + {3..5}
 						END;
-						SYSTEM.PORTOUT(base+3, SYSTEM.VAL(CHAR, s));	(* LCR *)
-						SYSTEM.PORTOUT(base+4, SYSTEM.VAL(CHAR, {0,1,3}));	(* MCR: DTR, RTS, OUT2 *)
+						SYSTEM.PORTOUT(base+LCR, SYSTEM.VAL(CHAR, s));	(* LCR *)
+						SYSTEM.PORTOUT(base+MCR, SYSTEM.VAL(CHAR, {0,1,3}));	(* MCR: DTR, RTS, OUT2 *)
 							(* install interrupt handler *)
-						IF port = 0 THEN Kernel.InstallIP(InterruptHandler0, Kernel.IRQ+4)
-						ELSE Kernel.InstallIP(InterruptHandler1, Kernel.IRQ+3)
-						END;
+						Kernel.InstallIP(interruptHandler[port], Kernel.IRQ+irq[port]);
 						ports[port] := p;
 							(* enable receive interrupts *)
-						SYSTEM.PORTOUT(base+1, 01X);	(* ICR *)
+						SYSTEM.PORTOUT(base+IER, 01X);	(* ICR *)
 						res := Ok
 					ELSE res := PortInUse (* port in use *)
 					END
@@ -164,17 +194,15 @@ END Start;
 PROCEDURE Stop*(port: LONGINT);
 VAR base, a: LONGINT;  s: SET;
 BEGIN
-	IF (port >= 0) & (port <= numports) THEN
-		IF port = 0 THEN base := 3F8H ELSE base := 2F8H END;
+	IF (port >= COM1) & (port <= COM4) THEN
+		base := ports[port].base;
 		REPEAT	(* wait for last byte to leave *)
-			a := base+5;  SYSTEM.PORTIN(a, SYSTEM.VAL(CHAR, s))	(* LSR *)
+			a := base+LSR;  SYSTEM.PORTIN(a, SYSTEM.VAL(CHAR, s))	(* LSR *)
 		UNTIL 6 IN s;
 			(* disable interrupts *)
-		a := base+1;  SYSTEM.PORTOUT(a, 0X);	(* ICR *)
+		a := base+IER;  SYSTEM.PORTOUT(a, 0X);	(* IER *)
 			(* remove interrupt handler *)
-		IF port = 0 THEN Kernel.RemoveIP(InterruptHandler0, Kernel.IRQ+4)
-		ELSE Kernel.RemoveIP(InterruptHandler1, Kernel.IRQ+3)
-		END;
+		Kernel.RemoveIP(interruptHandler[port], Kernel.IRQ+irq[port]);
 		ports[port] := NIL
 	ELSE HALT(99)
 	END
@@ -215,11 +243,11 @@ END ReceiveBytes;
 (** Send - Send a byte to the specified port.  Waits until buffer space is available.  res = Ok iff ok. *)
 
 PROCEDURE Send*(port: LONGINT;  x: SYSTEM.BYTE;  VAR res: LONGINT);
-VAR p: Port;  s: SET;  adr: LONGINT;
+VAR p: Port;  s: SET;
 BEGIN
-	p := ports[port];  adr := p.base+5;
+	p := ports[port];
 	REPEAT	(* wait for transmitter empty *)
-		SYSTEM.PORTIN(adr, SYSTEM.VAL(CHAR, s))	(* LSR *)
+		SYSTEM.PORTIN(p.base+LSR, SYSTEM.VAL(CHAR, s))	(* LSR *)
 	UNTIL 5 IN s;
 	SYSTEM.PORTOUT(p.base, x);  res := Ok
 END Send;
@@ -235,51 +263,51 @@ BEGIN
 	END
 END SendBytes;
 
-(** ClearMC - Clear the specified Model Control lines of the specified port.  s may contain DTR, RTS & Break. *)
+(** ClearMC - Clear the specified Modem Control lines of the specified port.  s may contain DTR, RTS & Break. *)
 
 PROCEDURE ClearMC*(port: LONGINT;  s: SET);
 VAR p: LONGINT;  t: SET;
 BEGIN
 	IF s * {DTR, RTS} # {} THEN
-		p := ports[port].base+4;	(* MCR *)
+		p := ports[port].base+MCR;	(* MCR *)
 		SYSTEM.PORTIN(p, SYSTEM.VAL(CHAR, t));
 		t := t - (s * {DTR, RTS});	(* modify only bits 0 & 1 *)
 		SYSTEM.PORTOUT(p, SYSTEM.VAL(CHAR, t))
 	END;
 	IF Break IN s THEN
-		p := ports[port].base+3;	(* LCR *)
+		p := ports[port].base+LCR;	(* LCR *)
 		SYSTEM.PORTIN(p, SYSTEM.VAL(CHAR, t));
 		EXCL(t, 6);	(* break off *)
 		SYSTEM.PORTOUT(p, SYSTEM.VAL(CHAR, t))
 	END
 END ClearMC;
 
-(** SetMC - Set the specified Model Control lines of the specified port.  s may contain DTR, RTS & Break. *)
+(** SetMC - Set the specified Modem Control lines of the specified port.  s may contain DTR, RTS & Break. *)
 
 PROCEDURE SetMC*(port: LONGINT;  s: SET);
 VAR p: LONGINT;  t: SET;
 BEGIN
-	p := ports[port].base+4;	(* MCR *)
 	IF s * {DTR, RTS} # {} THEN
+		p := ports[port].base+MCR;	(* MCR *)
 		SYSTEM.PORTIN(p, SYSTEM.VAL(CHAR, t));
 		t := t + (s * {DTR, RTS});	(* modify only bits 0 & 1 *)
 		SYSTEM.PORTOUT(p, SYSTEM.VAL(CHAR, t))
 	END;
 	IF Break IN s THEN
-		DEC(p);	(* LCR *)
+		p := ports[port].base+LCR;	(* LCR *)
 		SYSTEM.PORTIN(p, SYSTEM.VAL(CHAR, t));
 		INCL(t, 6);	(* break on *)
 		SYSTEM.PORTOUT(p, SYSTEM.VAL(CHAR, t))
 	END
 END SetMC;
 
-(** GetMC - Return the state of the specified Model Control lines of the specified port.  s contains
+(** GetMC - Return the state of the specified Modem Control lines of the specified port.  s contains
 	the current state of DSR, CTS, RI, DCD & Break. *)
 	
 PROCEDURE GetMC*(port: LONGINT;  VAR s: SET);
 VAR p: LONGINT;  t: SET;
 BEGIN
-	s := {};  p := ports[port].base+6;	(* MSR *)
+	s := {};  p := ports[port].base+MSR;	(* MSR *)
 	SYSTEM.PORTIN(p, SYSTEM.VAL(CHAR, t));	(* note: this clears bits 0-3 *)
 	IF 4 IN t THEN INCL(s, CTS) END;
 	IF 5 IN t THEN INCL(s, DSR) END;
@@ -290,22 +318,45 @@ BEGIN
 	IF 4 IN t THEN INCL(s, Break) END
 END GetMC;
 
-PROCEDURE Present(base: INTEGER): BOOLEAN;
+(** Attempt to detect a serial port at the specified I/O base address. *)
+
+PROCEDURE Present*(base: LONGINT): BOOLEAN;	(** non-portable *)
 VAR s: SET;
 BEGIN
 	INC(base, 4);  SYSTEM.PORTIN(base, SYSTEM.VAL(CHAR, s));
 	RETURN s * {5..7} = {}
 END Present;
 
-PROCEDURE Init;
+PROCEDURE Init;	(* Define the default setup values for the four COM ports *)
 BEGIN
 	numports := 0;
 	IF Present(3F8H) THEN
-		INC(numports);
-		IF Present(2F8H) THEN INC(numports) END
+		portBase[0] := 3F8H; irq[0] := 4;
+		INC(numports)
+	ELSE irq[0] := 0
+	END;
+	IF Present(2F8H) THEN
+		portBase[1] := 2F8H; irq[1] := 3;
+		INC(numports)
+	ELSE irq[1] := 0
+	END;
+	IF Present(3E8H) THEN
+		portBase[2] := 3E8H; irq[2] := 4;
+		INC(numports)
+	ELSE irq[2] := 0
+	END;
+	IF Present(2E8H) THEN
+		portBase[3] := 2E8H; irq[3] := 3;
+		INC(numports)
+	ELSE irq[3] := 0
 	END
 END Init;
 
 BEGIN
-	ports[0] := NIL;  ports[1] := NIL;  Init
+	ports[0] := NIL;  ports[1] := NIL;  ports[2] := NIL;  ports[3] := NIL;
+	interruptHandler[0] := InterruptHandler0;
+	interruptHandler[1] := InterruptHandler1;
+	interruptHandler[2] := InterruptHandler2;
+	interruptHandler[3] := InterruptHandler3;
+	Init
 END V24.

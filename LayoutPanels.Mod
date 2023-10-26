@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE LayoutPanels;	(** portable *)	(* ck 6.4.97 / ps 12.5.97 *)
+MODULE LayoutPanels; (** portable *)	(* ck 6.4.97 / ps 12.5.97 *)
 
 IMPORT
 	Files, Objects, Texts, Display, Display3, Effects, Gadgets, Oberon, Panels, PanelDocs, Documents, 
@@ -522,7 +510,7 @@ BEGIN
 					ELSIF M IS Display.SelectMsg THEN
 						WITH M: Display.SelectMsg DO
 							IF (M.id = Display.get) THEN
-								IF (F.time > M.time) & (F.time # 0) THEN
+								IF (((M.time-F.time) < 0) OR (M.time = -1)) & (F.time # -1) THEN
 									t := LP0.GetSelection(F.obj(LP0.Element));
 									IF t # NIL THEN M.time := F.time; M.obj := t; M.sel := F END
 								ELSE Panels.ToChildren(F, M)
@@ -567,7 +555,7 @@ BEGIN
 					ELSIF M IS Oberon.ControlMsg THEN
 						WITH M: Oberon.ControlMsg DO
 							IF M.id = Oberon.neutralize THEN
-								IF ~(Panels.frozen IN F.state0) THEN ResetElements(F) END; F.time := 0;
+								IF ~(Panels.frozen IN F.state0) THEN ResetElements(F) END; F.time := -1;
 								IF F.focused THEN F.focused := FALSE; F.do.UpdateCaret(F) END
 							ELSIF M.id = Oberon.defocus THEN
 								IF F.focused THEN F.focused := FALSE; F.do.UpdateCaret(F) END;
@@ -667,10 +655,10 @@ BEGIN
 	M.res := 0;
 	
 	IF keysum = {2, 1} THEN (* copy to caret *)
-		texttime := 0;
+		texttime := -1;
 		Panels.GetSelection(obj, parent, objtime); Oberon.GetSelection(text, beg, end, texttime);
 
-		IF (obj # NIL) & (objtime > texttime) THEN (* use the object selection *)
+		IF (obj # NIL) & (((texttime-objtime) < 0) OR (texttime = -1)) THEN (* use the object selection *)
 			IF obj IS LP0.Element THEN
 				newobj := LP0.CopyElements(obj(LP0.Element));
 				IF newobj # NIL THEN LP0.Integrate(newobj) END
@@ -678,7 +666,7 @@ BEGIN
 				Panels.CopyObjList(Objects.shallow, obj, newobj);
 				IF newobj # NIL THEN LP0.Integrate(newobj) END
 			END
-		ELSIF (texttime > 0) & (texttime > objtime) THEN (* use the text selection *)
+		ELSIF (texttime # -1) & (((objtime-texttime) < 0) OR (objtime = -1)) THEN (* use the text selection *)
 			NEW(buf); Texts.OpenBuf(buf);
 			Texts.Save(text, beg, end, buf);
 			NEW(T0); Texts.Open(T0, "");
@@ -697,7 +685,7 @@ BEGIN
 	S.F := child; S.res := -1; (* S.dlink := NIL; *) S.dlink := M.dlink; Panels.ResetHull(F);
 	IF Gadgets.selected IN child.state THEN S.id := Display.reset; Panels.ToChild(F, child, x, y, S);
 		t := LP0.GetSelection(F.obj(LP0.Element));
-		IF t = NIL THEN F.time := 0; END;
+		IF t = NIL THEN F.time := -1; END;
 	ELSE S.id := Display.set; Panels.ToChild(F, child, x, y, S); F.time := Oberon.Time()
 	END;
 	Panels.GrowHull(F, child.X, child.Y, child.W, child.H); Panels.DrawHull(F);
@@ -887,7 +875,7 @@ PROCEDURE AddCol*;
 VAR obj: Objects.Object; time: LONGINT; e: LP0.Element; tab: LP0.Table; pos: INTEGER; S: Texts.Scanner;
 BEGIN
 	Gadgets.GetSelection(obj, time);
-	IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+	IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 		e := obj(LP0.Element);
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF (S.class = Texts.Char) & ((S.c = "^") OR (S.c = "@")) THEN
@@ -918,7 +906,7 @@ PROCEDURE AddRow*;
 VAR obj: Objects.Object; time: LONGINT; e: LP0.Element; tab: LP0.Table; pos: INTEGER; S: Texts.Scanner;
 BEGIN
 	Gadgets.GetSelection(obj, time);
-	IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+	IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 		e := obj(LP0.Element);
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF (S.class = Texts.Char) & ((S.c = "^") OR (S.c = "@")) THEN
@@ -949,7 +937,7 @@ PROCEDURE DelCol*;
 VAR obj: Objects.Object; time: LONGINT; e: LP0.Element; tab: LP0.Table; pos: INTEGER; S: Texts.Scanner;
 BEGIN
 	Gadgets.GetSelection(obj, time);
-	IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+	IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 		e := obj(LP0.Element);
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF (S.class = Texts.Char) & ((S.c = "^") OR (S.c = "@")) THEN
@@ -979,7 +967,7 @@ PROCEDURE DelRow*;
 VAR obj: Objects.Object; time: LONGINT; e: LP0.Element; tab: LP0.Table; pos: INTEGER; S: Texts.Scanner;
 BEGIN
 	Gadgets.GetSelection(obj, time);
-	IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+	IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 		e := obj(LP0.Element);
 		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 		IF (S.class = Texts.Char) & ((S.c = "^") OR (S.c = "@")) THEN
@@ -1013,7 +1001,7 @@ BEGIN
 		Texts.Scan(S); IF (S.class = Texts.Int) & (S.i > 0) THEN cols := SHORT(S.i) ELSE cols := 2 END;
 		
 		Gadgets.GetSelection(obj, time);
-		IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+		IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 			c := LP0.GetContainer(obj(LP0.Element));
 			IF c # NIL THEN
 				LP0.ReplaceElement(c, obj(LP0.Element), LP0.EmptyTable(rows, cols), TRUE)
@@ -1031,7 +1019,7 @@ BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Gadgets.GetSelection(obj, time);
-		IF (time >= 0) & (obj # NIL) & (obj IS LP0.Element) THEN
+		IF (time # -1) & (obj # NIL) & (obj IS LP0.Element) THEN
 			c := LP0.GetContainer(obj(LP0.Element));
 			IF c # NIL THEN
 				new := LP0.NewContainer(); new.hfactor := 1; new.vfactor := 1;
@@ -1046,7 +1034,7 @@ PROCEDURE Minimize*;
 VAR F: Objects.Object; time: LONGINT; e: LP0.Element; M: Display.ModifyMsg;
 BEGIN
 	Gadgets.GetSelection(F, time);
-	IF (time >= 0) & (F # NIL) & (F IS Panel) THEN
+	IF (time # -1) & (F # NIL) & (F IS Panel) THEN
 		WITH F: Panel DO
 			IF ~(Panels.frozen IN F.state0) THEN
 				e := F.obj(LP0.Element); e.size(e);

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE HPCalc;	(** portable *)	(** prk   **)
 
@@ -28,6 +16,9 @@ MODULE HPCalc;	(** portable *)	(** prk   **)
 	
 	HPCalc history:
 	
+	2.05 / 
+		o panel wide to fit numbers in D notation
+		
 	2.04 / 
 		o accept hex numbers in every mode (xyzH)
 		o accept dec numbers in every mode (xyz.)
@@ -105,8 +96,8 @@ IMPORT Conversions, Panels, Documents, PanelDocs, Desktops, BIT, Reals, MathL, T
 	Attributes, Links, Gadgets, TextFields;
  
 CONST
-	PanelLogo = "Calculator 2.04";
-	SignOn = "HPCalc 2.04 -- PRK";
+	PanelLogo = "HPCalc 2.05";
+	SignOn = "HPCalc 2.05 -- PRK";
 
 	StackSize = 64;
 
@@ -120,12 +111,12 @@ CONST
 	
 	(* Sizes and Constraints *)
 	(* Objects sizes *)
-	TextFieldW = 120;
+	TextFieldW = 140;
 	ButtonH = 20; ButtonW = 40;
-	PanelW = 330;
+	PanelW = 350;
 	
 	(* Columns positions *)
-	C1 = 10; C2 = 140; C3 = 270;
+	C1 = 10; C2 = 160; C3 = 290;
 
 TYPE
 	Name = ARRAY 32 OF CHAR;

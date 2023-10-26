@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Sokoban;	(** portable *) (* Copyright (C) 1995 by Emil J. Zeller *)
+MODULE Sokoban; (** portable *)	(* ejz   *)
 	IMPORT Files, Objects, Input, Display, Pictures, Display3, Fonts, Effects, Strings, Gadgets, Texts, Oberon, TextGadgets, TextDocs, Documents, Desktops;
 	(* Sokoban for Oberon Version 1.0
 		Disclaimer
@@ -87,17 +75,17 @@ MODULE Sokoban;	(** portable *) (* Copyright (C) 1995 by Emil J. Zeller *)
 			|FloorCan:
 				Display3.Rect(Q, Display3.FG, Display.solid, x, y, w, h, 2, Display.replace);
 				Display3.ReplConst(Q, 5, x+2, y+2, w-4, h-4, Display.replace);
-				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+1, x+w-2, y + h-2, 2, Display.replace);
-				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+h-2, x+w-2, y+1, 2, Display.replace)
+				(*Display3.Line(Q, Display3.FG, Display.solid, x+1, y+1, x+w-2, y + h-2, 2, Display.replace);
+				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+h-2, x+w-2, y+1, 2, Display.replace)*)
 			| ParkedCan:
 				Display3.Rect(Q, Display3.FG, Display.solid, x, y, w, h, 2, Display.replace);
 				Display3.ReplConst(Q, Display3.green, x+2, y+2, w-4, h-4, Display.replace);
-				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+1, x+w-2, y + h-2, 2, Display.replace);
-				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+h-2, x+w-2, y+1, 2, Display.replace)
+				(*Display3.Line(Q, Display3.FG, Display.solid, x+1, y+1, x+w-2, y + h-2, 2, Display.replace);
+				Display3.Line(Q, Display3.FG, Display.solid, x+1, y+h-2, x+w-2, y+1, 2, Display.replace)*)
 			|Man, ParkMan:
 				Display3.Rect(Q, Display3.FG, Display.solid, x, y, w, h, 2, Display.replace);
 				Display3.ReplConst(Q, Display3.red, x+2, y+2, w-4, h-4, Display.replace);
-				Display3.Circle(Q, Display.FG, Display.solid, x + w DIV 2, y + h DIV 2, 5, 2, {}, Display.replace)
+				(*Display3.Circle(Q, Display.FG, Display.solid, x + w DIV 2, y + h DIV 2, 5, 2, {}, Display.replace)*)
 		END
 	END RestoreField;
 

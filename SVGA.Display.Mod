@@ -1,18 +1,5 @@
-(* OBERON System 3, Release 2.2.
-
-Copyright 1997 Team of the Institute of Computer Systems of ETH Zuerich,
-ETH Center, CH-8092 Zuerich, e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be requested from the 
-above-mentioned address, or downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Display;	(* pjm *)
 
@@ -42,7 +29,7 @@ CONST
 	
 	VesaAdr = 0E0000000H;	(* where MapVesa=1 maps *)
 	LinearSize = 4*1024*1024;	(* amount to map in *)
-
+	
 TYPE
 	Color* = LONGINT;
 	
@@ -234,7 +221,7 @@ BEGIN
 	SYSTEM.PORTOUT(1CFH, SYSTEM.VAL(CHAR, (s * {4..7}) + SYSTEM.VAL(SET, ASH(bank, -4)*5)))
 END SwitchMach32;
 
-(* SwitchTrident9xxx - Switch to Trident 9xxx family - 9000C and higher 
+(* SwitchTrident9xxx - Back switch procedure for Trident 9xxx family - 9000C and higher 
 	Harold L. Weaver <hweaver@pdx.oneworld.com> 
 	Tested on IBM Thinkpad 760ED with a Trident Cyber9385 *)
 
@@ -1017,6 +1004,45 @@ END SetMode;
 (* DisplayBlock0 - Display a line in replace mode. *)
 
 PROCEDURE DisplayBlock0(src, dst, w: LONGINT);
+CODE {SYSTEM.i386}
+	MOV ESI, src[EBP]
+	MOV EDI, dst[EBP]
+	MOV EDX, w[EBP]
+while00:
+	TEST EDI, 3
+	JZ while01
+	CMP EDX, 0
+	JE exit
+	MOV AL, [ESI]
+	MOV [EDI], AL
+	INC ESI
+	INC EDI
+	DEC EDX
+	JMP while00
+while01:
+	CMP EDX, 4
+	JL while21
+	MOV EAX, [ESI]
+	MOV [EDI], EAX
+	ADD ESI, 4
+	ADD EDI, 4
+	SUB EDX, 4
+	JG while01
+while21:
+	CMP EDX, 0
+	JE exit
+while20:
+	MOV AL, [ESI]
+	MOV [EDI], AL
+	INC ESI
+	INC EDI
+	DEC EDX
+	JNZ while20
+exit:
+END DisplayBlock0;
+
+(*
+PROCEDURE DisplayBlock0(src, dst, w: LONGINT);
 VAR ch: CHAR;  s: SET;
 BEGIN
 	(*ASSERT((base # 0A0000H) OR (dst >= 0A0000H) & (dst < 0B0000H));
@@ -1037,6 +1063,7 @@ BEGIN
 		INC(src);  INC(dst);  DEC(w)
 	END
 END DisplayBlock0;
+*)
 
 (* DisplayBlock2 - Display a line in invert mode. *)
 
@@ -1244,7 +1271,7 @@ ET4000 (Dell) 1024x768x8
 	SVGA=2
 
 S3 801/805 (Dell/Quadtel) 1024x768x8
-	Init=bb0502b8024fcd10
+	Init=bb0501b8024fcd10
 	SVGA=3
 
 Diamond FireGL1000 Pro with 3DLabs PerMedia 640x480x8

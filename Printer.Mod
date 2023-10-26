@@ -1,27 +1,16 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Printer;	(** portable, except where noted *) (* jm, pjm *)
+MODULE Printer; (** portable, except where noted *) (* jm, pjm *)
 
 (** Module Printer provide an interface for installable printers.
 *)
 
-IMPORT Files, Modules, Fonts, Texts, Input, Oberon, Pictures, Centronics, V24;
+IMPORT Files, Modules, Fonts, Texts, Input, Display, Oberon, Pictures, Centronics, V24;
 
 CONST
 	Unit300 = 3048; (* 300 dpi resolution *)
+	defaultPrinter = "PSPrinter.Install";
 
 TYPE
 	Printer* = POINTER TO PrinterDesc;
@@ -29,7 +18,7 @@ TYPE
 		res*: INTEGER; (** Result code for Open method. *)
 		name*: ARRAY 64 OF CHAR; (** Command used for installing the printer. *)
 		Height*, Width*, Depth*: INTEGER;	(** Page size (in printer pixels), and available colors (bit depth) **)
-		FrameX*, FrameY*, FrameW*, FrameH*: INTEGER; (** Prinatble region of the page. *)
+		FrameX*, FrameY*, FrameW*, FrameH*: INTEGER; (** Printable region of the page. *)
 		Unit*: LONGINT;	(** Printer resolution in 1/36000 mm per pixel. *)
 		
 		InitMetrics*: PROCEDURE (P: Printer);
@@ -51,7 +40,8 @@ TYPE
 	END;
 	
 	SendProc = PROCEDURE (port: INTEGER;  ch: CHAR;  VAR done: BOOLEAN);
-	SpoolList = POINTER TO RECORD
+	SpoolList = POINTER TO SpoolListDesc;
+	SpoolListDesc = RECORD
 		next: SpoolList;
 		send: SendProc;
 		r: Files.Rider;
@@ -66,62 +56,80 @@ VAR
 	FrameX*, FrameY*, FrameW*, FrameH*: INTEGER;	(** Printable area. *)
 	Unit*: LONGINT;	(** Printer resolution in 1/36000 mm per pixel. *)
 	res*: INTEGER;	(** result code. 0 = ok, 1 = no such printer, 2 = no link, 3 = printer not ready, 4 = no permission *)
-	current*: Printer;	(** Current active printer. (read-only) *)
+	current*: Printer;	(** Current active printer. *)
 	spool: SpoolList;
 	W: Texts.Writer;
 	task: Oberon.Task;
 	timeslice: LONGINT;
 	spoollength, spoolpos: LONGINT;	(* view with System.State Printer *)
+	default: ARRAY 64 OF CHAR;
+
+PROCEDURE SplitName(VAR name, MName, PName: ARRAY OF CHAR);
+	VAR i, j: LONGINT;
+BEGIN i := 0;
+	WHILE name[i] # "." DO MName[i] := name[i]; INC(i) END;
+	MName[i] := 0X; INC(i); j := 0;
+	WHILE name[i] # 0X DO PName[j] := name[i]; INC(i); INC(j) END;
+	PName[j] := 0X
+END SplitName;
 
 PROCEDURE LoadDefaultPrinter;
-VAR defMod, defCmd: ARRAY 64 OF CHAR; Mod: Modules.Module; Cmd: Modules.Command;
-	W: Texts.Writer;  S: Texts.Scanner;
-
-	PROCEDURE SplitName (VAR name, MName, PName: ARRAY OF CHAR);
-	VAR i, j: INTEGER;
-	BEGIN i := 0;
-		WHILE name[i] # "." DO MName[i] := name[i]; INC(i) END;
-		MName[i] := 0X; INC(i); j := 0;
-		WHILE name[i] # 0X DO PName[j] := name[i]; INC(i); INC(j) END;
-		PName[j] := 0X
-	END SplitName;
-
+	VAR
+		S: Texts.Scanner;
+		s, defMod, defCmd: ARRAY 64 OF CHAR;
+		Mod: Modules.Module; Cmd: Modules.Command;
 BEGIN
 	current := NIL;
 	Oberon.OpenScanner(S, "Printer.Default");
 	IF S.class IN {Texts.Name, Texts.String} THEN
-		SplitName(S.s, defMod, defCmd);
-		Mod := Modules.ThisMod(defMod);
+		COPY(S.s, s)
+	ELSE
+		COPY(defaultPrinter, s)
+	END;
+	SplitName(s, defMod, defCmd);
+	Mod := Modules.ThisMod(defMod);
+	IF Modules.res = 0 THEN
+		Cmd := Modules.ThisCommand(Mod, defCmd);
 		IF Modules.res = 0 THEN
-			Cmd := Modules.ThisCommand(Mod, defCmd);
-			IF Modules.res = 0 THEN
-				Cmd()
-			END
-		ELSE
-			Texts.OpenWriter(W);
-			Texts.WriteString(W, "Printer: ");  Texts.WriteString(W, S.s);  Texts.WriteString(W, " not found");
-			Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+			Cmd()
 		END
+	ELSE
+		Texts.WriteString(W, "Printer: ");  Texts.WriteString(W, S.s);  Texts.WriteString(W, " not found");
+		Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+	END;
+	Oberon.OpenScanner(S, "Printer.DefaultName");
+	IF S.class IN {Texts.Name, Texts.String} THEN
+		COPY(S.s, default)
+	ELSE
+		default := "Temp.Printer.Out"
 	END
 END LoadDefaultPrinter;
 
 (** Install printer driver. P.InitMetrics is called to initialise the page metrics. *) 
 PROCEDURE Install*(P: Printer);
+	VAR M: Display.ControlMsg; N: Oberon.ControlMsg;
 BEGIN
+	ASSERT(P # NIL, 100);
 	P.InitMetrics(P);
 	Width := P.Width; Height := P.Height; Depth := P.Depth;
 	FrameX := P.FrameX; FrameY := P.FrameY; FrameW := P.FrameW; FrameH := P.FrameH;
-	Unit := P.Unit;
-	current := P
+	Unit := P.Unit; current := P;
+	N.id := Oberon.neutralize; M.F := NIL; Display.Broadcast(N);
+	M.id := Display.newprinter; M.F := NIL; Display.Broadcast(M);
+	M.id := Display.suspend; M.F := NIL; Display.Broadcast(M);
+	M.id := Display.restore; M.F := NIL; Display.Broadcast(M)
 END Install;
 
 (** Open specified printer.  res code is set. *)
 PROCEDURE Open* (printer, options: ARRAY OF CHAR);
 VAR P: Printer;
 BEGIN
+	IF current = NIL THEN LoadDefaultPrinter END;	(* load driver when printer first used *)
 	IF current # NIL THEN
 		P := current;
-		P.Open(P, printer, options);
+		IF printer = "Default" THEN P.Open(P, default, options);
+		ELSE P.Open(P, printer, options)
+		END;
 		res := P.res;
 		Width := P.Width; Height := P.Height; Depth := P.Depth;
 		FrameX := P.FrameX; FrameY := P.FrameY; FrameW := P.FrameW; FrameH := P.FrameH;
@@ -139,7 +147,7 @@ BEGIN
 	res := P.res;
 	Width := P.Width; Height := P.Height; Depth := P.Depth;
 	FrameX := P.FrameX; FrameY := P.FrameY; FrameW := P.FrameW; FrameH := P.FrameH;
-	Unit := P.Unit;
+	Unit := P.Unit
 END Close;
 
 PROCEDURE Page* (nofcopies: INTEGER);
@@ -191,7 +199,8 @@ BEGIN current.UseColor(current, red, green, blue)
 END UseColor;
 
 PROCEDURE GetMetric* (fnt: Fonts.Font): Fonts.Font;
-BEGIN RETURN current.GetMetric(current, fnt)
+BEGIN
+	IF current # NIL THEN RETURN current.GetMetric(current, fnt) ELSE RETURN NIL END
 END GetMetric;
 
 (* System.PrinterCOMn configuration syntax (default 9600,8,n,1)
@@ -326,10 +335,14 @@ END Enter;
 
 (** Send file to the local printer specified by its name, or if not a known printer, register the file.  res code is set. *)
 PROCEDURE Spool*(f: Files.File);	(** non-portable *)
-VAR name: ARRAY 32 OF CHAR;  pre: ARRAY 4 OF CHAR;  p: INTEGER;
+VAR name: ARRAY 64 OF CHAR;  pre: ARRAY 6 OF CHAR;  p: INTEGER;  i, j: LONGINT;
 BEGIN
 	Files.GetName(f, name);
-	COPY(name, pre);
+	i := 0;  WHILE (name[i] # 0X) & (name[i] # ":") DO INC(i) END;
+	IF name[i] = ":" THEN
+		j := 0;  REPEAT INC(i); name[j] := name[i]; INC(j) UNTIL name[i] = 0X
+	END;
+	COPY(name, pre); pre[3] := 0X;
 	IF name = "" THEN
 		res := 0
 	ELSIF (pre = "LPT") & (name[3] >= "1") & (name[3] <= "3") & (name[4] = 0X) THEN	(* centronics *)
@@ -368,9 +381,10 @@ BEGIN
 	Texts.OpenWriter(W);
 	spool := NIL;  task := NIL;  spoollength := 0;  spoolpos := 0;
 	timeslice := Input.TimeUnit DIV 50;
-	Height := 0; Width := 0;
-	Unit := Unit300;
-	LoadDefaultPrinter;
+	(*Height := 0; Width := 0;*)
+	Height := 3508; Width := 2480; Depth := 24;
+	FrameX := 236; FrameY := 177; FrameW := 2008; FrameH := 3154;
+	Unit := Unit300;	(* 300 dpi resolution *)
 	Modules.InstallTermHandler(Cleanup)
 END Init;
 

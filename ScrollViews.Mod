@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE ScrollViews; (** portable *)	(** PS   **)
 
@@ -509,7 +497,9 @@ END RestoreViewArea;
 
 PROCEDURE PrintView (F: View; M: Display.DisplayMsg);
 VAR R: Display3.Mask; f: Display.Frame; x, y, w, h, t, backC: INTEGER; Pr: Display.DisplayMsg;
+	X, Y: INTEGER;
 BEGIN
+	X := F.absX; Y := F.absY; F.absX := M.x; F.absY := M.y;
 	x:= M.x; y:= M.y; w:= P(F.W); h:= P(F.H);
 	Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
 
@@ -536,12 +526,16 @@ BEGIN
 	(* content *)
 	IF F.obj # NIL THEN
 		f:= F.obj(Display.Frame);
-		Pr.res:= -1; Pr.device := Display.printer; Pr.id:= Display.full; Pr.F:= f; Pr.dlink:= M.dlink;
+		(* Pr.res:= -1; Pr.device := Display.printer; Pr.id:= Display.full; Pr.F:= f; Pr.dlink:= M.dlink;
 		Pr.x:= x + P(F.vx + f.X); Pr.y:= y + h + P(F.vy + f.Y - f.H);
-		Gadgets.Send(F, x, y, f, Pr)
+		Gadgets.Send(F, x, y, f, Pr) *)
+		Pr.res := -1; Objects.Stamp(Pr); Pr.device := Display.printer; Pr.id := Display.full; Pr.F := f; Pr.dlink := F;
+		Pr.x := x + P(f.X); Pr.y := M.y + P(F.H+f.Y-f.H);
+		f.handle(f, Pr)
 	ELSE
 		Printer3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Empty View", Display.paint)
-	END
+	END;
+	F.absX := X; F.absY := Y
 END PrintView;
 
 PROCEDURE InHotspot (X, Y, x, y, w, h: INTEGER): BOOLEAN;
@@ -572,7 +566,7 @@ PROCEDURE TrackSelectChild (F: View; VAR M: Oberon.InputMsg; child: Gadgets.Fram
 VAR keysum: SET; S: Display.SelectMsg; D: Display.DisplayMsg; C: Objects.CopyMsg;
 BEGIN
 	S.F:= child; S.res := -1; S.dlink:= M.dlink;
-	IF Gadgets.selected IN child.state THEN S.id:= Display.reset; F.time:= 0
+	IF Gadgets.selected IN child.state THEN S.id:= Display.reset; F.time:= -1
 	ELSE S.id:= Display.set; F.time:= Oberon.Time()
 	END;
 	ToFrame(F, M.x + F.X, M.y + F.Y, S);
@@ -1018,7 +1012,13 @@ BEGIN
 				END
 			END
 		ELSIF M IS Objects.BindMsg THEN Gadgets.framehandle(F, M)
-		ELSIF M IS Objects.FindMsg THEN Gadgets.framehandle(F, M)
+		ELSIF M IS Objects.FindMsg THEN
+			WITH M: Objects.FindMsg DO
+				Gadgets.framehandle(F, M);
+				IF (M.obj = NIL) & (F.obj # NIL) THEN
+					F.obj.handle(F.obj, M)
+				END
+			END		
 		ELSIF M IS Display.FrameMsg THEN
 			WITH M: Display.FrameMsg DO
 				x := M.x + F.X; y := M.y + F.Y; w:= F.W; h:= F.H;
@@ -1071,13 +1071,13 @@ BEGIN
 					WITH M: Oberon.ControlMsg DO
 						IF (M.id = Oberon.neutralize) & (M.stamp # F.stamp) THEN
 							F.stamp:= M.stamp;
-							IF (F.time # 0) & (F.obj # NIL) THEN (* was selected *)
+							IF (F.time # -1) & (F.obj # NIL) THEN (* was selected *)
 								Oberon.RemoveMarks(x, y, w, h);
 								S.obj:= F.obj; S.F:= F.obj(Display.Frame); S.res:= -1; Objects.Stamp(S);
 								S.id:= Display.reset; S.dlink:= M.dlink; ToFrame(F, x, y, S);
 								Gadgets.Update(F.obj)
 							END;
-							F.time := 0
+							F.time := -1
 						END;
 						ToFrame(F, x ,y, M)	(* ps - 9.5.96 *)				
 					END
@@ -1088,7 +1088,7 @@ BEGIN
 				ELSIF M IS Display.SelectMsg THEN 
 					WITH M: Display.SelectMsg DO
 						IF M.id = Display.get THEN
-							IF (F.time > M.time) & (F.obj # NIL) & (Gadgets.selected IN F.obj(Gadgets.Frame).state) THEN
+							IF (((M.time-F.time) < 0) OR (M.time = -1)) & (F.time # -1) & (F.obj # NIL) & (Gadgets.selected IN F.obj(Gadgets.Frame).state) THEN
 								M.obj := F.obj; M.time := F.time; M.sel := F
 							END;
 							ToFrame(F, x, y, M)

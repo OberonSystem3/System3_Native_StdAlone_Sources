@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Rembrandt;	(** portable *)
 (** Ist das Hauptmodul für den Rembrandt-Editor *)
@@ -23,7 +11,7 @@ MODULE Rembrandt;	(** portable *)
 (* ps, bugfix in GetSelection 24.4.97 *)
 
 IMPORT
-	Rembrandt0, Files, Display, D3:=Display3, Texts, Printer3, Printer, Effects, Objects, Gadgets, Fonts, Oberon, Pictures, Out,
+	Rembrandt0, Files, Display, D3 := Display3, Texts, Printer3, Printer, Effects, Objects, Gadgets, Fonts, Oberon, Pictures, Out,
 	Input, Attributes;
 
 CONST
@@ -254,22 +242,22 @@ END SetSelection;
 PROCEDURE GetSelection(VAR F: Frame; VAR P: Pictures.Picture; VAR time: LONGINT; VAR x, y, w, h: INTEGER);
 VAR M: SelectMsg; M2: Display.SelectMsg; time2: LONGINT;
 BEGIN
-	M.id := Display.get; M.time := 0; M.pict := NIL; M.F := NIL; M.obj := NIL;
+	M.id := Display.get; M.time := -1; M.pict := NIL; M.F := NIL; M.obj := NIL;
 	Display.Broadcast(M);
 	time := M.time;
-	time2 := 0;
-	M2.id := Display.get; M2.time := 0; M2.F := NIL; M2.obj := NIL;
+	time2 := -1;
+	M2.id := Display.get; M2.time := -1; M2.F := NIL; M2.obj := NIL;
 	Display.Broadcast(M2);
 	IF M2.obj # NIL THEN
 		IF M2.obj IS Frame THEN M2.obj := M2.obj(Frame).pict END;
 		IF M2.obj IS Pictures.Picture THEN time2:= M2.time  END
 	END;
-	IF (time > 0) & (time > time2) THEN
+	IF (time # -1) & (time > time2) THEN
 		IF M.pict # NIL THEN
 			F:= M.sel(Frame); 
 			P:= M.pict; x:= M.u; y:= M.v; w:= M.w; h:= M.h; 
 		END
-	ELSIF time2 > 0 THEN 
+	ELSIF time2 # -1 THEN 
 		IF M2.obj IS Pictures.Picture THEN
 			IF M.sel IS Frame THEN F := M.sel(Frame) ELSE F:= NIL END;
 			P := M2.obj(Pictures.Picture); time:= time2; x:=0; y:=0; w:= P.width; h:= P.height
@@ -316,7 +304,7 @@ VAR F: Frame;
 		act: Element;
 BEGIN
 	GetSelection(F, P, time, x, y, w, h);
-	IF time>0 THEN
+	IF time # -1 THEN
 		IF (F#NIL) & (F.selection>=Object) THEN
 			NEW(P); Rembrandt0.AllocatePictureMem(P, w, h, F.pict.depth);	(* tk *)
 			CopyPalette(F.pict, P);
@@ -375,7 +363,7 @@ PROCEDURE Select(F: Frame; x, y: INTEGER; VAR M: Display.SelectMsg);
 VAR F1: Frame;
 BEGIN
 	IF M.id= Display.get THEN
-		IF (F.time > M.time) & (F.selection#No) THEN
+		IF (((M.time-F.time) < 0) OR (M.time = -1)) & (F.time # -1) & (F.selection#No) THEN
 			M.time:= F.time; M.sel:= F;
 			IF M IS SelectMsg THEN
 				WITH M: SelectMsg DO
@@ -517,16 +505,16 @@ BEGIN
 		IF sy>y+h THEN
 			IF sy-(y+h) < pich*F.zoom THEN
 				pich:= pich-(sy-(y+h)) DIV F.zoom;
-				sy:=y+h; 
+				sy:=y+h
 			ELSE
 				pich:=0
-			END;
+			END
 		END;
 		IF sy-pich*F.zoom<y THEN
 			dh:= (y-(sy-pich*F.zoom)) DIV F.zoom;
 			picy:= picy+dh;
 			pich:=pich-dh
-		END;
+		END
 	END;
 	IF (picw>0) & (pich>0)  THEN
 		(* Pixeloutput *)
@@ -539,7 +527,7 @@ BEGIN
 				IF px>(picx+picw) THEN px:= picx+picw END;
 				D3.ReplConst(Q, col, sx+(px0-ox)*F.zoom, dy, (px-px0)*F.zoom, F.zoom, Display.replace)
 			END;
-			DEC(py);
+			DEC(py)
 		END;
 		IF F.grid THEN DrawGrid(F, Q, x, y, w, h, picx, picy, picw, pich) END;
 	END
@@ -581,6 +569,7 @@ BEGIN
 			F.px:= SHORT(ENTIER(L.lpx*pw+0.5)); F.py:= SHORT(ENTIER(L.lpy*ph+0.5));
 			NEW(L.scaledpict);
 			Rembrandt0.AllocatePictureMem(L.scaledpict, picw, pich, F.pict.depth);	(* tk *)
+			CopyPalette(F.pict, L.scaledpict);
 			IF L.scaledpict # NIL THEN
 				Pictures.Copy(F.pict, L.scaledpict, 0, 0, F.pict.width, F.pict.height, 0, 0, L.scaledpict.width, L.scaledpict.height, Display.replace)
 			ELSE
@@ -1835,7 +1824,7 @@ BEGIN
 	ELSIF M.keys = {ML, MM} THEN
 		GetSelection(f, p, time, sx, sy, sw, sh);
 		Oberon.GetSelection(text, beg, end, time2);
-		IF (time>time2) & (time>0) THEN
+		IF (time>time2) & (time # -1) THEN
 			IF (f#NIL) & (f.selection>=Object) THEN
 				ScreentoPict(F, x, y, M.X, M.Y, mx, my);
 				HandleStructure(F, x, y, M, f, f.selstruct, FALSE,  f.sx, f.sy, sw, sh);
@@ -1856,7 +1845,7 @@ BEGIN
 				ELSE Pictures.Update(F.pict, sx, sy, sw, sh)
 				END
 			END;
-		ELSIF time2>0 THEN
+		ELSIF time2 # -1 THEN
 			keys := M.keys; mx:= M.X; my:= M.Y;
 			DrawCaret(Q, mx, my);
 			REPEAT
@@ -2132,7 +2121,7 @@ VAR F: Frame; P: Pictures.Picture; sx, sy, sw, sh, x0, x1, y: INTEGER;
 		time: LONGINT; first: BOOLEAN;
 BEGIN
 	GetSelection(F, P, time, sx, sy, sw, sh);
-	IF time>0 THEN
+	IF time # -1 THEN
 		IF (sw>=32) OR (sh>=32) THEN Out.String("Patternsize too big"); Out.Ln
 		ELSE
 			y:=0;
@@ -2178,7 +2167,7 @@ BEGIN
 					IF (M.id = Display.full) OR (M.F = NIL) THEN
 						Neutralize(F, x, y, w, h);
 	                	Gadgets.MakeMask(F, x, y, M.dlink, Q);
-	                	Restore(F, Q, x, y, w, h, 0, 0, F.pict.width, F.pict.height); 
+	                	Restore(F, Q, x, y, w, h, 0, 0, F.pict.width, F.pict.height)
 					ELSIF M.id = Display.area THEN
 						Neutralize(F, x, y, w, h); 
 						Gadgets.MakeMask(F, x, y, M.dlink, Q);
@@ -2191,10 +2180,10 @@ BEGIN
 		  ELSIF M IS DrawCaretMsg THEN
              Gadgets.MakeMask(F, x, y, M.dlink, Q);
 		 	PicttoScreen(F, x, y, F.cx, F.cy, ox, oy);
-		 	DrawCaret(Q, ox, oy);
+		 	DrawCaret(Q, ox, oy)
 		  ELSIF M IS DrawSelectionMsg THEN
                 Gadgets.MakeMask(F, x, y, M.dlink, Q); 
-				DrawSelection(F, Q, x, y); 
+				DrawSelection(F, Q, x, y)
 		  ELSIF (M IS DrawGridMsg) & (M.F=F) THEN
 			WITH M: DrawGridMsg DO
 				Neutralize(F, x, y, w, h);
@@ -2207,7 +2196,7 @@ BEGIN
 					IF M.id= Pictures.redraw THEN
 						Neutralize(F, x, y, w, h);
 						 Gadgets.MakeMask(F, x, y, M.dlink, Q);
-						RestorePict(F, Q, x, y, w, h, M.u, M.v, M.w, M.h);
+						RestorePict(F, Q, x, y, w, h, M.u, M.v, M.w, M.h)
 					ELSIF M.id= Pictures.resize THEN
 						Gadgets.MakeMask(F, x, y, M.dlink, Q);
 						Restore(F, Q, x, y, w, h, 0, 0, F.pict.width, F.pict.height)

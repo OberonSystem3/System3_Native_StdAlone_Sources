@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetDNS;	(** non-portable *)	(* 16.08.96 mg *)
 
@@ -35,13 +23,14 @@ CONST
 TYPE
 	Host* = POINTER TO RECORD
 		name: ARRAY 64 OF CHAR;
-		adr*: NetIP.Adr
+		adr*: NetIP.Adr	(* aligned *)
 	END;
 
-	Cache = POINTER TO RECORD
+	Cache = POINTER TO CacheDesc;
+	CacheDesc = RECORD
 		next: Cache;
 		name: ARRAY 64 OF CHAR;
-		adr: NetIP.Adr;
+		adr: NetIP.Adr;	(* aligned *)
 		expire: LONGINT
 	END;
 	
@@ -85,15 +74,15 @@ BEGIN
 	ELSE timeout := timeout * Kernel.TimeUnit
 	END;
 	expire := Kernel.GetTimer() + timeout;  c := cache.next;
-	WHILE (c # NIL) & (name # c.name) & (~NetBase.Equal(adr, c.adr, NetIP.AdrLen)) DO c := c.next END;
+	WHILE (c # NIL) & (name # c.name) & (SYSTEM.VAL(LONGINT, adr) # SYSTEM.VAL(LONGINT, c.adr)) DO c := c.next END;
 	IF c = NIL THEN
 		IF Trace THEN Kernel.WriteString("added ");  Kernel.WriteInt(timeout, 1) END;
-		NEW(c);  COPY(name, c.name);  NetBase.Copy(adr, c.adr, NetIP.AdrLen);
+		NEW(c);  COPY(name, c.name);  c.adr := adr;
 		c.expire := expire;  c.next := cache.next;  cache.next := c
 	ELSE
 		IF expire - c.expire > 0 THEN
 			IF Trace THEN Kernel.WriteString("refreshed ");  Kernel.WriteInt(timeout, 1) END;
-			c.expire := expire;  COPY(name, c.name);  NetBase.Copy(adr, c.adr, NetIP.AdrLen)
+			c.expire := expire;  COPY(name, c.name);  c.adr := adr
 		END
 	END
 END CacheAdd;
@@ -113,7 +102,7 @@ VAR c: Cache;
 BEGIN
 	CacheCleanup;
 	c := cache.next;
-	WHILE (c # NIL) & (~NetBase.Equal(adr, c.adr, NetIP.AdrLen)) DO c := c.next END;
+	WHILE (c # NIL) & (SYSTEM.VAL(LONGINT, adr) # SYSTEM.VAL(LONGINT, c.adr)) DO c := c.next END;
 	IF Trace THEN IF c = NIL THEN Kernel.WriteString("not ") END;  Kernel.WriteString("found ") END;
 	RETURN c
 END CacheFindAdr;
@@ -233,8 +222,9 @@ BEGIN k := 0;  timeout := 0;
 				timeout := ttl;  IF timeout < 0 THEN INC(timeout, 65536) END;
 				IF type = A THEN
 					adr0[0] := buf[k]; adr0[1] := buf[k+1]; adr0[2] := buf[k+2]; adr0[3] := buf[k+3];
-					IF NetBase.Equal(adr, NetIP.IPany, NetIP.AdrLen) OR (NetIP.arpopt IN NetIP.routes[0].options) & NetIP.NetMatch(NetIP.routes[0], adr0) THEN
-						NetBase.Copy(adr0, adr, NetIP.AdrLen)
+					IF (SYSTEM.VAL(LONGINT, adr) = SYSTEM.VAL(LONGINT, NetIP.IPany)) OR 
+							(NetIP.arpopt IN NetIP.routes[0].options) & NetIP.NetMatch(NetIP.routes[0], adr0) THEN
+						adr := adr0
 					END;
 					INC(k, 4)
 				ELSE INC(k, l)
@@ -280,22 +270,22 @@ BEGIN
 		res := NotDone;
 		RETURN
 	END;
-	i := 0;
-	NetBase.Copy(NetIP.IPany, adr, NetIP.AdrLen);
+	i := 0; adr := NetIP.IPany;
 	REPEAT COPY(hostname, name);
 		Domain(name, dom[i], FALSE); Cap(name); j := 0;
 		IF Trace THEN Kernel.WriteString(name);  Kernel.WriteChar(" ") END;
 		c := CacheFindName(name);
 		IF c # NIL THEN
-			NetBase.Copy(c.adr, adr, NetIP.AdrLen);  res := Done
+			adr := c.adr;  res := Done
 		ELSE
 			REPEAT ReceiveInfo(server[dns MOD nofdns].adr, name, A, buf, len);
 				IF len > 0 THEN RetrieveAdr(buf, adr, timeout) END;
-				IF NetBase.Equal(NetIP.IPany, adr, NetIP.AdrLen) THEN res := NotDone ELSE res := Done END;
+				IF SYSTEM.VAL(LONGINT, NetIP.IPany) = SYSTEM.VAL(LONGINT, adr) THEN res := NotDone ELSE res := Done END;
 				IF res = NotDone THEN
 					dns := (dns + 1) MOD nofdns;
 					Kernel.WriteString("NetDNS: Switching to DNS");  Kernel.WriteInt(dns, 1);  Kernel.WriteLn
-				END; INC(j);
+				END;
+				INC(j);
 				IF Trace & (res # Done) THEN Kernel.WriteString("retry ") END;
 				IF id + 1 = MAX(INTEGER) THEN id := MIN(INTEGER) ELSE INC(id) END
 			UNTIL (res = Done) OR (j >= nofdns);
@@ -314,9 +304,9 @@ VAR
 	i, j, k: INTEGER;
 	len, n, timeout: LONGINT;
 	c: Cache;
-	netadr: NetIP.Adr;
+	netadr: NetIP.Adr;	(* aligned *)
 BEGIN
-	NetBase.Copy(adr, netadr, NetIP.AdrLen);
+	netadr := adr;
 	i := 0; hostname[0] := 0X; NetBase.NetLToHost(adr); j := 0;
 	LOOP n := ORD(SYSTEM.VAL(CHAR, adr[i])); k := 0;
 		REPEAT num[k] := CHR(n MOD 10 + 30H);
@@ -352,7 +342,8 @@ END InstallDom;
 
 PROCEDURE InstallDNS* (name: ARRAY OF CHAR; adr: NetIP.Adr);
 BEGIN NEW(server[nofdns]);
-	COPY(name, server[nofdns].name); NetBase.Copy(adr, server[nofdns].adr, NetIP.AdrLen);
+	COPY(name, server[nofdns].name);
+	server[nofdns].adr := adr;
 	nofdns := (nofdns + 1) MOD MaxDns
 END InstallDNS;
 
@@ -363,5 +354,6 @@ BEGIN nofdns := 0; dns := 0; nofdom := 0;
 	lastcleanup := Kernel.GetTimer()
 END Init;
 
-BEGIN id := MIN(INTEGER); Init
+BEGIN
+	id := MIN(INTEGER); Init
 END NetDNS.

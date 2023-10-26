@@ -1,21 +1,11 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE PPPFSM;	(** non-portable *)
-(* $VCS   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:15:39 $
+(* $VCS   2, Edgar.Schwarz@z.zgs.de, 5 Sep 99, 13:46:21 $
     $Log$
+$   2, Edgar.Schwarz@z.zgs.de, 5 Sep 99, 13:46:21
+log message for echo reply addes
 $   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:15:39
 version for PPP 1.0.0
 *)
@@ -32,7 +22,9 @@ CONST
 	TermAck = 6;	(* termination ack *)
 	CodeRej = 7;	(* code reject *)
 	ProtRej = 8; 	(* protocol reject *)
-
+	EchoReq = 9;
+	EchoReply = 10;
+	
 	(** Link states *)
 	Initial* = 0;	(* down, hasn't been opened *)
 	Starting* = 1;	(* down, been opened *)
@@ -147,6 +139,7 @@ BEGIN Debug.String("code: ");
 		| TermAck:	Debug.String("TermAck")
 		| CodeRej:	Debug.String("CodeRej")
 		| ProtRej:	Debug.String("ProtocolRej")
+		| EchoReply: Debug.String("EchoReply")
 	ELSE	Debug.String("*** illegal code ***"); Debug.Int(code, 4);
 	END;
 	Debug.Ln

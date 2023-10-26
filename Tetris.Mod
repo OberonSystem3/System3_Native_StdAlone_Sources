@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Tetris;	(** portable *)	(* by W. Ibl *)
 (*
@@ -124,7 +112,6 @@ TYPE
 	Timer = POINTER TO TimerDesc;
 	TimerDesc = RECORD(Oberon.TaskDesc)
 		model: Field;
-		trigger: LONGINT;
 		nxt: Timer
 	END;
 
@@ -592,16 +579,14 @@ BEGIN
 	WITH me: Timer DO
 		IF ~me.model.paused THEN
 			time:= Oberon.Time();
-			IF (me.model.delay < 0) OR (me.trigger <= time) THEN
-				Drop(me.model);
-				IF ~me.model.match THEN
-					RemoveTimer(me,TRUE);
-				ELSE
-					me.trigger:= time + me.model.delay;
-				END;
-			END;
-		END;
-	END;
+			Drop(me.model);
+			IF ~me.model.match THEN
+				RemoveTimer(me,TRUE)
+			ELSE
+				me.time:= time + me.model.delay
+			END
+		END
+	END
 END TimerHandler;
 
 (*** Field Handler ***)
@@ -1457,7 +1442,7 @@ BEGIN
 	FOR i:= 1 TO Ranks DO ResetScore(F.score[i-1]); END;
 	F.handle:= FieldHandler;
 	F.preview:= TRUE; F.paused:= FALSE; F.mult:= 1;
-	F.timer.model:= F; F.timer.trigger:= Oberon.Time() + F.delay;
+	F.timer.model:= F; F.timer.time:= Oberon.Time() + F.delay;
 	F.timer.safe:= TRUE; F.timer.handle:= TimerHandler;
 	F.timer.nxt:= timers; timers:= F.timer;
 	Objects.NewObj:= F;

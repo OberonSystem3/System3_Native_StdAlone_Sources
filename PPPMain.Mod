@@ -1,21 +1,15 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE PPPMain;	(** non-portable *)	(* Contributed by Martin Aeschlimann, Claude Knaus & Edgar Schwarz *)
-(* $VCS   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:26:14 $
+(* $VCS   4, Edgar@EdgarSchwarz.de, 04.06.00 19:19:56 $
     $Log$
+$   4, Edgar@EdgarSchwarz.de, 04.06.00 19:19:56
+PAP password set with Netsystem and StartInst <provider> <name>
+$   3, Edgar@EdgarSchwarz.de, 9 May :0, 1:24:6
+\silent in Oberon.Text, PAP tries
+$   2, Edgar.Schwarz@z.zgs.de, 18 Aug 99, 21:35:8
+adapted to new PPPDebug which now logs to kernel log
 $   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:26:14
 version for PPP 1.0.0
 *)
@@ -90,9 +84,27 @@ END Connect;
 (* --------------------------------------------------------------------------- *)
 (* Dummy Procedures - for Packet Tools (needs parameterless procedures!) *)
 	
-	PROCEDURE StartInst*;
-	BEGIN 
-		Start(ppp); (* send first request to peer *)
+	PROCEDURE StartInst*; (* [ <provider> <papname> ] *)
+	(* PAP password must be set as NetSystem.SetUser pap:<papname>[:<pappasswd>]@<provider> ~ *)
+	VAR S: Texts.Scanner; ao: Options; provider, papname, pappasswd:ARRAY 32 OF CHAR;
+	BEGIN
+		(* check for provider and username in case of PAP usage *)
+		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
+		Texts.Scan(S);
+		IF ~S.eot THEN
+			COPY(S.s, provider); 
+			IF HDLC.debug THEN Debug.String("Provider: "); Debug.String(provider); Debug.Ln; END;
+			Texts.Scan(S); COPY(S.s, papname); 
+			IF HDLC.debug THEN Debug.String("papname: "); Debug.String(papname); Debug.Ln; END;
+			NetSystem.GetPassword("pap", provider, papname, pappasswd); 
+			IF HDLC.debug THEN Debug.String("pappasswd: "); Debug.String(pappasswd); Debug.Ln; END;
+			IF pappasswd # "" THEN INCL(ppp.LCPfsm.ao.O, NegUPap); END;
+		ELSE
+			papname := ""; pappasswd := "";
+		END;
+		PAP.Init(ppp.PAPStat, ppp, papname, pappasswd);
+		(* send first request to peer *)
+		Start(ppp);
 		(* install task to negotiate PPP and finally open device *)
 		NEW(ppp.task);
 		ppp.task.safe := FALSE; ppp.task.time := 0;
@@ -159,8 +171,8 @@ es*)
 		IF id.running THEN
 			IF (*es*)prno(*item.type*) = ARP THEN
 				item.data(*.data*)[7] := 2X;
-				PT.Copy(item.data(*.data*)[24], item.data(*.data*)[14], NetIP.AdrLen);
-				PT.Copy(id.me.IpAdr, item.data(*.data*)[24], NetIP.AdrLen);
+				SYSTEM.MOVE(SYSTEM.ADR(item.data(*.data*)[24]), SYSTEM.ADR(item.data(*.data*)[14]), NetIP.AdrLen);
+				SYSTEM.MOVE(SYSTEM.ADR(id.me.IpAdr), SYSTEM.ADR(item.data(*.data*)[24]), NetIP.AdrLen);
 				(*es???*)
 				Debug.String("PT.arprec:. whatdowedo?");Debug.Ln; HALT(99);
 				(* PT.arprec(item) *)
@@ -195,7 +207,7 @@ END SendPacket;
 *)
 	PROCEDURE Install*(c: (*es*)LONGINT(*P.SerialChannel*); 
 		cname: ARRAY OF CHAR; 
-		VAR loginuser, loginpasswd, papuser, pappasswd, sstr: ARRAY OF CHAR; 
+		VAR loginuser, loginpasswd, sstr: ARRAY OF CHAR; 
 		OurIP, HisIP, NetMask: NetIP.Adr; LCPwo, LCPao: Options; nretries: INTEGER;
 		timeout: LONGINT; VAR id: PPPid);
 	VAR i:INTEGER;
@@ -213,7 +225,6 @@ END SendPacket;
 (**) id.me.AdrLen:=0; id.me.configurated:=FALSE; id.me.ptp:=TRUE;
 		FSM.ActTimeout:=timeout*1000; FSM.ActMaxConfReqs:=nretries;
 		LCP.Init(id.LCPfsm, LCPwo, LCPao, id);
-		PAP.Init(id.PAPStat, id, papuser, pappasswd);
 		IPCP.Init(id.IPCPfsm, id, OurIP, HisIP);
 		(* id.task.Install(HDLC.ReceivePacket); 
 		id.task.Notify;	(* Install Task *)*)
@@ -227,16 +238,40 @@ END SendPacket;
 (* --------------------------------------------------------------------------- *)
 (* Upcalls from LCP, IPCP, HDLC *)	
 	
+(*es, try to avoid that IPCP goes up as long as PAP isn't finished *)
+
+	PROCEDURE LCPUp1 (U:HDLC.PPPUnit);
+	BEGIN
+		Debug.String("LCP is finally ready!!"); Debug.Ln;
+		IPCP.LowerUp(U(PPPid).IPCPfsm);
+		IPCP.Open(U(PPPid).IPCPfsm);
+	END LCPUp1;
+
+	
+	(* LCPUp - Called by LCP when LCP is ready *)
+	PROCEDURE * LCPUp (U:HDLC.PPPUnit);
+	BEGIN
+		IF LCP.NegUPap IN U(PPPid).LCPfsm.ho.O THEN (* auth is requested by peer *)
+			Debug.String("Main.LCPUp: auth requested by peer");
+			PAP.LowerUp(U(PPPid).PAPStat)
+		ELSE
+			Debug.String("Main.LCPUp: no auth requested by peer");
+			LCPUp1 (U);
+		END;
+	END LCPUp;
+
+(** old
 	(* LCPUp - Called by LCP when LCP is ready *)
 	PROCEDURE * LCPUp (U:HDLC.PPPUnit);
 	BEGIN
 		Debug.String("LCP is finally ready!!"); Debug.Ln;
-		IF LCP.NegUPap IN U(PPPid).LCPfsm.ho.O THEN	(* auth is requested by peer *)
+		IF LCP.NegUPap IN U(PPPid).LCPfsm.ho.O THEN (* auth is requested by peer *)
 			PAP.LowerUp(U(PPPid).PAPStat)
 		END;
 		IPCP.LowerUp(U(PPPid).IPCPfsm);
 		IPCP.Open(U(PPPid).IPCPfsm);
 	END LCPUp;
+**)
 	
 	(* LCPDown - Called by LCP when LCP is closed *)
 	PROCEDURE * LCPDown (U:HDLC.PPPUnit); 
@@ -279,8 +314,6 @@ END SendPacket;
 		END;
 		Debug.String("IPCP is finally ready!!"); Debug.Ln; Debug.Ln;
 		(*es*) Out.String("IPCP is finally ready. Device opened."); Out.Ln;
-		Debug.rollback := Debug.LogLen;
-		(**)
 	END IPCPUp;
 	
 	(* IPCPDown - Called by IPCP when IPCP is closed *)
@@ -303,7 +336,11 @@ END SendPacket;
 			ELSE
 				IF U.LCPfsm.State=FSM.Opened THEN
 					(* No other packets unless LCP is open *)
-					IF prot=PAP.PAPProt THEN PAP.Input(U.PAPStat, p, pos, len)
+					IF prot=PAP.PAPProt THEN
+						PAP.Input(U.PAPStat, p, pos, len);
+						(*es, check whether IPCP can go up *)
+						IF U.PAPStat.state = PAP.Open THEN LCPUp1(U); END; 
+						(**)
 					ELSE
 						IF LCP.NegUPap IN U(PPPid).LCPfsm.ho.O THEN
 							IF U.PAPStat.state=PAP.Open THEN  
@@ -404,8 +441,8 @@ END SendPacket;
 	VAR ourIP, hisIP, myNetMask: NetIP.Adr; n0,n1,n2,n3, rtr: INTEGER; 
 		to: LONGINT;
 		wo, ao: Options; InDone:BOOLEAN; S: Texts.Scanner;
-		(*es*)devName, (**) s, sstr, loginname, loginpasswd,
-		papname, pappasswd:ARRAY 32 OF CHAR; ok: BOOLEAN; i:INTEGER;
+		(*es*)devName, (**) s, sstr, loginname, loginpasswd: ARRAY 32 OF CHAR;
+		ok: BOOLEAN; i:INTEGER;
 		(*es*)(*obj: Base.Object;*)
 	
 		PROCEDURE Cmp(t:ARRAY OF CHAR):BOOLEAN;
@@ -434,55 +471,34 @@ END SendPacket;
 	BEGIN
 		ao.O:={}; wo.O:={}; ourIP:=IPCP.ZeroIP; hisIP:=IPCP.ZeroIP; 
 		rtr:=FSM.DefMaxConfReqs; to:=FSM.DefTimeout; 
-		loginname[0] := 0X; loginpasswd[0] := 0X; papname[0] := 0X; 
-		pappasswd[0] := 0X; sstr[0] := 0X;
+		loginname[0] := 0X; loginpasswd[0] := 0X; sstr[0] := 0X;
 		FOR i := 0 TO NetIP.AdrLen - 1 DO myNetMask[i] := 0FFX END;
 
 (*es*)
-		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
-	IF S.class = Texts.Name THEN
-		IF S.s[0] # "C" THEN Texts.Scan(S) END;	(* old-style config? *)
-		devName := "PPP";
-		IF S.class = Texts.Name THEN
-			IF S.s = "COM1" THEN ch := V24.COM1
-			ELSIF S.s = "COM2" THEN ch := V24.COM2
-			ELSIF S.s = "COM3" THEN ch := V24.COM3
-			ELSIF S.s = "COM4" THEN ch := V24.COM4
-			ELSE HALT(99)
+		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
+		LOOP
+			Texts.Scan(S); IF S.eot THEN EXIT; END;
+			IF (S.class = Texts.Name) & (S.s[0] = "C") THEN
+				devName := "PPP";
+				IF S.s = "COM1" THEN ch := V24.COM1
+				ELSIF S.s = "COM2" THEN ch := V24.COM2
+				ELSIF S.s = "COM3" THEN ch := V24.COM3
+				ELSIF S.s = "COM4" THEN ch := V24.COM4
+				ELSE HALT(99)
+				END;
+			ELSIF (S.class = Texts.Char) & (S.c = "\") THEN
+				(* an option *)
+				Texts.Scan(S); IF S.eot THEN EXIT; END;
+				IF S.class = Texts.Name THEN
+					IF S.s = "silent" THEN INCL(wo.O, Silent);
+					ELSE Debug.String("unknown option");
+					END;
+					Debug.String(" \"); Debug.String(S.s);
+				END;
+			ELSE
+				HALT(99);
 			END;
-		ELSE
-			HALT(99);
 		END;
-	ELSE
-		HALT(99);
-	END;
-(*
-	Oberon.OpenScanner(S, "PPP");
-	IF S.class = Texts.String THEN
-		COPY(S.s, NetSystem.hostName);
-	END;
-*)
-	Oberon.OpenScanner(S, "DIAL.PAPName");
-	IF S.class = Texts.String THEN
-		i := 0;  WHILE S.s[i] # 0X DO INC(i) END;
-		IF (S.s[0] # "<") OR (S.s[i-1] # ">") THEN	(* user specified something *)
-			COPY(S.s, papname); INCL(ao.O, NegUPap);
-			Out.String("PAPName: "); Out.String(papname); Out.Ln;
-			IF HDLC.debug THEN
-				Debug.String("PAPName: "); Debug.String(papname)
-			END
-		END
-	END;
-	Oberon.OpenScanner(S, "DIAL.PAPPassword");
-	IF S.class = Texts.String THEN
-		i := 0;  WHILE S.s[i] # 0X DO INC(i) END;
-		IF (S.s[0] # "<") OR (S.s[i-1] # ">") THEN	(* user specified something *)
-			COPY(S.s, pappasswd); INCL(ao.O, NegUPap); 
-			IF HDLC.debug THEN
-				Debug.String("PAPPassword: **** ")
-			END
-		END
-	END;
 
 (*es*) 
 (*MRUWant*)InInt(i); INCL(wo.O, NegMRU); wo.MRU:=1500;
@@ -495,7 +511,6 @@ END SendPacket;
 (*AsyAllow*) INCL(ao.O, NegAsyncMap); ao.AsyncMap:={0..31};
 		IF HDLC.debug THEN Debug.String("AsyAllow "); 
 		Debug.Hex(SYSTEM.VAL(LONGINT, ao.AsyncMap)); END;
-(*Silent* INCL(wo.O, Silent); IF HDLC.debug THEN Debug.String("Silent") END; *)
 (*TO*) to:=5; IF HDLC.debug THEN Debug.String("TO "); Debug.Int(to, 5) END;
 (*IP * SetIP(0,0,0,0, ourIP); IF HDLC.debug THEN Debug.String("ourIP ");  END; *)
 (*IP* SetIP(0,0,0,0, hisIP); IF HDLC.debug THEN Debug.String("hisIP ");  END; *)
@@ -539,9 +554,7 @@ END SendPacket;
 					IF HDLC.debug THEN Debug.String("myNetmask "); Debug.Int(n0, 5); Debug.Int(n1, 5); Debug.Int(n2, 5); Debug.Int(n3, 5) END
 				ELSIF Cmp("LoginName") THEN InName(s); COPY(s, loginname); IF HDLC.debug THEN Debug.String("LoginName: "); Debug.String(loginname) END
 				ELSIF Cmp("LoginPasswd") THEN InName(s); COPY(s, loginpasswd); IF HDLC.debug THEN Debug.String("LoginPassword: "); Debug.String(loginpasswd) END
-				ELSIF Cmp("PAPName") THEN InName(s); COPY(s, papname); INCL(ao.O, NegUPap); IF HDLC.debug THEN Debug.String("PAPName: "); Debug.String(papname) END
-				ELSIF Cmp("PAPPasswd") THEN InName(s); COPY(s, pappasswd); INCL(ao.O, NegUPap); IF HDLC.debug THEN Debug.String("PAPPassword: "); Debug.String(pappasswd) END
-				ELSIF Cmp("SString") THEN InName(s); COPY(s, sstr); IF HDLC.debug THEN Debug.String("SString "); Debug.String(sstr) END
+			ELSIF Cmp("SString") THEN InName(s); COPY(s, sstr); IF HDLC.debug THEN Debug.String("SString "); Debug.String(sstr) END
 				ELSE IF HDLC.debug THEN Debug.String("Illegal Option") END
 				END;
 				IF HDLC.debug THEN Debug.Ln END
@@ -556,8 +569,7 @@ es*)
 		ch:=obj(P.SerialChannel);
 *)
 (**)
-			Install(ch, devName, loginname, loginpasswd,papname,
-							pappasswd, (*es*)sstr(*str*),
+			Install(ch, devName, loginname, loginpasswd, (*es*)sstr(*str*),
 						 ourIP, hisIP, myNetMask, wo, ao, rtr, to, ppp)
 (*es*)(*END*)
 	END InstPPP;

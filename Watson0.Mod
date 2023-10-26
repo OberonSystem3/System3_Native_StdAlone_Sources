@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 
@@ -46,7 +34,7 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 		HeaderSize = 34;
 
 		(* obj-file version *)
-		Version	=	0AFX;
+		Version	=	OPM.OFnative;
 
 
 	(* other CONST *)
@@ -197,8 +185,9 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 	BEGIN
 		base := typ.BaseTyp;
 		IF base # NIL THEN
-			Str(" ( "); WriteType(typ.BaseTyp, 0);
-			IF expandTypes THEN WriteBase(typ.BaseTyp) END;
+			IF base.ptr # NIL THEN base := base.ptr END;
+			Str(" ( "); WriteType(base, 0);
+			IF expandTypes THEN WriteBase(base) END;
 			Str(" )");
 		END
 	END WriteBase;
@@ -207,12 +196,13 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 	(* writes field list of a proc. or record: all variables of same type *)
 		VAR typ: OPT.Struct; mode: INTEGER;
 	BEGIN
+		(* obj.vis # internal *)
 		typ := obj.typ; mode := obj.mode;
 		LOOP
 			IF recField & showAdr THEN Ch("["); Num(obj.adr); Str("] ") END;
 			Str(obj.name);
 			IF (obj.vis = externalR) THEN Ch("-") END;
-			obj := obj.link;
+			REPEAT obj := obj.link UNTIL (obj = NIL) OR (obj.name # "");
 			IF (obj = NIL) OR (obj.mode # mode) OR (obj.typ # typ) THEN EXIT END;
 			Str(", ");
 		END;
@@ -316,29 +306,29 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 	BEGIN
 		IF (typ.strobj # NIL) & (typ.strobj.name # "") THEN
 			makeLink:= FALSE;
-			IF (typ = OPT.bytetyp) (*OR (typ = OPT.sysptrtyp)*) THEN
+			IF (typ = OPT.bytetyp) THEN
 				Str("SYSTEM."); sysImported := TRUE;
-			ELSIF (typ.mno >= 1) & (ABS(typ.strobj.vis) > internal) THEN
+			ELSIF (typ.form >= Pointer) & ((typ.mno >= 1) OR (ABS(typ.strobj.vis) > internal)) THEN
 				(* type def. is in an other module or is visible within this module => make a link *)
 				makeLink:= TRUE;
 				Texts.SetColor(W, LinkCol);
 				IF (typ.mno >= 1) OR showObj THEN
 					(* write module qualifier because object is not in cur. module or showObj option is on *)
-					Str(OPT.modules[typ.mno(*-1*)].name); Ch(".")
+					Str(OPT.modules[typ.mno].name); Ch(".")
 				END 
 			END;
 			Str(typ.strobj.name);
 			IF makeLink THEN
 				IF (typ.mno >= 1) THEN	(* definition is in an other module *)
 					cmd:= ObjCmd;
-					COPY(OPT.modules[typ.mno(*-1*)].name, par); AppendCh(par, "."); Append(par, typ.strobj.name)
+					COPY(OPT.modules[typ.mno].name, par); AppendCh(par, "."); Append(par, typ.strobj.name)
 				ELSE
 					IF ~showObj OR (curObj.link = typ.strobj) OR (curObj = typ.strobj) THEN
 						(* type def. is in the same text *)
 						cmd:= GotoCmd; par:= ""
 					ELSE
 						cmd:= ObjCmd;
-						COPY(OPT.modules[typ.mno(*-1*)].name, par); AppendCh(par, ".")
+						COPY(OPT.modules[typ.mno].name, par); AppendCh(par, ".")
 					END;
 					Append(par, typ.strobj.name)
 				END;
@@ -369,7 +359,7 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 		ELSIF (mode = Typ) & (obj.vis > internal) THEN	(* write a type object just if it is vivible *)
 			IF first THEN Indent(1); Str("TYPE"); Ln; first := FALSE END;
 			Indent(2);
-			IF showObj THEN COPY(OPT.modules[obj.typ.mno (*-1*)].name, name); AppendCh(name, ".") 
+			IF showObj THEN COPY(OPT.modules[obj.typ.mno].name, name); AppendCh(name, ".") 
 			ELSE name:= ""
 			END;
 			Append(name, obj.name);
@@ -383,7 +373,7 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 				h:= obj.link;
 				IF ABS(h^.vis) > internal THEN
 					Indent(2);
-					IF showObj THEN COPY(OPT.modules[h.typ.mno (*-1*)].name, name); AppendCh(name, ".") 
+					IF showObj THEN COPY(OPT.modules[h.typ.mno].name, name); AppendCh(name, ".") 
 					ELSE name:= ""
 					END;
 					Append(name, h.name);
@@ -515,10 +505,11 @@ MODULE Watson0;	(** portable *)	(** PS	/	 	/	OP2-Version *)
 			ELSE Files.Set(R, f, 0); Files.Read(R, ch)
 			END;
 			IF ch = symFileId THEN
-				NEW(T); Texts.Open(T, ""); Texts.OpenReader(RR, T, 0); OPM.Init({}, RR, Oberon.Log);
-				COPY(mod, selfname); COPY(fileName, file);
-				OPS.Init; OPT.Init(selfname, {}); OPT.OpenScope(0, NIL);
+				NEW(T); Texts.Open(T, ""); Texts.OpenReader(RR, T, 0); OPM.Init({}, {}, RR, Oberon.Log);
+				COPY(mod, selfname); COPY(fileName, file); OPM.outputPath := "";
+				OPS.Init; OPT.Init(selfname); OPT.OpenScope(0, NIL);
 				OPT.Import(selfname, selfname, file);
+				OPM.outputPath := "!";
 				GroupTypes(OPT.topScope.right.scope);
 				RETURN TRUE
 			ELSE

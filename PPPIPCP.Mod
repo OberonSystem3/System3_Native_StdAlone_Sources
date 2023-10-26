@@ -1,28 +1,18 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE PPPIPCP;	(** non-portable *)
-(* $VCS   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:17:0 $
+(* $VCS   2, Edgar@EdgarSchwarz.de, 25 Apr :0, 10:42:52 $
     $Log$
+$   2, Edgar@EdgarSchwarz.de, 25 Apr :0, 10:42:52
+no more PT.Equal (pm), ask remote IP if nor available by a NAK
 $   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:17:0
 version for PPP 1.0.0
 *)
 IMPORT 
 	FSM:=PPPFSM, HDLC:=PPPHDLC, 
 	PT := (*es*)NetBase, NetIP, (*PacketTools,*)
-	T:=PPPTools, Debug := PPPDebug;
+	T:=PPPTools, Debug := PPPDebug, SYSTEM;
 
 CONST
 	(* Protocol Constants *)	
@@ -94,10 +84,8 @@ VAR
 	PROCEDURE *ResetCI (f: FSM.FSM);
 	BEGIN
 		WITH f:IPCPfsm DO
-			f.AcceptLocal:=PT.Equal(f.wo.OurAddress, ZeroIP, 
-				(*es*)NetIP.AdrLen(*PT.IPAdrLen*));
-			f.AcceptRemote:=PT.Equal(f.wo.HisAddress, ZeroIP, 
-				(*es*)NetIP.AdrLen(*PT.IPAdrLen*));
+			f.AcceptLocal:=SYSTEM.VAL(LONGINT, f.wo.OurAddress) = SYSTEM.VAL(LONGINT, ZeroIP);
+			f.AcceptRemote:=SYSTEM.VAL(LONGINT, f.wo.HisAddress) = SYSTEM.VAL(LONGINT, ZeroIP);
 			f.go:=f.wo;		(* GotOptions := WantOptions *)
 		END
 	END ResetCI;
@@ -326,7 +314,17 @@ VAR
 			IF lenp#0 THEN status:=RejAll; END;
 
 			IF (status=RejAll) THEN RETURN FSM.ConfRej; (* len, pos are ok *)
-			ELSIF (status=Ack) THEN RETURN FSM.ConfAck; (* len, pos are ok *)
+			ELSIF (status=Ack) THEN
+				(* es, in special case try to get remote address *)
+				IF (len = 0) & (SYSTEM.VAL(LONGINT, f.ho.HisAddress) = SYSTEM.VAL(LONGINT, ZeroIP)) THEN
+					Debug.String("try to get remote address!"); Debug.Ln;
+					p[posp] := CHR(Addr); p[posp+1] := 6X;
+					p[posp+2] := 0X; p[posp+3] := 0X;p[posp+4] := 0X; p[posp+5] := 0X;
+					len := 6;
+					RETURN FSM.ConfNak;
+				ELSE
+					RETURN FSM.ConfAck; (* len, pos are ok *)
+				END;
 			ELSE	IF Mode THEN status:=Rej; END;
 				lenp:=len; posp:=pos; posw:=pos;
 				WHILE lenp#0 DO
@@ -361,17 +359,20 @@ VAR
 		
 	(* Up - IPCP is ready *)
 	PROCEDURE *Up (f: FSM.FSM);
-		VAR ip:(*es*)NetIP.Adr(*PT.IPAdr*); i:INTEGER;
+		VAR
+			ip:(*es*)NetIP.Adr(*PT.IPAdr*); i:INTEGER;
+			(*es*)p: ARRAY 16 OF CHAR;
 	BEGIN
 		WITH f: IPCPfsm DO
-			IF PT.Equal(f.ho.HisAddress, ZeroIP, (*es*)NetIP.AdrLen(*PT.IPAdrLen*)) THEN 
-				PT.Copy(f.wo.HisAddress, f.ho.HisAddress, (*es*)NetIP.AdrLen(*PT.IPAdrLen*)); END;
+			IF SYSTEM.VAL(LONGINT, f.ho.HisAddress) = SYSTEM.VAL(LONGINT,  ZeroIP) THEN
+				f.ho.HisAddress := f.wo.HisAddress;
+			END;
 			
-			IF PT.Equal(f.ho.HisAddress, ZeroIP,(*es*)NetIP.AdrLen(*PT.IPAdrLen*)) THEN	
+			IF SYSTEM.VAL(LONGINT, f.ho.HisAddress) = SYSTEM.VAL(LONGINT, ZeroIP) THEN	
 				Debug.String("Could not determine remote IP address!"); Debug.Ln;
 				Close(f); RETURN
 			ELSIF
-				PT.Equal(f.go.OurAddress, ZeroIP,(*es*)NetIP.AdrLen(*PT.IPAdrLen*)) THEN	
+				SYSTEM.VAL(LONGINT, f.go.OurAddress) = SYSTEM.VAL(LONGINT, ZeroIP) THEN	
 					Debug.String("Could not determine local IP address!"); Debug.Ln;
 				Close(f); RETURN
 			ELSE	(* success ! *)
@@ -393,8 +394,8 @@ VAR
 		f.ResetCI:=ResetCI; f.CILen:=CILen; f.AddCI:=AddCI; f.AckCI:=AckCI; f.NakCI:=NakCI; f.RejCI:=RejCI;
 		f.ReqCI:=ReqCI; f.Up:=Up; f.Down:=Down; f.ExtCode:=NIL; f.HDLCConfig:=C;
 		FSM.Init(f); 
-		f.AcceptLocal:=PT.Equal(OurIP, ZeroIP, (*es*)NetIP.AdrLen(*PT.IPAdrLen*)); f.wo.OurAddress:=OurIP;
-		f.AcceptRemote:=PT.Equal(HisIP, ZeroIP, (*es*)NetIP.AdrLen(*PT.IPAdrLen*)); f.wo.HisAddress:=HisIP;
+		f.AcceptLocal:=SYSTEM.VAL(LONGINT, OurIP) = SYSTEM.VAL(LONGINT, ZeroIP); f.wo.OurAddress:=OurIP;
+		f.AcceptRemote:=SYSTEM.VAL(LONGINT, HisIP) = SYSTEM.VAL(LONGINT, ZeroIP); f.wo.HisAddress:=HisIP;
 		f.wo.O:={NegAddr};
 		f.wo.CompressProt:=VJCompression; f.wo.MaxSlot:=MaxStates-1; f.wo.CFlag:=1;				(* Want Option *)
 		f.ao.O:={NegAddr, NegAddrs};

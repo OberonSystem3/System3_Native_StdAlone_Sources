@@ -1,34 +1,27 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179 *)
 	
-	IMPORT FileDir, Files, Texts, Strings, Oberon, Printer, PSPrinter, NetSystem;
+	IMPORT Files, Modules, Texts, Strings, Oberon, Printer, PSPrinter, NetSystem;
 
 	CONST
+		InstallCmd = "LPRPrinter.Install";
 		DefConPort = 515;
 		BegLocPort = 721;
 		EndLocPort = 731;
 		LF = 0AX;
 		CR = 0DX;
 		BufLen = 1024;
+		DefaultEmail = "oberonuser@ethz.ch";
 
+	TYPE
+		String = ARRAY 64 OF CHAR;
+		
 	VAR
 		W: Texts.Writer;
 		buffer: ARRAY BufLen OF CHAR;
-		opts: FileDir.FileName;
+		opts: String;
 		jobNr: INTEGER;
 		bannerPage, mailBack: BOOLEAN;
 		host, queue: ARRAY 64 OF CHAR;
@@ -43,13 +36,14 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 		NetSystem.WriteBytes(C, 0, i, str)
 	END SendString;
 
-	PROCEDURE Connect(VAR C: NetSystem.Connection; host: ARRAY OF CHAR): BOOLEAN;
+	PROCEDURE Connect(VAR C: NetSystem.Connection; host: ARRAY OF CHAR; VAR res: INTEGER): BOOLEAN;
 		VAR
 			adr: NetSystem.IPAdr;
-			res, locport: INTEGER;
+			locport: INTEGER;
 	BEGIN
 		NetSystem.GetIP(host, adr);
 		IF adr = NetSystem.anyIP THEN
+			res := -1;
 			RETURN FALSE
 		END;
 		locport := BegLocPort;
@@ -148,12 +142,12 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			email, dataFile, controlFile: ARRAY 64 OF CHAR;
 			docName: ARRAY 128 OF CHAR;
 			nrStr: ARRAY 8 OF CHAR;
-			i, j, k: INTEGER;
+			i, j, k, res: INTEGER;
 			state: CHAR;
 			S: Texts.Scanner;
 	BEGIN
 		Oberon.OpenScanner(S, "NetSystem.EMail");
-		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := "" END;
+		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := DefaultEmail END;
 		INC(jobNr);
 		IF jobNr >= 1000 THEN
 			jobNr := 100
@@ -170,7 +164,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 		Texts.Write(W, "@");
 		Texts.WriteString(W, host);
 		Texts.Append(Oberon.Log, W.buf);
-		IF Connect(C, host) THEN
+		IF Connect(C, host, res) THEN
 			Texts.WriteString(W, " sending ");
 			Texts.Append(Oberon.Log, W.buf);
 			NetSystem.Write(C, 02X); (* receive a print job *)
@@ -270,7 +264,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			END;
 			NetSystem.CloseConnection(C)
 		ELSE
-			Texts.WriteString(W, " connecting failed")
+			Texts.WriteString(W, " connecting failed, res = "); Texts.WriteInt(W, res, 1)
 		END;
 		Texts.WriteLn(W);
 		Texts.Append(Oberon.Log, W.buf)
@@ -303,7 +297,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 		VAR
 			R: Texts.Reader;
 			S: Texts.Scanner;
-			name, options: FileDir.FileName;
+			name, options: String;
 			F: Files.File;
 			i: INTEGER;
 			ch, open: CHAR;
@@ -395,7 +389,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			R: Texts.Reader;
 			C: NetSystem.Connection;
 			host, queue, name: ARRAY 32 OF CHAR;
-			i: INTEGER;
+			i, res: INTEGER;
 			ch, open: CHAR;
 	BEGIN
 		Texts.OpenReader(R, Oberon.Par.text, Oberon.Par.pos);
@@ -420,7 +414,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			Texts.Write(W, "@");
 			Texts.WriteString(W, host);
 			Texts.Append(Oberon.Log, W.buf);
-			IF Connect(C, host) THEN
+			IF Connect(C, host, res) THEN
 				Texts.WriteLn(W);
 				NetSystem.Write(C, 04X); (* 03X short, 04X long *)
 				SendString(C, queue);
@@ -428,7 +422,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 				ReadText(C, W);
 				NetSystem.CloseConnection(C)
 			ELSE
-				Texts.WriteString(W, " connecting failed");
+				Texts.WriteString(W, " connecting failed, res = "); Texts.WriteInt(W, res, 1);
 				Texts.WriteLn(W)
 			END;
 			Texts.Append(Oberon.Log, W.buf)
@@ -444,11 +438,11 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			C: NetSystem.Connection;
 			email: ARRAY 64 OF CHAR;
 			name, host, queue, job: ARRAY 32 OF CHAR;
-			i: INTEGER;
+			i, res: INTEGER;
 			ch, open: CHAR;
 	BEGIN
 		Oberon.OpenScanner(S, "NetSystem.EMail");
-		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := "" END;
+		IF S.class IN {Texts.Name, Texts.String} THEN COPY(S.s, email) ELSE email := DefaultEmail END;
 		Texts.OpenReader(R, Oberon.Par.text, Oberon.Par.pos);
 		Texts.Read(R, ch);
 		WHILE ~R.eot & (ch <= " ") DO
@@ -491,7 +485,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 			Texts.Write(W, "@");
 			Texts.WriteString(W, host);
 			Texts.Append(Oberon.Log, W.buf);
-			IF Connect(C, host) THEN
+			IF Connect(C, host, res) THEN
 				NetSystem.Write(C, 05X); (* remove jobs *)
 				SendString(C, queue);
 				NetSystem.Write(C, " ");
@@ -503,7 +497,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 				NetSystem.Write(C, LF);
 				NetSystem.CloseConnection(C)
 			ELSE
-				Texts.WriteString(W, " connecting failed")
+				Texts.WriteString(W, " connecting failed, res = "); Texts.WriteInt(W, res, 1)
 			END;
 			Texts.WriteLn(W);
 			Texts.Append(Oberon.Log, W.buf)
@@ -574,7 +568,7 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 		VAR P: Printer.Printer;
 	BEGIN
 		P := PSPrinter.NewPrinter();
-		P.name := "LPRPrinter.Install";
+		P.name := InstallCmd;
 		P.Open := Open;
 		P.Close := Close;
 		RETURN P
@@ -585,10 +579,18 @@ MODULE LPRPrinter;	(** portable *)  (* ejz  , LPR Version of PSPrinter, RFC 1179
 		Printer.Install(NewPrinter())
 	END Install;
 
+	PROCEDURE Cleanup;
+	BEGIN
+		IF (Printer.current # NIL) & (Printer.current.name = InstallCmd) THEN
+			Printer.current := NIL
+		END
+	END Cleanup;
+	
 BEGIN
 	Texts.OpenWriter(W);
 	jobNr := 99;
-	bannerPage := TRUE; mailBack := FALSE
+	bannerPage := TRUE; mailBack := FALSE;
+	Modules.InstallTermHandler(Cleanup)
 END LPRPrinter.
 
 System.Free LPRPrinter PSPrinter ~

@@ -1,40 +1,28 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;type=A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE FTP; (** portable *)	(* EJZ,   *)
+MODULE FTP; (** portable *)	(* ejz,   *)
 	IMPORT Files, Strings, Input, Display, Fonts, Texts, Oberon, NetSystem;
 
 (** A simple single session FTP Tool using commands. Useful for transfering many files to or from the
 		same server. *)
 
 	CONST
-		MaxLine = 1024; BufLen = MaxLine; MaxTry = 1000;
+		MaxLine = 1024; BufLen = MaxLine;
 		Tab = 9X; Esc = 01BX; BreakChar = Esc;
 		Done = 0; NotReady = 1; NotConnected = 2; WrongUser = 3; WrongPassword = 4; TimedOut = 5; LocFileNotFound = 6;
 		Interrupted = 7; Disconnected = 8; Failed = MAX(INTEGER);
 		MinDataPort = 1100; MaxDataPort = 1500;
 		Unknown = -1; UNIX = 0; VMS = 1;
 		DefConPort = 21;
-
+		
 	TYPE
 		Session = POINTER TO SessionDesc;
 		SessionDesc = RECORD
 			C: NetSystem.Connection;
 			dataC: NetSystem.Connection;
 			reply: ARRAY MaxLine OF CHAR;
-			portIPAddress: ARRAY 64 OF CHAR;
+			usr, passw, host, portIPAddress: ARRAY 64 OF CHAR;
 			dataIP: NetSystem.IPAdr;
 			dataPort, status, system, res: INTEGER;
 			ack: BOOLEAN
@@ -239,8 +227,10 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 
 	PROCEDURE OpenS(server, user, passwd: ARRAY OF CHAR; port: INTEGER; VAR S: Session);
 	BEGIN
-		GetLogin(server, user, passwd);
-		NEW(S); S.dataC := NIL; S.dataPort := -1;
+		NEW(S); S.dataC := NIL;
+		COPY(server, S.host); S.dataPort := -1;
+		COPY(user, S.usr); COPY(passwd, S.passw);
+		GetLogin(server, S.usr, S.passw);
 		IF NetSystem.hostIP = NetSystem.anyIP THEN
 			S.C := NIL;
 			S.reply := "invalid NetSystem.hostIP";
@@ -251,7 +241,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		S.reply := "connecting failed";
 		S.portIPAddress := "";
 		S.ack := TRUE;
-		IF (user = "") OR (passwd = "") THEN
+		IF (S.usr = "") OR (S.passw = "") THEN
 			S.res := Failed;
 			S.reply := "no password or username specified";
 			RETURN
@@ -259,10 +249,10 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		IF Connect(S.C, port, server) THEN
 			ReadResponse(S, S.reply);
 			IF (S.status >= 200) & (S.status < 300) THEN
-				line := "USER "; Strings.Append(line, user);
+				line := "USER "; Strings.Append(line, S.usr);
 				SendCmd(S, line); ReadResponse(S, line);
 				IF (S.status = 330) OR (S.status = 331) THEN
-					line := "PASS "; Strings.Append(line, passwd);
+					line := "PASS "; Strings.Append(line, S.passw);
 					SendCmd(S, line); ReadResponse(S, line);
 					IF (S.status = 230) OR (S.status= 330) THEN
 						S.res := Done
@@ -277,7 +267,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 					S.res := Done
 				END;
 				IF S.res # Done THEN
-					NetSystem.DelPassword("ftp", user, server)
+					NetSystem.DelPassword("ftp", S.usr, server)
 				END
 			ELSE
 				S.res := NotReady;
@@ -373,9 +363,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	END SetDataPort;
 
 	PROCEDURE WaitDataCon(S: Session): NetSystem.Connection;
-		VAR
-			time: LONGINT;
-			C1: NetSystem.Connection;
+		VAR C1: NetSystem.Connection; time: LONGINT;
 	BEGIN
 		IF S.dataIP = NetSystem.anyIP THEN
 			time := Input.Time();
@@ -407,7 +395,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			C: NetSystem.Connection;
 			len: LONGINT;
 	BEGIN
-		S.reply := ""; SetDataPort(S);
+		S.reply := ""; SetDataPort(S); C := NIL;
 		IF S.res = Interrupted THEN RETURN END;
 		IF S.dataIP = NetSystem.anyIP THEN
 			ReadResponse(S, line)
@@ -433,14 +421,15 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 							enum(line)
 						END;
 						len := NetSystem.Available(C)
-					END;
-					Disconnect(C)
+					END
 				END;
+				Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply)
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN Disconnect(C) END;
 		IF S.dataC # NIL THEN Disconnect(S.dataC) END
 	END EnumDir;
 
@@ -518,15 +507,11 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		END
 	END DeleteFile;
 
-	PROCEDURE ReadData(C: NetSystem.Connection; VAR R: Files.Rider);
-		VAR len, rlen, try: LONGINT;
+	PROCEDURE ReadData(S: Session; C: NetSystem.Connection; VAR R: Files.Rider);
+		VAR len, rlen: LONGINT;
 	BEGIN
-		try := 0;
 		len := NetSystem.Available(C);
 		WHILE (len > 0) OR Connected(C, NetSystem.in) DO
-			IF UserBreak() THEN
-				RETURN
-			END;
 			IF len > BufLen THEN
 				rlen := BufLen
 			ELSE
@@ -536,15 +521,10 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			Files.WriteBytes(R, buffer, rlen);
 			DEC(len, rlen);
 			IF len <= 0 THEN
-				len := NetSystem.Available(C);
-				IF len <= 0 THEN
-					INC(try);
-					IF try > MaxTry THEN
-						RETURN
-					END
-				ELSE
-					try := 0
-				END
+				IF UserBreak() THEN
+					RETURN
+				END;
+				len := NetSystem.Available(C)
 			END
 		END
 	END ReadData;
@@ -552,7 +532,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	PROCEDURE GetF(S: Session; remName: ARRAY OF CHAR; VAR R: Files.Rider);
 		VAR C: NetSystem.Connection;
 	BEGIN
-		S.reply := ""; SetDataPort(S);
+		S.reply := ""; SetDataPort(S); C := NIL;
 		IF S.res = Interrupted THEN RETURN END;
 		IF S.dataIP = NetSystem.anyIP THEN
 			ReadResponse(S, line)
@@ -569,17 +549,16 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			IF (S.status = 150) OR (S.status = 250) THEN
 				IF S.dataIP = NetSystem.anyIP THEN C := WaitDataCon(S) END;
 				IF S.res = Done THEN
-					ReadData(C, R);
-					Disconnect(C)
+					ReadData(S, C, R)
 				END;
+				Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply);
-				IF S.res = Interrupted THEN
-					ReadResponse(S, line)
-				END
+				IF S.res = Interrupted THEN ReadResponse(S, line) END;
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN Disconnect(C) END;
 		IF S.dataC # NIL THEN Disconnect(S.dataC) END
 	END GetF;
 
@@ -589,9 +568,23 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			R: Files.Rider;
 	BEGIN
 		F := Files.New(locName);
-		Files.Set(R, F, 0);
-		GetF(S, remName, R);
-		Files.Register(F)
+		IF F # NIL THEN
+			Files.Set(R, F, 0);
+			GetF(S, remName, R);
+			IF (S.status >= 200) & (S.status < 300) THEN
+				Files.Register(F);
+				IF log # NIL THEN
+					Texts.WriteString(W, "Received: ");
+					Texts.WriteString(W, locName); Texts.WriteString(W, " ");
+					Texts.WriteInt(W, Files.Length(F), 1); Texts.WriteString(W, " bytes");
+					Texts.WriteLn(W); Texts.Append(log, W.buf)
+				END
+			ELSE
+				Texts.WriteLn(W)	(* error message on new line *)
+			END
+		ELSE
+			S.reply := "Bad file name"
+		END
 	END GetFile;
 
 	PROCEDURE WriteData(C: NetSystem.Connection; VAR R: Files.Rider);
@@ -607,12 +600,9 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	END WriteData;
 
 	PROCEDURE PutFile(S: Session; remName, locName: ARRAY OF CHAR);
-		VAR
-			F: Files.File;
-			R: Files.Rider;
-			C: NetSystem.Connection;
+		VAR C: NetSystem.Connection; F: Files.File; R: Files.Rider;
 	BEGIN
-		S.reply := "";
+		S.reply := ""; C := NIL;
 		F := Files.Old(locName);
 		IF F # NIL THEN
 			SetDataPort(S);
@@ -632,9 +622,9 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 					IF S.dataIP = NetSystem.anyIP THEN C := WaitDataCon(S) END;
 					IF S.res = Done THEN
 						Files.Set(R, F, 0);
-						WriteData(C, R);
-						Disconnect(C)
+						WriteData(C, R)
 					END;
+					Disconnect(C);	(* before ReadResponse *)
 					ReadResponse(S, S.reply)
 				ELSE
 					S.res := Failed
@@ -645,15 +635,16 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			Strings.Append(S.reply, " not found");
 			S.res := LocFileNotFound
 		END;
+		IF C # NIL THEN Disconnect(C) END;
 		IF S.dataC # NIL THEN Disconnect(S.dataC) END
 	END PutFile;
 
 	PROCEDURE ReadText(C: NetSystem.Connection; VAR W: Texts.Writer);
 		VAR
 			len, rlen, i: LONGINT;
-			ch: CHAR;
+			ch: CHAR; exit: BOOLEAN;
 	BEGIN
-		len := NetSystem.Available(C);
+		len := NetSystem.Available(C); exit := FALSE;
 		WHILE (len > 0) OR Connected(C, NetSystem.in) DO
 			IF len > (BufLen-2) THEN
 				rlen := BufLen-2
@@ -684,7 +675,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	PROCEDURE GetText(S: Session; remName: ARRAY OF CHAR; VAR W: Texts.Writer);
 		VAR C: NetSystem.Connection;
 	BEGIN
-		S.reply := "";
+		S.reply := ""; C := NIL;
 		SendCmd(S, "TYPE A");
 		ReadResponse(S, line);
 		SetDataPort(S);
@@ -704,17 +695,16 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			IF (S.status = 150) OR (S.status = 250) THEN
 				IF S.dataIP = NetSystem.anyIP THEN C := WaitDataCon(S) END;
 				IF S.res = Done THEN
-					ReadText(C, W);
-					Disconnect(C)
+					ReadText(C, W)
 				END;
+				Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply);
-				IF S.res = Interrupted THEN
-					ReadResponse(S, line)
-				END
+				IF S.res = Interrupted THEN ReadResponse(S, line) END
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN Disconnect(C) END;
 		IF S.dataC # NIL THEN Disconnect(S.dataC) END;
 		SendCmd(S, "TYPE I");
 		ReadResponse(S, line)
@@ -743,7 +733,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	PROCEDURE PutText(S: Session; remName: ARRAY OF CHAR; text: Texts.Text);
 		VAR C: NetSystem.Connection;
 	BEGIN
-		S.reply := "";
+		S.reply := ""; C := NIL;
 		SendCmd(S, "TYPE A");
 		ReadResponse(S, line);
 		IF (S.status < 200) OR (S.status >= 300) THEN
@@ -765,14 +755,15 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			IF (S.status = 150) OR (S.status = 250) THEN
 				IF S.dataIP = NetSystem.anyIP THEN C := WaitDataCon(S) END;
 				IF S.res = Done THEN
-					WriteText(C, text);
-					Disconnect(C)
+					WriteText(C, text)
 				END;
+				Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply)
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN Disconnect(C) END;
 		IF S.dataC # NIL THEN Disconnect(S.dataC) END;
 		SendCmd(S, "TYPE I");
 		ReadResponse(S, line)
@@ -782,7 +773,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		Texts.WriteString(W, S.reply);
 		Texts.WriteLn(W);
-		Texts.Append(log, W.buf)
+		Texts.Append(Oberon.Log, W.buf)
 	END ShowRes;
 
 	PROCEDURE OpenScanner(VAR S: Texts.Scanner);
@@ -804,7 +795,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	END OpenScanner;
 
 	PROCEDURE SplitFTPAdr(VAR url, host, path, user, passwd: ARRAY OF CHAR; VAR type: CHAR; VAR port: INTEGER): BOOLEAN;
-		VAR i, j, l: LONGINT;
+		VAR i, j, l: LONGINT; service: ARRAY 8 OF CHAR;
 		PROCEDURE Blanks();
 		BEGIN
 			WHILE (url[i] # 0X) & (url[i] <= " ") DO
@@ -815,6 +806,9 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		type := 0X; port := DefConPort;
 		COPY("", user); COPY("", passwd);
 		i := 0; Blanks();
+		FOR j := 0 TO 5 DO service[j] := url[i+j] END;
+		service[6] := 0X;
+		IF Strings.CAPPrefix("ftp://", service) THEN INC(i, 6) END;
 		(* look ahead for @ *)
 		j := i;
 		WHILE (url[j] # 0X) & (url[j] # "@") & (url[j] # "/") DO
@@ -934,7 +928,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		ELSE
 			Texts.WriteString(W, "already connected");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf)
+			Texts.Append(Oberon.Log, W.buf)
 		END
 	END Open;
 
@@ -943,7 +937,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 		IF S = NIL THEN
 			Texts.WriteString(W, "not connected");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			RETURN FALSE
 		ELSE
 			RETURN TRUE
@@ -981,7 +975,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		Texts.WriteString(W, entry);
 		Texts.WriteLn(W);
-		Texts.Append(log, W.buf)
+		Texts.Append(Oberon.Log, W.buf)
 	END ShowEntry;
 
 (** FTP.Dir
@@ -1021,7 +1015,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			INC(col);
 			Texts.Write(W, Tab)
 		END;
-		Texts.Append(log, W.buf)
+		Texts.Append(Oberon.Log, W.buf)
 	END ShowCompactEntry;
 
 (** FTP.CompactDir
@@ -1034,7 +1028,7 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			EnumDir(S, ShowCompactEntry);
 			IF col > 0 THEN
 				Texts.WriteLn(W);
-				Texts.Append(log, W.buf)
+				Texts.Append(Oberon.Log, W.buf)
 			END;
 			ShowRes()
 		END
@@ -1106,22 +1100,24 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 			END;
 			Texts.WriteString(W, "FTP.DeleteFile");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			WHILE (Sc.class IN {Texts.Name, Texts.String}) & (pos < end) & (S.res = Done) DO
 				Texts.Write(W, Tab);
 				Texts.WriteString(W, Sc.s);
 				Texts.Write(W, Tab);
-				Texts.Append(log, W.buf);
+				Texts.Append(Oberon.Log, W.buf);
 				DeleteFile(S, Sc.s);
 				ShowRes();
 				pos := Texts.Pos(Sc);
-				Texts.Scan(Sc)
+				Texts.Scan(Sc);
+				Oberon.Collect()
 			END
 		END
 	END DeleteFiles;
 
 	PROCEDURE ScanPair(VAR S: Texts.Scanner; VAR name1, name2: ARRAY OF CHAR): BOOLEAN;
 	BEGIN (* while loop from pieter *)
+		Oberon.Collect();
 		WHILE ~(S.class IN {Texts.Name, Texts.String}) & ((S.class # Texts.Char) OR (S.c # "~")) & ~S.eot DO
 			Texts.Scan(S)
 		END;
@@ -1155,19 +1151,17 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		IF Con() THEN
 			OpenScanner(Sc);
-			Texts.WriteString(W, "FTP.GetFile");
+			Texts.WriteString(W, "FTP.GetFiles");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			WHILE ScanPair(Sc, rem, loc) & (S.res = Done) DO
 				Texts.Write(W, Tab);
 				Texts.WriteString(W, rem);
 				Texts.WriteString(W, " => ");
 				Texts.WriteString(W, loc);
 				Texts.Write(W, Tab);
-				Texts.Append(log, W.buf);
+				Texts.Append(Oberon.Log, W.buf);
 				GetFile(S, rem, loc);
-				Texts.Append(log, W.buf);
-				Texts.WriteLn(W);
 				ShowRes()
 			END
 		END
@@ -1186,23 +1180,37 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		IF Con() THEN
 			OpenScanner(Sc);
-			Texts.WriteString(W, "FTP.GetText");
+			Texts.WriteString(W, "FTP.GetTexts");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			WHILE ScanPair(Sc, rem, loc) & (S.res = Done) DO
 				Texts.Write(W, Tab);
 				Texts.WriteString(W, rem);
 				Texts.WriteString(W, " => ");
 				Texts.WriteString(W, loc);
 				Texts.Write(W, Tab);
-				Texts.Append(log, W.buf);
+				Texts.Append(Oberon.Log, W.buf);
 				Texts.OpenWriter(Wr);
 				GetText(S, rem, Wr);
 				NEW(T); Texts.Open(T, "");
 				Texts.Append(T, Wr.buf);
-				F := Files.New(loc);
-				Texts.Store(T, F, 0, len);
-				Files.Register(F);
+				IF (S.status >= 200) & (S.status < 300) THEN
+					F := Files.New(loc);
+					IF F # NIL THEN
+						Texts.Store(T, F, 0, len);
+						Files.Register(F);
+						IF log # NIL THEN
+							Texts.WriteString(W, "Received: ");
+							Texts.WriteString(W, loc); Texts.WriteString(W, " ");
+							Texts.WriteInt(W, Files.Length(F), 1); Texts.WriteString(W, " bytes");
+							Texts.WriteLn(W); Texts.Append(log, W.buf)
+						END
+					ELSE
+						S.reply := "Bad file name"
+					END
+				ELSE
+					Texts.WriteLn(W)	(* error message on new line *)
+				END;
 				ShowRes()
 			END
 		END
@@ -1217,18 +1225,17 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		IF Con() THEN
 			OpenScanner(Sc);
-			Texts.WriteString(W, "FTP.PutFile");
+			Texts.WriteString(W, "FTP.PutFiles");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			WHILE ScanPair(Sc, loc, rem) & (S.res = Done) DO
 				Texts.Write(W, Tab);
 				Texts.WriteString(W, loc);
 				Texts.WriteString(W, " => ");
 				Texts.WriteString(W, rem);
 				Texts.Write(W, Tab);
-				Texts.Append(log, W.buf);
+				Texts.Append(Oberon.Log, W.buf);
 				PutFile(S, rem, loc);
-				Texts.WriteLn(W);
 				ShowRes()
 			END
 		END
@@ -1244,36 +1251,50 @@ MODULE FTP; (** portable *)	(* EJZ,   *)
 	BEGIN
 		IF Con() THEN
 			OpenScanner(Sc);
-			Texts.WriteString(W, "FTP.PutFile");
+			Texts.WriteString(W, "FTP.PutTexts");
 			Texts.WriteLn(W);
-			Texts.Append(log, W.buf);
+			Texts.Append(Oberon.Log, W.buf);
 			WHILE ScanPair(Sc, loc, rem) & (S.res = Done) DO
 				Texts.Write(W, Tab);
 				Texts.WriteString(W, loc);
 				Texts.WriteString(W, " => ");
 				Texts.WriteString(W, rem);
 				Texts.Write(W, Tab);
-				Texts.Append(log, W.buf);
+				Texts.Append(Oberon.Log, W.buf);
 				NEW(text);
 				Texts.Open(text, loc);
 				PutText(S, rem, text);
-				Texts.WriteLn(W);
 				ShowRes()
 			END
 		END
 	END PutTexts;
 
+(** Open a separate log text for FTP. *)
 	PROCEDURE OpenLog*;
 	BEGIN
-		IF log = Oberon.Log THEN
+		IF (log = Oberon.Log) OR (log = NIL) THEN
 			NEW(log); Texts.Open(log, "")
 		END;
-		Oberon.OpenText("FTP.Log", log, Display.Width DIV 2, Display.Height DIV 2)
+		Oberon.OpenText("FTP.Log", log, Display.Width DIV 8 * 3, Display.Height DIV 3)
 	END OpenLog;
 
 BEGIN
-	S := NIL; log := Oberon.Log;
+	S := NIL; log := NIL;
 	Texts.OpenWriter(W);
 	timeOut := 5*60*Input.TimeUnit;
 	dataPort := MinDataPort
 END FTP.
+
+System.Free FTP ~
+
+Configuration.DoCommands
+FTP.Open muller@ice ~
+FTP.ChangeDir "~muller/ftp.inf/pub/ETHOberon/Native/Update/Alpha/"
+	FTP.PutFiles Oberon0.Dsk=>Temp.Dsk ~
+FTP.PutFiles Temp.Dsk ~
+FTP.Close
+~
+
+System.Directory *.Dsk\d
+
+System.CopyFiles Oberon0.Dsk => Rfs:Temp.Dsk ~

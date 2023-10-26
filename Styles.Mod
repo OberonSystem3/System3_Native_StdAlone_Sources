@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Styles;	(** portable *) (* RS, Wed, 9-Jun-1993 *)
 
@@ -196,7 +184,7 @@ MODULE Styles;	(** portable *) (* RS, Wed, 9-Jun-1993 *)
 	PROCEDURE ReadLong (VAR R: Files.Rider; VAR x: LONGINT);
 	VAR c0, c1, c2: CHAR; s1: SHORTINT;
 	BEGIN Files.Read(R, c0); Files.Read(R, c1); Files.Read(R, c2); Files.Read(R, s1);
-		x := s1; x := ((x * 100H + LONG(c2)) * 100H + LONG(c1)) * 100H + LONG(c0)
+		x := s1; x := ((x * 100H + LONG(ORD(c2))) * 100H + LONG(ORD(c1))) * 100H + LONG(ORD(c0))
 	END ReadLong;
 
 	(*new*)
@@ -257,7 +245,7 @@ MODULE Styles;	(** portable *) (* RS, Wed, 9-Jun-1993 *)
 			Files.Read(R, style.nTabs);
 			i := 0; WHILE i < style.nTabs DO Files.ReadNum(R, style.tab[i]); INC(i) END;
 			WHILE i < MaxTabs DO style.tab[i] := 0; INC(i) END;
-		ELSE HALT(33)
+		ELSE HALT(99)
 		END
 	END ReadData;
 

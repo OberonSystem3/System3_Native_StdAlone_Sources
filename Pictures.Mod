@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Pictures;	(** portable, except where noted *) (* tn, 1992 *)
 
@@ -149,10 +137,15 @@ BEGIN
 END ReplPattern;
 	
 (** Copy area SX, SY, SW, SH of source picture sP to area DX, DY, DW, DH of destination picture dP. Appropriate scaling is done. *)
+PROCEDURE Copy*(sP,dP:Picture;SX,SY,SW,SH,DX,DY,DW,DH,mode:INTEGER);
+BEGIN
+	Bitmaps.Copy(sP.bitmap, dP.bitmap, SX, SY, SW, SH, DX, DY, DW, DH, mode)
+END Copy;
+(*
 PROCEDURE Copy*(sP,dP:Picture;SX,SY,SW,SH,DX,DY,DW,DH,mode:INTEGER); 
 VAR hx, hy,DW2,SW2: LONGINT; 
 		dx, dy, SXo, DXo: INTEGER;
-BEGIN 
+BEGIN
 	IF (SW> 0) &(SH >0) &(DW >0 ) &(DH > 0) THEN
 		dy := DY + DH; dx := DX + DW; SXo := SX; DXo := DX; DW2 := 2 * DW; SW2 := 2 * SW;  
 		hy := 2*SH - DH; 
@@ -168,6 +161,7 @@ BEGIN
 		END
 	END
 END Copy;
+*)
 
 (* ==================================================================================*)
 	
@@ -266,6 +260,11 @@ END Create;
 (** Like Dot, for a line of pixels. *)
 
 PROCEDURE PutLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
+BEGIN
+	Bitmaps.PutLine(P.bitmap, data, x, y, w)
+END PutLine;
+(*
+PROCEDURE PutLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
 VAR i: INTEGER;
 BEGIN
 	i := 0;
@@ -274,9 +273,15 @@ BEGIN
 		INC(i);  INC(x)
 	END
 END PutLine;
+*)
 
 (** Like Get, for a line of pixels. *)
 
+PROCEDURE GetLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
+BEGIN
+	Bitmaps.GetLine(P.bitmap, data, x, y, w)
+END GetLine;
+(*
 PROCEDURE GetLine*(P: Picture; VAR data: ARRAY OF INTEGER; x, y, w: INTEGER);
 VAR i: INTEGER;
 BEGIN
@@ -286,6 +291,7 @@ BEGIN
 		INC(i);  INC(x)
 	END
 END GetLine;
+*)
 
 (** Stores picture run length encoded to file F (including tag). *)
 PROCEDURE Store* (P: Picture; F : Files.File; pos: LONGINT; VAR len: LONGINT);	

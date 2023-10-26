@@ -1,4 +1,7 @@
-MODULE GfxRaster;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxRaster; (** portable *)	(* eos   *)
 
 	(**
 		Gfx contexts rendering on abstract raster devices
@@ -22,10 +25,19 @@ MODULE GfxRaster;	(** eos   **)
 		21.9.98 - implemented special cases for circles and axis-aligned ellipses
 		10.3.99 - new dash pattern
 		1.4.99 - bugfix in Rect: incorrect use of GfxRegions.AddPoint when mode included Clip
+		13.5.99 - remodeled cap and join styles
+		[26.5.99 - use 300 dpi metrics in Show (taken out again 14.7.99)]
+		25.8.99 - replace GfxMaps by GfxImages
+		8.10.99 - added Close functionality
+		26.10.99 - removed auto-close logic for regions
+		7.12.99 - fixed bug in AddCircle and AddEllipse (must add enter/exit points on different scanlines)
+		13.02.2000 - new get/set clip methods
+		18.02.2000 - fixed typo in HairCircle
+		04.04.2000 - fixed bug in Arc: didn't set (u, v) when recording
 	*)
 	
 	IMPORT
-		Math, GfxMatrix, GfxMaps, GfxPaths, GfxRegions, GfxFonts, Gfx;
+		Math, GfxMatrix, GfxImages, GfxPaths, GfxRegions, GfxFonts, Gfx;
 		
 	
 	CONST
@@ -33,16 +45,16 @@ MODULE GfxRaster;	(** eos   **)
 		
 	
 	TYPE
-		(** stackable regions **)
-		Region* = POINTER TO RegionDesc;
-		RegionDesc* = RECORD (GfxRegions.RegionDesc)
-			next*: Region;	(** link to last previously saved region **)
+		(** region based clip areas **)
+		ClipArea* = POINTER TO ClipAreaDesc;
+		ClipAreaDesc* = RECORD (Gfx.ClipAreaDesc)
+			reg*: GfxRegions.Region;	(** corresponding region **)
 		END;
 		
 		(** abstract raster context **)
 		Context* = POINTER TO ContextDesc;
 		ContextDesc* = RECORD (Gfx.ContextDesc)
-			clipReg*: Region;	(** region inside clip path **)
+			clipReg*: GfxRegions.Region;	(** region inside clip path **)
 			dot*: PROCEDURE (rc: Context; x, y: LONGINT);	(** current dot procedure **)
 			rect*: PROCEDURE (rc: Context; lx, ly, rx, uy: LONGINT);	(** current rect procedure **)
 			setColPat*: PROCEDURE (rc: Context; col: Gfx.Color; pat: Gfx.Pattern);
@@ -62,9 +74,8 @@ MODULE GfxRaster;	(** eos   **)
 			px, py: LONGINT;	(* current pixel position *)
 			fu, fv: REAL;	(* current outline position for filled areas *)
 			offset: REAL;	(* current offset *)
-			sx, sy: LONGINT;	(* current starting point of fill path *)
-			disconnected: BOOLEAN;	(* indicates whether fill path must be closed *)
-			cfx0, cfy0, cfx1, cfy1: LONGINT;	(* end points of line that closes fill path *)
+			deferred: BOOLEAN;	(* indicates that no cap/join has been drawn for start of thick line yet *)
+			u0, v0, u1, v1: REAL;	(* endpoints of first thick line of current subpath *)
 		END;
 		
 		(* path data for filling paths *)
@@ -111,11 +122,8 @@ MODULE GfxRaster;	(** eos   **)
 	(**--- Clipping ---**)
 	
 	PROCEDURE ResetClip* (ctxt: Gfx.Context);
-		VAR rc: Context;
 	BEGIN
-		rc := ctxt(Context);
-		rc.clipReg.next := NIL;
-		GfxRegions.Clear(rc.clipReg)
+		GfxRegions.Clear(ctxt(Context).clipReg)
 	END ResetClip;
 	
 	PROCEDURE GetClipRect* (ctxt: Gfx.Context; VAR llx, lly, urx, ury: REAL);
@@ -126,21 +134,19 @@ MODULE GfxRaster;	(** eos   **)
 		GfxMatrix.ApplyToRect(inv, reg.llx, reg.lly, reg.urx, reg.ury, llx, lly, urx, ury)
 	END GetClipRect;
 	
-	PROCEDURE SaveClip* (ctxt: Gfx.Context);
-		VAR rc: Context; reg: Region;
+	PROCEDURE GetClip* (ctxt: Gfx.Context): Gfx.ClipArea;
+		VAR rc: Context; clip: ClipArea;
 	BEGIN
 		rc := ctxt(Context);
-		NEW(reg); GfxRegions.Copy(rc.clipReg, reg);
-		reg.next := rc.clipReg; rc.clipReg := reg
-	END SaveClip;
+		NEW(clip); NEW(clip.reg); GfxRegions.Copy(rc.clipReg, clip.reg);
+		RETURN clip
+	END GetClip;
 	
-	PROCEDURE RestoreClip* (ctxt: Gfx.Context);
-		VAR rc: Context;
+	PROCEDURE SetClip* (ctxt: Gfx.Context; clip: Gfx.ClipArea);
 	BEGIN
-		rc := ctxt(Context);
-		ASSERT(rc.clipReg.next # NIL);
-		rc.clipReg := rc.clipReg.next
-	END RestoreClip;
+		ASSERT(clip IS ClipArea, 100);
+		GfxRegions.Copy(clip(ClipArea).reg, ctxt(Context).clipReg)
+	END SetClip;
 	
 	PROCEDURE InitClipState (rc: Context; x, y: INTEGER);
 	BEGIN
@@ -253,7 +259,7 @@ MODULE GfxRaster;	(** eos   **)
 				rc.dot(rc, mx + x, my + y); rc.dot(rc, mx + y, my + x);
 				rc.dot(rc, mx + x, my - y); rc.dot(rc, mx - y, my + x);
 				rc.dot(rc, mx - x, my - y); rc.dot(rc, mx - y, my - x);
-				rc.dot(rc, mx - x, my + y); rc.dot(rc, mx + y, mx - x)
+				rc.dot(rc, mx - x, my + y); rc.dot(rc, mx + y, my - x)
 			END
 		END
 	END HairCircle;
@@ -295,6 +301,12 @@ MODULE GfxRaster;	(** eos   **)
 	
 	(*--- Filled Areas ---*)
 	
+	PROCEDURE EnterLine (rc: Context; u, v: REAL);
+	BEGIN
+		rc.fu := u; rc.fv := v;
+		rc.px := ENTIER(u + 0.5); rc.py := ENTIER(v + 0.5);
+	END EnterLine;
+	
 	PROCEDURE AddLine (rc: Context; u, v: REAL);
 		VAR px, py, x, y, xstep, ystep, steps: LONGINT; du, dv, eu, ev, e: REAL;
 	BEGIN
@@ -327,104 +339,69 @@ MODULE GfxRaster;	(** eos   **)
 		rc.fu := u; rc.fv := v
 	END AddLine;
 	
-	PROCEDURE EnterLine (rc: Context; u, v: REAL);
-	BEGIN
-		rc.fu := u; rc.fv := v;
-		rc.px := ENTIER(u + 0.5); rc.py := ENTIER(v + 0.5);
-		rc.sx := rc.px; rc.sy := rc.py
-	END EnterLine;
-	
-	PROCEDURE ExitLine (rc: Context);
-		VAR px, py: LONGINT;
-	BEGIN
-		IF rc.disconnected THEN	(* previous subpath wasn't closed *)
-			IF (rc.sx # rc.px) OR (rc.sy # rc.py) THEN	(* and this one isn't either => connect them *)
-				IF (rc.px = rc.cfx1) & (rc.py = rc.cfy1) THEN rc.disconnected := FALSE END;
-				px := rc.px; py := rc.py;
-				rc.fu := rc.cfx0; rc.fv := rc.cfy0;
-				rc.px := rc.cfx0; rc.py := rc.cfy0;
-				AddLine(rc, rc.sx, rc.sy);
-				rc.cfx0 := px; rc.cfy0 := py
-			ELSE	(* but this one is  *)
-			END
-		ELSIF (rc.sx # rc.px) OR (rc.sy # rc.py) THEN	(* this subpath isn't closed *)
-			rc.cfx0 := rc.px; rc.cfy0 := rc.py; rc.cfx1 := rc.sx; rc.cfy1 := rc.sy;
-			rc.disconnected := TRUE
-		END
-	END ExitLine;
-	
 	PROCEDURE AddCircle (rc: Context; mx, my, r: LONGINT);
-		VAR x, y, d, de, dse: LONGINT; enter, exit: INTEGER;
+		VAR x, y, d, de, ds, sgn: LONGINT;
 	BEGIN
-		x := 0; y := r; d := 1-r; de := 3; dse := -2*r + 5;
-		IF r > 0 THEN enter := -1; exit := 1
-		ELSE enter := 1; exit := -1
+		x := 0; y := r; d := 1-r; de := 3; ds := -2*r + 2;
+		IF r > 0 THEN sgn := 1 ELSE sgn := -1 END;
+		WHILE y > x DO
+			REPEAT
+				INC(d, de); INC(de, 2); INC(x, sgn)
+			UNTIL d >= 0;
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), 1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), -1);
+			INC(d, ds); INC(ds, 2); DEC(y);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), -1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), 1)
 		END;
-		WHILE y >= x DO
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - y), SHORT(my - x), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + y), SHORT(my - x), exit);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), exit);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), exit);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - y), SHORT(my + x), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + y), SHORT(my + x), exit);
-			IF d < 0 THEN
-				INC(d, de); INC(de, 2); INC(dse, 2); INC(x)
-			ELSE
-				INC(d, dse); INC(de, 2); INC(dse, 4); INC(x); DEC(y)
-			END
+		WHILE y > 0 DO
+			IF d <= 0 THEN
+				INC(d, de); INC(de, 2); INC(x, sgn)
+			END;
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), 1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), -1);
+			INC(d, ds); INC(ds, 2); DEC(y);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), -1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), 1)
 		END
 	END AddCircle;
 	
 	PROCEDURE AddEllipse (rc: Context; mx, my, rx, ry: LONGINT);
-		VAR x, y, aa, bb, da, db, dy, dx, d: LONGINT; enter, exit: INTEGER;
+		VAR x, y, aa, bb, da, db, dy, dx, d, sgn: LONGINT;
 	BEGIN
-		x := rx; y := 0;
+		x := ABS(rx); y := 0;
 		aa := rx * rx; bb := ry * ry;
 		da := -8*aa; db := -8*bb;
 		dy := -4*aa; dx := -db * (x-1);
 		d := bb * (4*x - 1);
-		IF rx * ry > 0 THEN enter := -1; exit := 1
-		ELSE enter := 1; exit := -1
+		IF rx * ry > 0 THEN sgn := 1
+		ELSE x := -x; sgn := -1
 		END;
-		WHILE db * x < da * y DO
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), exit);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), exit);
-			INC(d, dy); INC(dy, da); INC(y);
+		WHILE db * x * sgn < da * y DO
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), -1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), 1);
+			INC(y);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), 1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), -1);
 			IF d < 0 THEN
-				INC(d, dx); INC(dx, db); DEC(x)
-			END
+				INC(d, dx); INC(dx, db); DEC(x, sgn)
+			END;
+			INC(d, dy); INC(dy, da)
 		END;
-		dx := 4 * bb * (2*x - 1); dy := da * (y+1);
-		d := d - bb * (4*x - 1) - aa * (4*y + 1);
-		WHILE x >= 0 DO
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), exit);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), enter);
-			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), exit);
-			INC(d, dx); INC(dx, db); DEC(x);
-			IF d >= 0 THEN
-				INC(d, dy); INC(dy, da); INC(y)
-			END
+		dx := 4 * bb * (2*ABS(x) - 1); dy := da * (y+1);
+		d := d - bb * (4*ABS(x) - 1) - aa * (4*y + 1);
+		WHILE x * sgn > 0 DO
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my + y), -1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my - y), 1);
+			INC(y);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx - x), SHORT(my + y), 1);
+			GfxRegions.AddPoint(rc.pathReg, SHORT(mx + x), SHORT(my - y), -1);
+			REPEAT
+				INC(d, dx); INC(dx, db); DEC(x, sgn)
+			UNTIL d >= 0;
+			INC(d, dy); INC(dy, da)
 		END
 	END AddEllipse;
-	
-	PROCEDURE BeginRegion (rc: Context);
-	BEGIN
-		rc.disconnected := FALSE
-	END BeginRegion;
-	
-	PROCEDURE EndRegion (rc: Context);
-	BEGIN
-		IF rc.disconnected THEN	(* close path with line *)
-			rc.fu := rc.cfx0; rc.fv := rc.cfy0;
-			rc.px := rc.cfx0; rc.py := rc.cfy0;
-			AddLine(rc, rc.cfx1, rc.cfy1)
-		END
-	END EndRegion;
 	
 	PROCEDURE EnumRegion (lx, ly, rx, uy: INTEGER; VAR data: GfxRegions.EnumData);
 		VAR rc: Context;
@@ -461,7 +438,7 @@ MODULE GfxRaster;	(** eos   **)
 						AddCircle(rc, ENTIER(data.x0), ENTIER(data.y0), -ENTIER(ABS(x) + 0.5))
 					END
 				ELSE
-					AddEllipse(rc, ENTIER(data.x0), ENTIER(data.y0), ENTIER(ABS(x) + 0.5), ENTIER(ABS(y) + 0.5))
+					AddEllipse(rc, ENTIER(data.x0), ENTIER(data.y0), ENTIER(x+0.5), ENTIER(y+0.5))
 				END
 			ELSE
 				x := data.x; y := data.y;
@@ -473,7 +450,6 @@ MODULE GfxRaster;	(** eos   **)
 			data.x := rc.fu; data.y := rc.fv;
 			GfxPaths.EnumBezier(data.x1, data.y1, data.x2, data.y2, x, y, rc.flatness, AddPathElem, data)
 		| GfxPaths.Exit:
-			ExitLine(rc)
 		END
 	END AddPathElem;
 	
@@ -481,111 +457,84 @@ MODULE GfxRaster;	(** eos   **)
 	(*--- Thick Lines ---*)
 	
 	PROCEDURE StrokeHalfJoin (rc: Context; cu, cv, u, v, du, dv, hu, hv: REAL; part: LONGINT);
-		VAR miter, bevel, round: Gfx.JoinStyle; limit, bu, bv, t: REAL; data: PathData; ps: GfxPaths.Scanner;
+		VAR limit, bu, bv, t: REAL; data: PathData;
 	BEGIN
 		IF (hu # 0) OR (hv # 0) THEN
-			miter := Gfx.MiterJoin; bevel := Gfx.BevelJoin; round := Gfx.RoundJoin;
 			IF du * hv > dv * hu THEN
 				du := -du; dv := -dv; part := 1 - part	(* turn right turns into left turns *)
 			END;
-			IF rc.joinStyle = miter THEN
-				limit := rc.devWidth * rc.styleLimit
-			END;
+			limit := rc.devWidth * rc.styleLimit;
 			IF part = 0 THEN
-				IF (rc.joinStyle = bevel) OR (rc.joinStyle = miter) & (hu * hu + hv * hv > limit * limit) THEN
+				IF (rc.joinStyle = Gfx.BevelJoin) OR (rc.joinStyle = Gfx.MiterJoin) & (hu * hu + hv * hv > limit * limit) THEN
 					GfxPaths.IntersectLines(cu, cv, hu, hv, cu + dv, cv - du, -hv, hu, bu, bv);
 					EnterLine(rc, bu, bv); AddLine(rc, cu + dv, cv - du)
-				ELSIF rc.joinStyle = miter THEN
+				ELSIF rc.joinStyle = Gfx.MiterJoin THEN
 					bu := cu + hu; bv := cv + hv; EnterLine(rc, bu, bv); AddLine(rc, cu + dv, cv - du)
-				ELSIF rc.joinStyle = round THEN
+				ELSIF rc.joinStyle = Gfx.RoundJoin THEN
 					t := Math.sqrt((du * du + dv * dv)/(hu * hu + hv * hv));
 					bu := cu + t * hu; bv := cv + t * hv; EnterLine(rc, bu, bv);
 					data.context := rc; data.x := rc.fu; data.y := rc.fv;
 					GfxPaths.EnumArc(cu, cv, cu - du, cv - dv, cu + dv, cv - du, cu + dv, cv - du, rc.flatness, AddPathElem, data)
 				ELSE
-					GfxPaths.Clear(TmpPath);
-					rc.joinStyle(rc, cu, cv, du, dv, du, dv, hu, hv, {0}, TmpPath);
-					data.context := rc;
-					GfxPaths.EnumFlattened(TmpPath, rc.flatness, AddPathElem, data);
-					GfxPaths.Open(ps, TmpPath, 0);
-					bu := ps.x; bv := ps.y
+					bu := cu + dv; bv := cv - du;
+					EnterLine(rc, bu, bv)
 				END;
-				AddLine(rc, u + dv, v - du); AddLine(rc, u - dv, v + du); AddLine(rc, cu, cv); AddLine(rc, bu, bv);
-				ExitLine(rc)
+				AddLine(rc, u + dv, v - du); AddLine(rc, u - dv, v + du); AddLine(rc, cu, cv); AddLine(rc, bu, bv)
 			ELSE (* part = 1 *)
 				EnterLine(rc, cu, cv); AddLine(rc, u - dv, v + du); AddLine(rc, u + dv, v - du); AddLine(rc, cu + dv, cv - du);
-				IF (rc.joinStyle = bevel) OR (rc.joinStyle = miter) & (hu * hu + hv * hv > limit * limit) THEN
+				IF (rc.joinStyle = Gfx.BevelJoin) OR (rc.joinStyle = Gfx.MiterJoin) & (hu * hu + hv * hv > limit * limit) THEN
 					GfxPaths.IntersectLines(cu, cv, hu, hv, cu + dv, cv - du, -hv, hu, bu, bv);
 					AddLine(rc, bu, bv)
-				ELSIF rc.joinStyle = miter THEN
+				ELSIF rc.joinStyle = Gfx.MiterJoin THEN
 					AddLine(rc, cu + hu, cv + hv)
-				ELSIF rc.joinStyle = round THEN
+				ELSIF rc.joinStyle = Gfx.RoundJoin THEN
 					t := Math.sqrt((du * du + dv * dv)/(hu * hu + hv * hv));
 					data.context := rc; data.x := rc.fu; data.y := rc.fv;
 					GfxPaths.EnumArc(cu, cv, cu - du, cv - dv, cu + dv, cv - du, cu + t * hu, cv + t * hv, rc.flatness, AddPathElem, data)
-				ELSE
-					GfxPaths.Clear(TmpPath);
-					rc.joinStyle(rc, cu, cv, du, dv, du, dv, hu, hv, {1}, TmpPath);
-					data.context := rc; data.x := rc.fu; data.y := rc.fv;
-					GfxPaths.EnumFlattened(TmpPath, rc.flatness, AddPathElem, data)
 				END;
-				AddLine(rc, cu, cv); ExitLine(rc)
+				AddLine(rc, cu, cv)
 			END
 		END
 	END StrokeHalfJoin;
 	
 	PROCEDURE StrokeFullJoin (rc: Context; su, sv, cu, cv, eu, ev, idu, idv, odu, odv, hu, hv: REAL);
-		VAR miter, bevel, round: Gfx.JoinStyle; t, limit: REAL; data: PathData;
+		VAR t, limit: REAL; data: PathData;
 	BEGIN
 		IF (hu # 0) OR (hv # 0) THEN
-			miter := Gfx.MiterJoin; bevel := Gfx.BevelJoin; round := Gfx.RoundJoin;
 			IF idu * odv < idv * odu THEN	(* turn right turns into left turns *)
 				t := idu; idu := -odu; odu := -t;
 				t := idv; idv := -odv; odv := -t;
 				t := su; su := eu; eu := t;
 				t := sv; sv := ev; ev := t
 			END;
-			IF rc.joinStyle = miter THEN
-				limit := rc.devWidth * rc.styleLimit
-			END;
+			limit := rc.devWidth * rc.styleLimit;
 			EnterLine(rc, su - idv, sv + idu); AddLine(rc, su + idv, sv - idu); AddLine(rc, cu + idv, cv - idu);
-			IF (rc.joinStyle = bevel) OR (rc.joinStyle = miter) & (hu * hu + hv * hv > limit * limit) THEN
+			IF (rc.joinStyle = Gfx.BevelJoin) OR (rc.joinStyle = Gfx.MiterJoin) & (hu * hu + hv * hv > limit * limit) THEN
 				AddLine(rc, cu + odv, cv - odu)
-			ELSIF rc.joinStyle = miter THEN
+			ELSIF rc.joinStyle = Gfx.MiterJoin THEN
 				AddLine(rc, cu + hu, cv + hv)
-			ELSIF rc.joinStyle = round THEN
+			ELSIF rc.joinStyle = Gfx.RoundJoin THEN
 				data.context := rc; data.x := rc.fu; data.y := rc.fv;
 				GfxPaths.EnumArc(cu, cv, cu + idv, cv - idu, cu + idu, cv + idv, cu + odv, cv - odu, rc.flatness, AddPathElem, data)
 			ELSE
-				GfxPaths.Clear(TmpPath);
-				rc.joinStyle(rc, cu, cv, idu, idv, odu, odv, hu, hv, {0, 1}, TmpPath);
-				data.context := rc; data.x := rc.fu; data.y := rc.fv;
-				GfxPaths.EnumFlattened(TmpPath, rc.flatness, AddPathElem, data)
+				AddLine(rc, cu, cv); AddLine(rc, cu + odv, cv - odu)
 			END;
-			AddLine(rc, eu + odv, ev - odu); AddLine(rc, eu - odv, ev + odu); AddLine(rc, su - idv, sv + idu);
-			ExitLine(rc)
+			AddLine(rc, eu + odv, ev - odu); AddLine(rc, eu - odv, ev + odu); AddLine(rc, su - idv, sv + idu)
 		END
 	END StrokeFullJoin;
 	
 	PROCEDURE StrokeCap (rc: Context; u, v, du, dv: REAL);
-		VAR butt, round, square: Gfx.CapStyle; data: PathData; tu, tv: REAL;
+		VAR data: PathData;
 	BEGIN
-		butt := Gfx.ButtCap;
-		IF rc.capStyle # butt THEN
-			round := Gfx.RoundCap; square := Gfx.SquareCap;
+		IF rc.capStyle = Gfx.RoundCap THEN
 			EnterLine(rc, u - dv, v + du);
-			IF rc.capStyle = round THEN
-				data.context := rc; data.x := rc.fu; data.y := rc.fv;
-				GfxPaths.EnumArc(u, v, u - dv, v + du, u - du, v - dv, u + dv, v - du, rc.flatness, AddPathElem, data)
-			ELSIF rc.capStyle = square THEN
-				AddLine(rc, u - du - dv, v - dv + du); AddLine(rc, u - du + dv, v - dv - du); AddLine(rc, u + dv, v - du)
-			ELSE
-				GfxPaths.Clear(TmpPath);
-				rc.capStyle(rc, u, v, du, dv, TmpPath, tu, tv);
-				data.context := rc; data.x := rc.fu; data.y := rc.fv;
-				GfxPaths.EnumFlattened(TmpPath, rc.flatness, AddPathElem, data)
-			END;
-			AddLine(rc, u - dv, v + du); ExitLine(rc)
+			data.context := rc; data.x := rc.fu; data.y := rc.fv;
+			GfxPaths.EnumArc(u, v, u - dv, v + du, u - du, v - dv, u + dv, v - du, rc.flatness, AddPathElem, data);
+			AddLine(rc, u - dv, v + du)
+		ELSIF rc.capStyle = Gfx.SquareCap THEN
+			EnterLine(rc, u - dv, v + du);
+			AddLine(rc, u - du - dv, v - dv + du); AddLine(rc, u - du + dv, v - dv - du); AddLine(rc, u + dv, v - du);
+			AddLine(rc, u - dv, v + du)
 		END
 	END StrokeCap;
 	
@@ -624,8 +573,7 @@ MODULE GfxRaster;	(** eos   **)
 		ELSE
 			EnterLine(rc, su - dv, sv + du);
 			AddLine(rc, su + dv, sv - du); AddLine(rc, eu + dv, ev - du);
-			AddLine(rc, eu - dv, ev + du); AddLine(rc, su - dv, sv + du);
-			ExitLine(rc)
+			AddLine(rc, eu - dv, ev + du); AddLine(rc, su - dv, sv + du)
 		END
 	END ThickLine;
 	
@@ -655,8 +603,8 @@ MODULE GfxRaster;	(** eos   **)
 		idu := rc.du; idv := rc.dv;
 		Gfx.GetNormVector(u - cu, v - cv, rc.devWidth, odu, odv);
 		IF (cu = rc.su) & (cv = rc.sv) THEN	(* first call *)
-			IF (idu = 0) & (idv = 0) THEN
-				StrokeCap(rc, cu, cv, odu, odv);
+			IF rc.deferred THEN	(* defer rendering of starting cap in case path is later closed *)
+				rc.u1 := u; rc.v1 := v;	(* remember direction of first line *)
 				rc.tu := cu; rc.tv := cv
 			ELSE	(* render initial joint *)
 				Gfx.GetNormVector(idu, idv, rc.devWidth, idu, idv);
@@ -715,9 +663,35 @@ MODULE GfxRaster;	(** eos   **)
 				IF (hu # 0) OR (hv # 0) THEN
 					StrokeHalfJoin(rc, cu, cv, tu, tv, idu, idv, hu, hv, 1)
 				END
+			END;
+			IF rc.deferred THEN	(* render cap at start pos *)
+				InitClipState(rc, SHORT(ENTIER(rc.u0)), SHORT(ENTIER(rc.v0)));
+				Gfx.GetNormVector(rc.u1 - rc.u0, rc.v1 - rc.v0, rc.devWidth, odu, odv);
+				StrokeCap(rc, rc.u0, rc.v0, odu, odv)
 			END
 		END
 	END ThickExit;
+	
+	PROCEDURE ThickClose (rc: Context);
+		VAR cu, cv, idu, idv, odu, odv, hu, hv, tu, tv, eu, ev: REAL;
+	BEGIN
+		cu := rc.u; cv := rc.v; idu := rc.du; idv := rc.dv;
+		UpdateClipState(rc, SHORT(ENTIER(cu)), SHORT(ENTIER(cv)));
+		Gfx.GetNormVector(rc.u1 - rc.u0, rc.v1 - rc.v0, rc.devWidth, odu, odv);
+		Gfx.GetHalfAxisVector(idu, idv, odu, odv, hu, hv);
+		IF (hu = 0) & (hv = 0) THEN
+			tu := cu; tv := cv
+		ELSE
+			TrimJoinLength(cu, cv, rc.tu, rc.tv, -idu, -idv, hu, hv, tu, tv)
+		END;
+		IF (tu - rc.tu) * idu + (tv - rc.tv) * idv > 0 THEN
+			ThickLine(rc, rc.tu, rc.tv, tu, tv, idu, idv)
+		END;
+		IF (hu # 0) OR (hv # 0) THEN
+			TrimJoinLength(cu, cv, 0.5*(cu + rc.u1), 0.5*(cv + rc.v1), odu, odv, hu, hv, eu, ev);
+			StrokeFullJoin(rc, tu, tv, cu, cv, eu, ev, idu, idv, odu, odv, hu, hv)
+		END
+	END ThickClose;
 	
 	
 	(*--- Dashed Lines ---*)
@@ -737,7 +711,9 @@ MODULE GfxRaster;	(** eos   **)
 	END DashEnter;
 	
 	PROCEDURE DashLineTo (rc: Context; u, v: REAL);
-		VAR cu, cv, du, dv, len, cos, sin, wdu, wdv, offset, beg, end, next, dash, tu, tv: REAL; index: LONGINT;
+		VAR
+			cu, cv, du, dv, len, cos, sin, wdu, wdv, offset, beg, end, next, dash, tu, tv, u1, v1: REAL;
+			index: LONGINT; deferred: BOOLEAN;
 	BEGIN
 		cu := rc.u; cv := rc.v;
 		du := u - cu; dv := v - cv;
@@ -752,8 +728,10 @@ MODULE GfxRaster;	(** eos   **)
 				IF rc.devWidth <= 0.75 THEN
 					HairLineTo(rc, cu + len * cos, cv + len * sin)
 				ELSE
-					ThickLineTo(rc, cu + len * cos, cv + len * sin);
-					ThickExit(rc, 0, 0)
+					ThickLineTo(rc, cu + len * cos, cv + len * sin);	(* sets u1/v1 if first line in subpath *)
+					deferred := rc.deferred; rc.deferred := FALSE;
+					ThickExit(rc, 0, 0);
+					rc.deferred := deferred
 				END
 			ELSIF rc.devWidth <= 0.75 THEN
 				HairLineTo(rc, u, v)
@@ -790,8 +768,11 @@ MODULE GfxRaster;	(** eos   **)
 				HairLineEnter(rc, cu, cv);
 				HairLineTo(rc, u, v)
 			ELSE
+				u1 := rc.u1; v1 := rc.v1;
+				StrokeCap(rc, cu, cv, wdu, wdv);
 				ThickEnter(rc, cu, cv, 0, 0);
-				ThickLineTo(rc, u, v)
+				ThickLineTo(rc, u, v);
+				rc.u1 := u1; rc.v1 := v1	(* restore original point *)
 			END
 		ELSE
 			rc.u := u; rc.v := v
@@ -801,11 +782,24 @@ MODULE GfxRaster;	(** eos   **)
 	PROCEDURE DashExit (rc: Context; odu, odv: REAL);
 		VAR beg, end, next: REAL; index: LONGINT;
 	BEGIN
-		Gfx.GetDashOffsets(rc, rc.offset, beg, end, next, index);
-		IF (beg < rc.offset) & (rc.offset < end) & (rc.devWidth > 0.75) THEN
-			ThickExit(rc, odu, odv)
+		IF rc.devWidth > 0.75 THEN
+			Gfx.GetDashOffsets(rc, rc.offset, beg, end, next, index);
+			IF (beg < rc.offset) & (rc.offset < end) THEN
+				ThickExit(rc, odu, odv)
+			END
 		END
 	END DashExit;
+	
+	PROCEDURE DashClose (rc: Context);
+		VAR beg, end, next: REAL; index: LONGINT;
+	BEGIN
+		IF rc.deferred & (rc.devWidth > 0.75) THEN
+			Gfx.GetDashOffsets(rc, rc.offset, beg, end, next, index);
+			IF (beg < rc.offset) & (rc.offset < end) THEN
+				ThickClose(rc)
+			END
+		END
+	END DashClose;
 	
 	
 	(*--- Stroking ---*)
@@ -824,8 +818,7 @@ MODULE GfxRaster;	(** eos   **)
 	PROCEDURE StrokeEnter (rc: Context; u, v, du, dv: REAL);
 	BEGIN
 		IF rc.devWidth > 0.75 THEN
-			GfxRegions.Clear(rc.pathReg);
-			BeginRegion(rc)
+			GfxRegions.Clear(rc.pathReg)
 		END;
 		IF rc.dashPatLen > 0 THEN
 			DashEnter(rc, u, v, du, dv)
@@ -855,7 +848,6 @@ MODULE GfxRaster;	(** eos   **)
 			ThickExit(rc, du, dv)
 		END;
 		IF rc.devWidth > 0.75 THEN
-			EndRegion(rc);
 			GfxRegions.Intersect(rc.pathReg, rc.clipReg);
 			IF ~GfxRegions.Empty(rc.pathReg) THEN
 				rc.clipState := In;
@@ -863,6 +855,22 @@ MODULE GfxRaster;	(** eos   **)
 			END
 		END
 	END StrokeExit;
+	
+	PROCEDURE StrokeClose (rc: Context);
+	BEGIN
+		IF rc.dashPatLen > 0 THEN
+			DashClose(rc)
+		ELSIF rc.devWidth > 0.75 THEN
+			ThickClose(rc)
+		END;
+		IF rc.devWidth > 0.75 THEN
+			GfxRegions.Intersect(rc.pathReg, rc.clipReg);
+			IF ~GfxRegions.Empty(rc.pathReg) THEN
+				rc.clipState := In;
+				FillRegion(rc)
+			END
+		END
+	END StrokeClose;
 	
 	PROCEDURE StrokePathElem (VAR data: GfxPaths.EnumData);
 		VAR rc: Context; x, y: REAL;
@@ -917,6 +925,7 @@ MODULE GfxRaster;	(** eos   **)
 		END;
 		rc.useRegion := {Gfx.Clip, Gfx.Fill} * rc.mode # {};
 		rc.lateStroke := rc.useRegion & (Gfx.Stroke IN rc.mode);
+		rc.deferred := FALSE;
 		IF rc.lateStroke THEN
 			IF rc.cp = NIL THEN NEW(rc.cp) END;
 			GfxPaths.Clear(rc.cp)
@@ -931,9 +940,6 @@ MODULE GfxRaster;	(** eos   **)
 			ELSE
 				GfxRegions.Init(rc.pathReg, GfxRegions.Winding)
 			END
-		END;
-		IF rc.useRegion THEN
-			BeginRegion(rc)
 		END
 	END Begin;
 	
@@ -941,9 +947,6 @@ MODULE GfxRaster;	(** eos   **)
 		VAR rc: Context; data: PathData;
 	BEGIN
 		rc := ctxt(Context);
-		IF rc.useRegion THEN
-			EndRegion(rc)
-		END;
 		IF Gfx.Clip IN rc.mode THEN
 			GfxRegions.Intersect(rc.clipReg, rc.pathReg)
 		END;
@@ -982,6 +985,10 @@ MODULE GfxRaster;	(** eos   **)
 		ELSE
 			rc.u := u; rc.v := v
 		END;
+		IF (dx = 0) & (dy = 0) THEN
+			rc.deferred := TRUE;
+			rc.u0 := u; rc.v0 := v
+		END;
 		rc.cpx := x; rc.cpy := y
 	END Enter;
 	
@@ -996,12 +1003,47 @@ MODULE GfxRaster;	(** eos   **)
 		IF rc.lateStroke THEN
 			GfxPaths.AddExit(rc.cp, du, dv)
 		END;
-		IF rc.useRegion THEN
-			ExitLine(rc)
-		ELSIF Gfx.Stroke IN rc.mode THEN
+		IF ~rc.useRegion & (Gfx.Stroke IN rc.mode) THEN
 			StrokeExit(rc, du, dv)
-		END
+		END;
+		rc.deferred := FALSE
 	END Exit;
+	
+	PROCEDURE Close* (ctxt: Gfx.Context);
+		CONST eps = 0.001;
+		VAR rc: Context;
+	BEGIN
+		rc := ctxt(Context);
+		IF ~rc.deferred THEN
+			Exit(rc, 0, 0)
+		ELSE
+			IF (ABS(rc.u - rc.u0) > eps) OR (ABS(rc.v - rc.v0) > eps) THEN
+				IF Gfx.Record IN rc.mode THEN
+					GfxPaths.AddLine(rc.path, rc.u0, rc.v0)
+				END;
+				IF rc.lateStroke THEN
+					GfxPaths.AddLine(rc.cp, rc.u0, rc.v0)
+				END;
+				IF rc.useRegion THEN
+					AddLine(rc, rc.u0, rc.v0)
+				ELSIF Gfx.Stroke IN rc.mode THEN
+					StrokeLineTo(rc, rc.u0, rc.v0)
+				END
+			END;
+			IF Gfx.Record IN rc.mode THEN
+				GfxPaths.AddExit(rc.path, 0, 0);
+				GfxPaths.Close(rc.path)
+			END;
+			IF rc.lateStroke THEN
+				GfxPaths.AddExit(rc.cp, 0, 0);
+				GfxPaths.Close(rc.cp)
+			END;
+			IF ~rc.useRegion & (Gfx.Stroke IN rc.mode) THEN
+				StrokeClose(rc)
+			END;
+			rc.deferred := FALSE
+		END
+	END Close;
 	
 	PROCEDURE Line* (ctxt: Gfx.Context; x, y: REAL);
 		VAR rc: Context; u, v: REAL;
@@ -1050,7 +1092,7 @@ MODULE GfxRaster;	(** eos   **)
 						AddCircle(rc, ENTIER(u0), ENTIER(v0), -ENTIER(ABS(ru) + 0.5))
 					END
 				ELSE
-					AddEllipse(rc, ENTIER(u0), ENTIER(v0), ENTIER(ABS(ru) + 0.5), ENTIER(ABS(rv) + 0.5))
+					AddEllipse(rc, ENTIER(u0), ENTIER(v0), ENTIER(ru+0.5), ENTIER(rv+0.5))
 				END
 			ELSE
 				data.context := rc(Context); data.x := rc.u; data.y := rc.v;
@@ -1074,6 +1116,8 @@ MODULE GfxRaster;	(** eos   **)
 				data.context := rc; data.x := rc.u; data.y := rc.v;
 				GfxPaths.EnumArc(u0, v0, u1, v1, u2, v2, u, v, rc.flatness, StrokePathElem, data)
 			END
+		ELSE
+			rc.u := u; rc.v := v
 		END;
 		rc.cpx := x; rc.cpy := y
 	END Arc;
@@ -1104,8 +1148,8 @@ MODULE GfxRaster;	(** eos   **)
 	
 	PROCEDURE Show* (ctxt: Gfx.Context; x, y: REAL; VAR str: ARRAY OF CHAR);
 		VAR
-			rc: Context; mat: GfxMatrix.Matrix; font: GfxFonts.Font; u, v, bu, bv, du, dv: REAL; i: LONGINT;
-			map: GfxMaps.Map; data: PathData;
+			rc: Context; mat: GfxMatrix.Matrix; font: GfxFonts.Font; u, v, bu, bv, du, dv: REAL;
+			i: LONGINT; img: GfxImages.Image; data: PathData;
 	BEGIN
 		rc := ctxt(Context);
 		GfxMatrix.Concat(rc.font.mat, rc.ctm, mat);
@@ -1116,9 +1160,9 @@ MODULE GfxRaster;	(** eos   **)
 			rc.setColPat(rc, rc.fillCol, rc.fillPat);
 			i := 0;
 			WHILE str[i] # 0X DO
-				GfxFonts.GetMap(font, str[i], bu, bv, du, dv, map);
-				IF map # NIL THEN
-					rc.do.image(rc, u + bu, v + bv, map, GfxMaps.NoFilter)
+				GfxFonts.GetMap(font, str[i], bu, bv, du, dv, img);
+				IF img # NIL THEN
+					rc.do.image(rc, u + bu, v + bv, img, GfxImages.NoFilter)
 				END;
 				u := u + du; v := v + dv;
 				INC(i)
@@ -1161,10 +1205,8 @@ MODULE GfxRaster;	(** eos   **)
 			ELSE
 				GfxRegions.Init(rc.pathReg, GfxRegions.Winding)
 			END;
-			BeginRegion(rc);
 			data.context := rc;
 			GfxPaths.Enumerate(rc.path, AddPathElem, data);
-			EndRegion(rc);
 			GfxRegions.Intersect(rc.pathReg, rc.clipReg);
 			IF Gfx.Clip IN mode THEN
 				GfxRegions.Copy(rc.pathReg, rc.clipReg)
@@ -1255,10 +1297,22 @@ MODULE GfxRaster;	(** eos   **)
 				GfxPaths.AddExit(rc.cp, 0, rv)
 			END;
 			IF rc.useRegion THEN
-				AddEllipse(rc, ENTIER(u), ENTIER(v), ENTIER(ru + 0.5), ENTIER(rv + 0.5))
+				IF ABS(ABS(ru) - ABS(rv)) < rc.flatness THEN
+					IF ru * rv > 0 THEN AddCircle(rc, ENTIER(u), ENTIER(v), ENTIER(ABS(ru) + 0.5))
+					ELSE AddCircle(rc, ENTIER(u), ENTIER(v), -ENTIER(ABS(rv) + 0.5))
+					END
+				ELSE
+					AddEllipse(rc, ENTIER(u), ENTIER(v), ENTIER(ru + 0.5), ENTIER(rv + 0.5))
+				END
 			ELSIF Gfx.Stroke IN rc.mode THEN
 				IF (rc.dashPatLen = 0) & (rc.devWidth <= 0.75) THEN
-					HairEllipse(rc, ENTIER(u), ENTIER(v), ENTIER(ru + 0.5), ENTIER(rv + 0.5))
+					IF ABS(ABS(ru) - ABS(rv)) < rc.flatness THEN
+						IF ru * rv > 0 THEN HairCircle(rc, ENTIER(u), ENTIER(v), ENTIER(ABS(ru) + 0.5))
+						ELSE HairCircle(rc, ENTIER(u), ENTIER(v), -ENTIER(ABS(ru) + 0.5))
+						END
+					ELSE
+						HairEllipse(rc, ENTIER(u), ENTIER(v), ENTIER(ru + 0.5), ENTIER(rv + 0.5))
+					END
 				ELSE
 					StrokeEnter(rc, u + ru, v, 0, rv);
 					data.context := rc; data.x := rc.u; data.y := rc.v;
@@ -1283,9 +1337,7 @@ MODULE GfxRaster;	(** eos   **)
 	PROCEDURE InitContext* (rc: Context);
 	BEGIN
 		rc.setColPat := SetColPat;
-		NEW(rc.clipReg);
-		GfxRegions.Init(rc.clipReg, GfxRegions.Winding);
-		rc.clipReg.next := NIL
+		NEW(rc.clipReg); GfxRegions.Init(rc.clipReg, GfxRegions.Winding)
 	END InitContext;
 	
 

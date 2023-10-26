@@ -1,24 +1,15 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Input;	(** portable, except where noted *)	(* pjm *)
+ MODULE Input;	(** portable, except where noted *)	(* pjm *)
 
 (*
 	Native Oberon Input, pjm 09.06.95
 	Mouse protocol information from XFree in X11R6 distribution (Thomas Roell & David Dawes)
 	PS/2 Aux port information from Linux (Johan Myreen et al.)
+	
+	Added support for 82C710 controller (QuickPort), pr 12.09.2000
+	- information about 82C710 from Linux (qpmouse.c, 8-Sep-95)
 *)
 
 (**
@@ -26,12 +17,12 @@ Module Input is responsible for event timing, mouse and keyboard input.
 *)
 
 IMPORT
-	Files, Display, Kernel, V24, SYSTEM;
+	Files, Kernel, V24, SYSTEM;
 
 CONST
 	TimeUnit* = 1000;	(** portable, but VAR on other ports *)	(** timer ticks per second (platform dependent). *)
 
-	SHIFT* = 0;  CTRL* = 1;  ALT* = 2;	(** for GetShiftState *)
+	SHIFT* = 0;  CTRL* = 1;  ALT* = 2;	(** for KeyState *)
 	
 	BufSize = 32;	(* keyboard buffer size *)
 	AuxSize = 301;	(* PS/2 aux port buffer size (multiple of 3 + 1)*)
@@ -39,6 +30,7 @@ CONST
 	ScrollLock = 0;  NumLock = 1;  CapsLock = 2;  LAlt = 3;  RAlt = 4;
 	LCtrl = 5;  RCtrl = 6;  LShift = 7;  RShift = 8;  GreyEsc = 9;
 	Resetting = 10;  SetTypematic = 11;  SendingLEDs = 12;
+	MenuShift = 13;
 	DeadKey = 0;
 	
 	AUX = -1;  NONE = -2;
@@ -74,11 +66,38 @@ CONST
 	MP=2
 *)
 
+	(* 82C710 controller command and status bits *)
+	QpDevIdle = 0;
+	QpRxFull = 1;
+	QpTxIdle = 2;
+	QpReset = 3;
+	QpIntsOn = 4;
+	QpErrorFlag = 5;
+	QpClear = 6;
+	QpEnable = 7;
+	
+TYPE
+	PollMouse* = PROCEDURE (VAR keys: SET; VAR dx, dy, dz: INTEGER): BOOLEAN;	(** non-portable *)
+	PollKeyboard* = PROCEDURE (VAR ch: CHAR; VAR keys: SET): BOOLEAN;	(** non-portable *)
+
+	MousePoller = POINTER TO RECORD
+		poll: PollMouse;
+		next: MousePoller
+	END;
+	
+	KeyboardPoller = POINTER TO RECORD
+		poll: PollKeyboard;
+		next: KeyboardPoller
+	END;
+	
+	KeyTable = POINTER TO ARRAY OF CHAR;
+	
 VAR
 	mouseErrors, auxoverflows: LONGINT;
 	
 		(* mouse state *)
-	minX, minY, maxX, maxY, mouseX, mouseY: LONGINT;
+	mouse: MousePoller;
+	minX, minY, maxX, maxY, mouseX, mouseY, height: LONGINT;
 	port, oldport, newport, rate: INTEGER;	(* Serial mouse port, bps and report rate (if supported) *)
 	bps: LONGINT;
 	type: SHORTINT;	(* mouse type *)
@@ -92,20 +111,24 @@ VAR
 	threshold: INTEGER;	(* speedup threshold *)
 	speedup: LONGINT;
 	auxinit: BOOLEAN;
+	auxId: CHAR;
+	(* 82C710 mouse port *)
+	qp: BOOLEAN;
+	qpStatusPort: LONGINT;
+	qpDataPort: LONGINT;
 
 		(* keyboard state *)
-	buffer: ARRAY 1+BufSize OF CHAR;	(* first byte not used (security) *)
+	keyboard: KeyboardPoller;
+	buffer: ARRAY 1+BufSize OF CHAR;	(* first byte not used (System.State security) *)
 	head, tail, dkey: SHORTINT;
-	escNeutralise: BOOLEAN;
 	lastport: LONGINT;
 	lastvalue: SYSTEM.BYTE;
 	keyval: INTEGER;
 	table: LONGINT;
-	flags: SET;
-	breakproc: PROCEDURE;
-	keytable: POINTER TO ARRAY OF CHAR;
+	flags, pollkeys: SET;
+	breakproc, timerproc: Kernel.Proc;
+	keytable: KeyTable;	(* anchor for keyboard table loaded from file *)
 	kpmap: SET;
-	timerproc: Kernel.Proc;
 	kdx, kdy, counter0, counter1: INTEGER;
 
 (* ---- Keyboard Driver ---- *)
@@ -176,7 +199,7 @@ L1:
 	DB 0FX, 09X, 09X, 0X	(* tab *)
 	DB 1CX, 0DX, 0DX, 0X	(* enter *)
 	DB 39X, 20X, 20X, 0X	(* space *)
-	DB 01X, 0FEX, 1BX, 0X	(* esc *)
+	DB 01X, 1BX, 1BX, 0X	(* esc *)
 	 	(* keypad *)
 	DB 4FX, 0A9X, "1", 2X	(* end/1 *)
 	DB 50X, 0C2X, "2", 2X	(* down/2 *)
@@ -189,22 +212,22 @@ L1:
 	DB 49X, 0A2X, "9", 2X	(* pgup/9 *)
 	DB 52X, 0A0X, "0", 2X	(* insert/0 *)
 	DB 53X, 0A1X, 2EX, 2X	(* del/. *)
-		(* gray keys *)
-	DB 4AX, "-", "-", 0X	(* gray - *)
-	DB 4EX, "+", "+", 0X	(* gray + *)
-	DB 0B5X, "/", "/", 0X	(* gray / *)
-	DB 37X, "*", "*", 0X	(* gray * *)
-	DB 0D0X, 0C2X, 0C2X, 0X	(* gray down *)
-	DB 0CBX, 0C4X, 0C4X, 0X	(* gray left *)
-	DB 0CDX, 0C3X, 0C3X, 0X	(* gray right *)
-	DB 0C8X, 0C1X, 0C1X, 0X	(* gray up *)
-	DB 09CX, 0DX, 0DX, 0X	(* gray enter *)
-	DB 0D2X, 0A0X, 0A0X, 0X	(* gray ins *)
-	DB 0D3X, 0A1X, 0A1X, 0X	(* gray del *)
-	DB 0C9X, 0A2X, 0A2X, 0X	(* gray pgup *)
-	DB 0D1X, 0A3X, 0A3X, 0X	(* gray pgdn *)
-	DB 0C7X, 0A8X, 0A8X, 0X	(* gray home *)
-	DB 0CFX, 0A9X, 0A9X, 0X	(* gray end *)
+		(* grey keys *)
+	DB 4AX, "-", "-", 0X	(* grey - *)
+	DB 4EX, "+", "+", 0X	(* grey + *)
+	DB 0B5X, "/", "/", 0X	(* grey / *)
+	DB 37X, "*", "*", 0X	(* grey * *)
+	DB 0D0X, 0C2X, 0C2X, 0X	(* grey down *)
+	DB 0CBX, 0C4X, 0C4X, 0X	(* grey left *)
+	DB 0CDX, 0C3X, 0C3X, 0X	(* grey right *)
+	DB 0C8X, 0C1X, 0C1X, 0X	(* grey up *)
+	DB 09CX, 0DX, 0DX, 0X	(* grey enter *)
+	DB 0D2X, 0A0X, 0A0X, 0X	(* grey ins *)
+	DB 0D3X, 0A1X, 0A1X, 0X	(* grey del *)
+	DB 0C9X, 0A2X, 0A2X, 0X	(* grey pgup *)
+	DB 0D1X, 0A3X, 0A3X, 0X	(* grey pgdn *)
+	DB 0C7X, 0A8X, 0A8X, 0X	(* grey home *)
+	DB 0CFX, 0A9X, 0A9X, 0X	(* grey end *)
 		(* function keys *)
 	DB 3BX, 0A4X, 0FFX, 0X	(* F1 *)
 	DB 3CX, 0A5X, 0FFX, 0X	(* F2 *)
@@ -221,39 +244,32 @@ L1:
 	DB 0FFX
 END TableUS;
 
-PROCEDURE TableFromFile(name: ARRAY OF CHAR): LONGINT;
-VAR f: Files.File;  r: Files.Rider;  len: LONGINT;
+PROCEDURE TableFromFile(name: ARRAY OF CHAR): KeyTable;
+VAR f: Files.File;  r: Files.Rider;  len: LONGINT;  t: KeyTable;
 BEGIN
 	Kernel.WriteString("Keyboard: ");  Kernel.WriteString(name);
 	f := Files.Old(name);
 	IF f # NIL THEN
 		len := Files.Length(f);
 		IF len MOD 4 = 0 THEN
-			NEW(keytable, len+1);
-			Files.Set(r, f, 0);  Files.ReadBytes(r, keytable^, len);
+			NEW(t, len+1);
+			Files.Set(r, f, 0);  Files.ReadBytes(r, t^, len);
 			IF r.res = 0 THEN
 				Kernel.WriteLn;
-				keytable[len] := 0FFX;
-				RETURN SYSTEM.ADR(keytable[0])
+				t[len] := 0FFX;
+				RETURN t
 			END
 		END
 	END;
 	Kernel.WriteString(" not used");  Kernel.WriteLn;
-	RETURN TableUS()
+	RETURN NIL
 END TableFromFile;
-
-PROCEDURE -CoreHalt(n: LONGINT);
-CODE {SYSTEM.i386}
-	INT 3
-END CoreHalt;
 
 (* Translate - Translate scan code "c" to key. *)
 
 PROCEDURE Translate(flags: SET;  c: CHAR): INTEGER;
 CONST
 	Alt = {LAlt, RAlt};  Ctrl = {LCtrl, RCtrl};  Shift = {LShift, RShift};
-	AltShift = {LAlt, RAlt, LShift, RShift};
-	All = {LAlt, RAlt, LCtrl, RCtrl, LShift, RShift};
 VAR a: LONGINT;  s1: CHAR;  s: SET;  k: INTEGER;  dkn: SHORTINT;
 BEGIN
 	IF (c = 46X) & (flags * Ctrl # {}) THEN RETURN -2 END;	(* Ctrl-Break - break *)
@@ -405,6 +421,8 @@ BEGIN
 		INCL(flags, LShift)
 	ELSIF c = 036X THEN	(* RShift make *)
 		INCL(flags, RShift)
+	ELSIF c = 05DX THEN	(* menu make *)
+		INCL(flags, MenuShift)
 	ELSIF c = 03AX THEN	(* Caps make *)
 		LedKey(flags, CapsLock, c, k)
 	ELSIF c = 046X THEN	(* Scroll make *)
@@ -428,6 +446,8 @@ BEGIN
 		EXCL(flags, LShift)
 	ELSIF c = 0B6X THEN	(* RShift break *)
 		EXCL(flags, RShift)
+	ELSIF c = 0DDX THEN	(* menu break *)
+		EXCL(flags, MenuShift)
 	ELSIF (flags * {ScrollLock, GreyEsc} = {ScrollLock}) & (c >= 47X) & (c <= 53X) & (c # 4AX) & (c # 4EX) THEN	(* key mouse *)
 		INCL(kpmap, ORD(c)-47H)
 	ELSIF c < 080X THEN	(* Other make *)
@@ -442,10 +462,6 @@ BEGIN
 		SendByte(60H, 0EDX)	(* set keyboard LEDs *)
 	END;
 	SendByte(64H, 0AEX);	(* enable keyboard *)
-		(* now do additional mappings *)
-	IF k = 0FEH THEN	(* map Esc to Neutralise or Esc *)
-		IF escNeutralise THEN k := 0A5H ELSE k := 1BH END
-	END;
 	RETURN k
 END MapScanCode;
 
@@ -507,18 +523,11 @@ END KeyboardInterrupt;
 (* InitKeyboard - Initialise the keyboard. *)
 
 PROCEDURE InitKeyboard;
-VAR s: SET;  c: CHAR;  i: SHORTINT;  k: ARRAY 32 OF CHAR;
+VAR s: SET;  c: CHAR;  i: SHORTINT;  k: ARRAY 8 OF CHAR;
 BEGIN
-	head := 0;  tail := 0;  keyval := -1;  buffer[0] := 0X;  dkey := 0;
+	head := 0;  tail := 0;  keyval := -1;  buffer[0] := 0X;
 		(* Get table *)
-	Kernel.GetConfig("Keyboard", k);
-	i := 0;  WHILE (k[i] # 0X) & (k[i] # ".") DO INC(i) END;
-	IF k[i] = "." THEN table := TableFromFile(k)
-	ELSE table := TableUS()
-	END;
-		(* Get compatibility option *)
-	Kernel.GetConfig("EscCompat", k);
-	escNeutralise := (k # "0");
+	Setting("Keyboard");
 		(* install interrupt *)
 	flags := {};
 	Kernel.InstallIP(KeyboardInterrupt, Kernel.IRQ+1);
@@ -546,20 +555,56 @@ VAR s: SET;  t: Kernel.MilliTimer;  i: SHORTINT;
 BEGIN
 	i := 10;	(* up to 0.2s! *)
 	LOOP
-		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
-		IF (s * {0,1} = {}) OR (i = 0) THEN EXIT END;
-		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
-		IF s * {0,5} = {0,5} THEN SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s)) END;	(* byte avail *)
+		IF qp THEN
+			SYSTEM.PORTIN(qpStatusPort, SYSTEM.VAL(CHAR, s));
+			IF (s * {QpRxFull, QpTxIdle, QpDevIdle} = {QpTxIdle, QpDevIdle}) OR (i = 0) THEN EXIT END;
+			SYSTEM.PORTIN(qpStatusPort, SYSTEM.VAL(CHAR, s));
+			IF s * {QpRxFull} = {QpRxFull} THEN SYSTEM.PORTIN(qpDataPort, SYSTEM.VAL(CHAR, s)) END;	(* byte avail *)
+		ELSE
+			SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
+			IF (s * {0,1} = {}) OR (i = 0) THEN EXIT END;
+			SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
+			IF s * {0,5} = {0,5} THEN SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s)) END;	(* byte avail *)
+		END;
 		Kernel.SetTimer(t, TimeUnit DIV 50);	(* 20ms *)
 		REPEAT UNTIL Kernel.Expired(t);
 		DEC(i)
 	END
 END PollAux;
 
+PROCEDURE InAux(): CHAR;
+VAR s: SET;  ch: CHAR; t: Kernel.MilliTimer;  i: SHORTINT;
+BEGIN
+	i := 10;	(* up to 0.2s! *)
+	REPEAT
+		IF qp THEN
+			SYSTEM.PORTIN(qpStatusPort, SYSTEM.VAL(CHAR, s));
+			IF s * {QpRxFull} = {QpRxFull} THEN 	(* byte avail *)
+				SYSTEM.PORTIN(qpDataPort, ch);
+				RETURN ch
+			END
+		ELSE
+			SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
+			IF s * {0,5} = {0,5} THEN 	(* byte avail *)
+				SYSTEM.PORTIN(60H, ch);
+				RETURN ch
+			END
+		END;
+		Kernel.SetTimer(t, TimeUnit DIV 50);	(* 20ms *)
+		REPEAT UNTIL Kernel.Expired(t);
+		DEC(i);
+	UNTIL i = 0;
+	RETURN 0X
+END InAux;
+
 PROCEDURE WriteDev(b: CHAR);
 BEGIN
-	PollAux;  SYSTEM.PORTOUT(64H, 0D4X);	(* aux data coming *)
-	PollAux;  SYSTEM.PORTOUT(60H, b)
+	IF qp THEN
+		PollAux;  SYSTEM.PORTOUT(qpDataPort, b)
+	ELSE
+		PollAux;  SYSTEM.PORTOUT(64H, 0D4X);	(* aux data coming *)
+		PollAux;  SYSTEM.PORTOUT(60H, b)
+	END
 END WriteDev;
 
 PROCEDURE WriteAck(b: CHAR);
@@ -567,17 +612,27 @@ VAR s: SET;  t: Kernel.MilliTimer;  i: SHORTINT;
 BEGIN
 	WriteDev(b);  i := 10;	(* up to 0.2s! *)
 	LOOP
-		SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
-		IF (s * {0,5} = {0,5}) OR (i = 0) THEN EXIT END;
+		IF qp THEN
+			SYSTEM.PORTIN(qpStatusPort, SYSTEM.VAL(CHAR, s));
+			IF (s * {QpRxFull} = {QpRxFull}) OR (i = 0) THEN EXIT END;
+		ELSE
+			SYSTEM.PORTIN(64H, SYSTEM.VAL(CHAR, s));
+			IF (s * {0,5} = {0,5}) OR (i = 0) THEN EXIT END;
+		END;
 		Kernel.SetTimer(t, TimeUnit DIV 50);	(* 20ms *)
 		REPEAT UNTIL Kernel.Expired(t);
 		DEC(i)
 	END;
-	IF i # 0 THEN SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s)) END	(* byte avail *)
+	IF i # 0 THEN				(* byte avail *)
+		IF qp THEN SYSTEM.PORTIN(qpDataPort, SYSTEM.VAL(CHAR, s))
+		ELSE SYSTEM.PORTIN(60H, SYSTEM.VAL(CHAR, s))
+		END
+	END
 END WriteAck;
 
 PROCEDURE WriteCmd(b: CHAR);
 BEGIN
+	ASSERT(~qp, 100);
 	PollAux;  SYSTEM.PORTOUT(64H, 60X);
 	PollAux;  SYSTEM.PORTOUT(60H, b)
 END WriteCmd;
@@ -585,7 +640,9 @@ END WriteCmd;
 PROCEDURE AuxInterrupt;
 VAR c: CHAR;  t: INTEGER;
 BEGIN
-	SYSTEM.PORTIN(60H, c);	(* read byte *)
+	IF qp THEN SYSTEM.PORTIN(qpDataPort, c);	(* read byte *)
+	ELSE SYSTEM.PORTIN(60H, c);	(* read byte *)
+	END;
 	t := (auxtl+1) MOD AuxSize;
 	IF t # auxhd THEN auxbuf[auxtl] := c;  auxtl := t
 	ELSE INC(auxoverflows)
@@ -624,12 +681,19 @@ BEGIN
 		IF n < 0 THEN INC(n, AuxSize) END
 	ELSIF port # NONE THEN
 		n := V24.Available(port)
+	ELSE
+		n := 0
 	END;
 	RETURN n
 END SerialAvailable;
 
 PROCEDURE StartAux;
-VAR state: SET;
+VAR state, status: SET;
+
+	PROCEDURE SetRate(r: INTEGER);
+	BEGIN WriteAck(0F3X);  WriteAck(CHR(r))
+	END SetRate;
+	
 BEGIN
 	state := DisableInterrupts();
 	auxhd := 0;  auxtl := 0;  
@@ -637,14 +701,31 @@ BEGIN
 	IF ~auxinit THEN
 		auxinit := TRUE;
 		PollAux;
-		SYSTEM.PORTOUT(64H, 0A8X);	(* enable aux *)
-		WriteAck(0F3X);  WriteAck(CHR(rate));	(* set sample rate (was 100) *)
+		IF qp THEN
+			SYSTEM.PORTIN(qpStatusPort, SYSTEM.VAL(CHAR, status));
+			INCL(status, QpEnable + QpReset);
+			SYSTEM.PORTOUT(qpStatusPort, SYSTEM.VAL(CHAR, status));
+			EXCL(status,  QpReset);
+			SYSTEM.PORTOUT(qpStatusPort, SYSTEM.VAL(CHAR, status));	
+		ELSE
+			SYSTEM.PORTOUT(64H, 0A8X);	(* enable aux *)
+		END;
+		
+		(* enable MS Intellimouse 3rd button *)
+		SetRate(200); SetRate(100); SetRate(80); SetRate(rate);
+		WriteAck(0F2X); auxId := InAux(); (*Ident*)
+
 		WriteAck(0E8X);  WriteAck(3X);	(* 8 counts/mm *)
 		WriteAck(0E7X);	(* 2:1 scale *)
 		PollAux;
 		Kernel.InstallIP(AuxInterrupt, Kernel.IRQ+12);
 		WriteDev(0F4X);	(* enable aux device *)
-		WriteCmd(47X);	(* controller interrupts on *)
+		IF qp THEN
+			INCL(status, QpIntsOn);
+			SYSTEM.PORTOUT(qpStatusPort, SYSTEM.VAL(CHAR, status))
+		ELSE
+			WriteCmd(47X)	(* controller interrupts on *)
+		END;
 		PollAux
 	END
 END StartAux;
@@ -695,10 +776,9 @@ END SetSpeed;
 	"rate" - sample rate (not all mice support this) *)
 
 PROCEDURE InitMouse;
-VAR c: CHAR;  t, res: LONGINT;  timer: Kernel.MilliTimer;
+VAR c: CHAR;  timer: Kernel.MilliTimer; n: INTEGER;
 BEGIN
 	port := newport;
-	mouseX := Display.Width DIV 2;  mouseY := Display.Height DIV 2;
 	mouseErrors := 0;  auxoverflows := 0;
 	IF (oldport # NONE) & (oldport # AUX) THEN V24.Stop(oldport) END;
 	oldport := NONE;
@@ -742,20 +822,33 @@ BEGIN
 		MM:  numb := 3;  mask0 := {5..7};  val0 := {7};  mask1 := {7};  val1 := {} |
 		Logi:  numb := 3;  mask0 := {5..7};  val0 := {7};  mask1 := {7};  val1 := {} |
 		LogiMan:  numb := 3;  mask0 := {6};  val0 := {6};  mask1 := {6};  val1 := {} |
-		PS2:  numb := 3;  mask0 := {6,7};  val0 := {};  mask1 := {};  val1 := {} |
+		PS2: IF auxId # 0X THEN numb := 4 ELSE numb := 3 END;
+			mask0 := {6,7};  val0 := {};  mask1 := {};  val1 := {} |
 		MSI: numb := 4;  mask0 := {6};  val0 := {6};  mask1 := {6};  val1 := {}
 	END;
 		(* ignore the first few bytes from the mouse (e.g. Logitech MouseMan Sensa) *)
-	Kernel.SetTimer(timer, TimeUnit DIV 4);	(* wait 1/4s *)
+	n := 4;
 	REPEAT
-		IF SerialAvailable(port) > 0 THEN SerialRead(port, c) END
-	UNTIL Kernel.Expired(timer)
+		WHILE SerialAvailable(port) # 0 DO SerialRead(port, c) END;
+		Kernel.SetTimer(timer, TimeUnit DIV n); DEC(n); (* wait 1/4s, 1/3s, 1/2s, 1s *)
+		REPEAT UNTIL Kernel.Expired(timer);
+	UNTIL (SerialAvailable(port) = 0) OR (n = 0);
+
+	(* Lower/Raise DTR/RTS for autodetection, and to start an Intellimouse *)
+	IF port # AUX THEN
+		V24.ClearMC(port, {V24.DTR, V24.RTS});
+		Kernel.SetTimer(timer, TimeUnit DIV 4);
+		REPEAT UNTIL Kernel.Expired(timer);
+		V24.SetMC(port, {V24.DTR, V24.RTS});
+		Kernel.SetTimer(timer, TimeUnit DIV 4);
+		REPEAT UNTIL Kernel.Expired(timer)
+	END	
 END InitMouse;
 
 (* GetMouseEvent - Read a mouse event *)
 
-PROCEDURE GetMouseEvent(VAR keys: SET;  VAR dx, dy: INTEGER): BOOLEAN;
-VAR b: SET;  res: LONGINT;
+PROCEDURE GetMouseEvent(VAR keys: SET;  VAR dx, dy, dz: INTEGER): BOOLEAN;
+VAR b: SET;
 BEGIN
 	WHILE SerialAvailable(port) > 0 DO
 		b := {};  SerialRead(port, SYSTEM.VAL(CHAR, b));
@@ -763,7 +856,7 @@ BEGIN
 		IF (mbufp # 0) & (type # PS2) & ((b * mask1 # val1) OR (b = {7})) THEN mbufp := 0 END;
 		IF (mbufp = 0) & (b * mask0 # val0) THEN
 				(* skip package, unless it is a LogiMan middle button... *)
-			IF ((type = MS) OR (type = LogiMan)) & (b * {0,2..4,6,7} = {}) THEN
+			IF ((type = MS) OR (type = LogiMan)) & (b * {2..4,6,7} = {}) THEN
 				keys := lastkeys * {0,2};
 				IF 5 IN b THEN INCL(keys, 1) END;
 				dx := 0;  dy := 0;
@@ -823,12 +916,26 @@ END GetMouseEvent;
 
 (** Returns the number of keystrokes in the keyboard input buffer. *)
 PROCEDURE Available*() : INTEGER;
-VAR x: INTEGER;  state: SET;
+VAR state, keys: SET; p: KeyboardPoller; x: INTEGER; ch: CHAR; i: SHORTINT;
 BEGIN
+		(* poll all extra keyboards *)
+	p := keyboard; pollkeys := {};
+	WHILE p # NIL DO
+		IF p.poll(ch, keys) THEN
+			state := DisableInterrupts();
+			i := (tail+1) MOD BufSize;
+			IF i # head THEN
+				buffer[1+tail] := ch;  tail := i
+			END;
+			RestoreInterrupts(state)
+		END;
+		pollkeys := pollkeys + keys;
+		p := p.next
+	END;
+		(* check buffer *)
 	state := DisableInterrupts();
-	x := tail-head;
+	x := (tail-head) MOD BufSize;
 	RestoreInterrupts(state);
-	IF x < 0 THEN INC(x, BufSize) END;
 	RETURN x
 END Available;
 
@@ -837,9 +944,9 @@ END Available;
 0, 1, 2 (i.e. 1 is the middle mouse button). For example, when the left and middle 
 buttons are pressed, keys will be set to {1, 2}. *)
 PROCEDURE Mouse*(VAR keys: SET; VAR x, y: INTEGER);
-VAR dx, dy: INTEGER;  ok: BOOLEAN;  rawkeys, state: SET;
+VAR dx, dy, dz: INTEGER;  ok: BOOLEAN;  mousekeys, rawkeys, state: SET; p: MousePoller;
 BEGIN
-	IF Kernel.break THEN Kernel.break := FALSE; CoreHalt(13) END;
+	IF Kernel.break THEN Kernel.break := FALSE; SYSTEM.HALT(13) END;
 	IF ScrollLock IN flags THEN
 		keys := {};
 		IF 11 IN kpmap THEN INCL(keys, 2) END;
@@ -852,23 +959,38 @@ BEGIN
 		RestoreInterrupts(state)
 	ELSE
 		REPEAT	(* get all available mouse events, or until keys change *)
-			ok := GetMouseEvent(rawkeys, dx, dy);
-			IF (ABS(dx) > threshold) OR (ABS(dy) > threshold) THEN
-				dx := SHORT(dx*speedup DIV 10); dy := SHORT(dy*speedup DIV 10)
-			END;
-			INC(mouseX, LONG(dx));  INC(mouseY, LONG(dy))
+			p := mouse; rawkeys := {}; ok := FALSE;
+			WHILE p # NIL DO	(* poll all mice and sum keys and movements *)
+				IF p.poll(mousekeys, dx, dy, dz) THEN
+					ok := TRUE;
+					rawkeys := rawkeys + mousekeys;
+					IF (ABS(dx) > threshold) OR (ABS(dy) > threshold) THEN
+						dx := SHORT(dx*speedup DIV 10); dy := SHORT(dy*speedup DIV 10)
+					END;
+					INC(mouseX, LONG(dx));  INC(mouseY, LONG(dy))
+				END;
+				p := p.next
+			END
 		UNTIL ~ok OR (rawkeys # lastkeys);
-		IF ~(1 IN lastkeys) & (1 IN rawkeys) THEN	(* mouse generated middle button *)
-			IF buttons = -3 THEN buttons := 3 END	(* switch off emulation in this case *)
+		IF ok THEN
+			IF ~(1 IN lastkeys) & (1 IN rawkeys) THEN	(* mouse generated middle button *)
+				IF buttons = -3 THEN buttons := 3 END	(* switch off emulation *)
+			END;
+			lastkeys := rawkeys	(* save last known mouse key state *)
+		ELSE
+			rawkeys := lastkeys	(* restore last known mouse key state *)
 		END;
-		lastkeys := rawkeys;	(* save last known mouse key state *)
+		IF MenuShift IN flags THEN	(* menu key emulates middle button *)
+			INCL(rawkeys, 1);
+			IF buttons = -3 THEN buttons := 3 END	(* switch off emulation *)
+		END;
 			(* middle button emulation *)
 		IF buttons # 3 THEN	(* -2, 2, -3 *)
-			IF buttons = 2 THEN	(* Ctrl is middle button *)
+			IF buttons = 2 THEN	(* 2 => Ctrl is middle button *)
 				IF flags * {LCtrl, RCtrl} # {} THEN INCL(rawkeys, 1)
 				ELSE EXCL(rawkeys, 1)
 				END
-			ELSE	(* MM OR Ctrl is middle button *)
+			ELSE	(* -2 OR -3 => MM OR Ctrl is middle button *)
 				IF flags * {LCtrl, RCtrl} # {} THEN INCL(rawkeys, 1) END
 			END
 		END;
@@ -881,18 +1003,15 @@ BEGIN
 	IF mouseY < minY THEN mouseY := minY
 	ELSIF mouseY > maxY THEN mouseY := maxY
 	END;
-	x := SHORT(mouseX);
-	y := SHORT(mouseY);
-	y := (Display.Height - 1) - y;
-	IF x >= Display.Width THEN x := Display.Width - 1 END
+	x := SHORT(mouseX); y := SHORT(height-1-mouseY)
 END Mouse;
 
 (** Read a character from the keyboard buffer. Blocks if no character is available. *)
 PROCEDURE Read*(VAR ch: CHAR);
 VAR state: SET;
 BEGIN
-	REPEAT (* skip *) UNTIL (head # tail) OR Kernel.break;
-	IF Kernel.break THEN Kernel.break := FALSE; CoreHalt(13) END;
+	REPEAT (* skip *) UNTIL (Available() # 0) OR Kernel.break;
+	IF Kernel.break THEN Kernel.break := FALSE; SYSTEM.HALT(13) END;
 	state := DisableInterrupts();
 	ch := buffer[1+head];  head := (head+1) MOD BufSize;
 	RestoreInterrupts(state)
@@ -901,14 +1020,14 @@ END Read;
 (** Returns the elapsed number of timer ticks from Oberon startup. *)
 PROCEDURE Time*(): LONGINT;
 BEGIN
-	IF Kernel.break THEN Kernel.break := FALSE; CoreHalt(13) END;
+	IF Kernel.break THEN Kernel.break := FALSE; SYSTEM.HALT(13) END;
 	RETURN Kernel.GetTimer()
 END  Time;
 
 (** Return the state of the shift keys. *)
 PROCEDURE KeyState*(VAR keys: SET);
 BEGIN
-	keys := {};
+	keys := pollkeys;
 	IF flags * {LAlt, RAlt} # {} THEN INCL(keys, ALT) END;
 	IF flags * {LCtrl, RCtrl} # {} THEN INCL(keys, CTRL) END;
 	IF flags * {LShift, RShift} # {} THEN INCL(keys, SHIFT) END
@@ -917,8 +1036,11 @@ END KeyState;
 (** Restricts the extent of the mouse coordinates returned by Mouse. *)
 PROCEDURE SetMouseLimits*(x, y, w, h: INTEGER);	(** non-portable *)
 BEGIN
-	y := Display.Height-1 - y;
-	minX := x;  maxY := y;  maxX := x + w-1;  minY := y - (h-1)
+	IF height = 0 THEN height := h END;
+	y := SHORT(height-1) - y;
+	minX := x;  maxY := y;  maxX := x + w-1;  minY := y - (h-1);
+	mouseX := minX + (maxX-minX) DIV 2;
+	mouseY := minY + (maxY-minY) DIV 2
 END SetMouseLimits;
 
 PROCEDURE SetMouseType(s: ARRAY OF CHAR);
@@ -960,15 +1082,59 @@ BEGIN
 	InitMouse
 END SetMouseType;
 
+PROCEDURE Read710(adr: CHAR; VAR x: CHAR);
+BEGIN
+	SYSTEM.PORTOUT(390H, adr);
+	SYSTEM.PORTIN(391H, x)
+END Read710;
+
+PROCEDURE Detect82C710;
+VAR x: CHAR;
+BEGIN
+	SYSTEM.PORTOUT(2FAH, 55X); SYSTEM.PORTOUT(3FAH, 0AAX);
+	SYSTEM.PORTOUT(3FAH, 36X); SYSTEM.PORTOUT(3FAH, 0E4X);
+	SYSTEM.PORTOUT(2FAH, 1BX);
+	Read710(0FX, x);
+	qp := x = 0E4X;
+	IF qp THEN
+		Read710(0DX, x);
+		qpDataPort := ORD(x)*4;
+		qpStatusPort := qpDataPort+1;
+		SYSTEM.PORTOUT(390H, 0FX); SYSTEM.PORTOUT(391H, 0FX)
+	END
+END Detect82C710;
+
+(* InitMouse lowered and raised DTR/RTS - place result in KBD buffer (ugh!) *)
+PROCEDURE DetectMouse();
+	VAR state: SET; i: SHORTINT; res: LONGINT; ch: CHAR;
+BEGIN
+	IF port = AUX THEN
+		Detect82C710
+	ELSE
+		LOOP
+			IF V24.Available(port) = 0 THEN EXIT END;
+			state := DisableInterrupts();
+			i := (tail+1) MOD BufSize;
+			IF i = head THEN RestoreInterrupts(state); EXIT END;
+			V24.Receive(port, ch, res); IF ch >= 80X THEN ch := CHR(ORD(ch)-80H) END;
+			buffer[1+tail] := ch; tail := i;
+			RestoreInterrupts(state)
+		END
+	END
+END DetectMouse;
+
 (** Configure input device parameters.  Normally only used by installation program. *)
 PROCEDURE Configure*(config, value: ARRAY OF CHAR);	(** non-portable *)
-VAR i: SHORTINT;  mk: ARRAY 3 OF LONGINT;
+VAR mk: ARRAY 3 OF LONGINT; kt: KeyTable; state: SET; i: SHORTINT;
 BEGIN
 	IF Trace THEN
 		Kernel.WriteString("Input: ");  Kernel.WriteString(config);  Kernel.WriteChar("=");
 		Kernel.WriteString(value);  Kernel.WriteLn
 	END;
 	IF config = "MT" THEN	(* mouse type *)
+		SetMouseType(value);
+		DetectMouse()
+	ELSIF config = "MTX" THEN	(* mouse type explicit *)
 		SetMouseType(value)
 	ELSIF config = "MP" THEN	(* mouse port *)
 		IF (value[0] >= "1") & (value[0] <= "4") THEN
@@ -999,13 +1165,63 @@ BEGIN
 			IF 1 IN SYSTEM.VAL(SET, i) THEN INCL(mapkeys[i], mk[1]) END;
 			IF 2 IN SYSTEM.VAL(SET, i) THEN INCL(mapkeys[i], mk[2]) END
 		END
+	ELSIF config = "Keyboard" THEN
+		i := 0; WHILE (value[i] # 0X) & (value[i] # ".") DO INC(i) END;
+		IF value[i] = "." THEN kt := TableFromFile(value) ELSE kt := NIL END;
+			(* atomically set the table *)
+		state := DisableInterrupts();
+		IF kt = NIL THEN table := TableUS()
+		ELSE keytable := kt; table := SYSTEM.ADR(kt[0])
+		END;
+		dkey := 0;
+		RestoreInterrupts(state)
 	ELSE
 		IF Trace THEN Kernel.WriteString("Unknown setting");  Kernel.WriteLn END
 	END
 END Configure;
 
+(** Add a mouse driver.  The poll procedure will be called from Mouse and should return the next mouse event, including the current key state.  It returns TRUE iff a mouse event is available. *)
+PROCEDURE AddMouse*(poll: PollMouse);	(** non-portable *)
+VAR n: MousePoller;
+BEGIN
+	NEW(n); n.poll := poll; n.next := mouse; mouse := n
+END AddMouse;
+
+(** Remove a mouse driver. *)
+PROCEDURE RemoveMouse*(poll: PollMouse);	(** non-portable *)
+VAR p, n: MousePoller;
+BEGIN
+	p := NIL; n := mouse;
+	WHILE (n # NIL) & (n.poll # poll) DO p := n; n := n.next END;
+	IF n # NIL THEN
+		IF p = NIL THEN mouse := n.next
+		ELSE p.next := n.next
+		END
+	END
+END RemoveMouse;
+
+(** Add a keyboard driver.  The poll procedure will be called from Available and Read and should return the next ASCII character.  It returns TRUE iff a key is available.  The current shift state (SHIFT, CTRL, ALT) should always be returned, and will be added to KeyState. *)
+PROCEDURE AddKeyboard*(poll: PollKeyboard);	(** non-portable *)
+VAR n: KeyboardPoller;
+BEGIN
+	NEW(n); n.poll := poll; n.next := keyboard; keyboard := n
+END AddKeyboard;
+
+(** Remove a keyboard driver. *)
+PROCEDURE RemoveKeyboard*(poll: PollKeyboard);	(** non-portable *)
+VAR p, n: KeyboardPoller;
+BEGIN
+	p := NIL; n := keyboard;
+	WHILE (n # NIL) & (n.poll # poll) DO p := n; n := n.next END;
+	IF n # NIL THEN
+		IF p = NIL THEN keyboard := n.next
+		ELSE p.next := n.next
+		END
+	END
+END RemoveKeyboard;
+
 PROCEDURE Setting(name: ARRAY OF CHAR);
-VAR s: ARRAY 16 OF CHAR;
+VAR s: ARRAY 32 OF CHAR;
 BEGIN
 	Kernel.GetConfig(name, s);  Configure(name, s)
 END Setting;
@@ -1041,7 +1257,7 @@ BEGIN
 	note1 := "Warning: Interrupting a module";
 	note2 := "may invalidate its invariants";
 	note3 := "and make it unstable.";
-	CoreHalt(13)
+	SYSTEM.HALT(13)
 END UnsafeBreak;
 
 PROCEDURE *Timer;
@@ -1063,11 +1279,13 @@ BEGIN
 END Timer;
 
 BEGIN
+	mouse := NIL; keyboard := NIL; pollkeys := {};
+	AddMouse(GetMouseEvent);
 	timerproc := Timer;  kpmap := {};  kdx := 0;  kdy := 0;  counter0 := 0;
+	maxX := 0; height := 0;
 	breakproc := UnsafeBreak;
 	InitKeyboard;
 		(* initialise mouse state *)
-	SetMouseLimits(0, 0, Display.Width, Display.Height);
 	oldport := NONE;  auxinit := FALSE;
 	ConfigMouse
 END Input.

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Effects;	(** portable *) (** jm 18.1.95 *)
 
@@ -120,7 +108,7 @@ BEGIN
 	A.X := X; A.Y := Y; A.W := W; A.H := H;
 	IF H <= -Display.UBottom THEN
 		A.offscreen := TRUE;
-		IF cursor THEN dX := Display.Width-32 ELSE dX := 0 END;
+		IF cursor THEN dX := Display.Width-A.W ELSE dX := 0 END;
 		Display.CopyBlock(X,Y,W,H,dX,-H,Display.replace)
 	ELSE
 		A.offscreen := FALSE;
@@ -141,7 +129,7 @@ BEGIN
 	Display.GetClip(cx,cy,cw,ch);
 	Display.ResetClip;
 	IF A.offscreen THEN
-		IF cursor THEN dX := Display.Width-32 ELSE dX := 0 END;
+		IF cursor THEN dX := Display.Width-A.W ELSE dX := 0 END;
 		Display.CopyBlock(dX,-A.H,A.W,A.H,A.X,A.Y,Display.replace)
 	ELSE
 		IF A.pix # 0 THEN
@@ -174,7 +162,7 @@ areas under non-inverting cursors. *)
 PROCEDURE OpenCursor*(X, Y, W, H: INTEGER);
 VAR cx,cy,cw,ch: INTEGER;
 BEGIN
-	Display.GetClip(cx,cy,cw,ch); 
+	Display.GetClip(cx,cy,cw,ch);
 	Display.ResetClip;
 	GetBlock(X, Y, W, H, block, TRUE);
 	Display.SetClip(cx,cy,cw,ch)
@@ -547,7 +535,7 @@ PROCEDURE SizeRect*(R: Display3.Mask; VAR keysum: SET; VAR MX, MY, X, Y, W, H: I
 			x := x1; y := y1; TrackMouse(keys,x1,y1,PointHand); keysum := keysum + keys; 
 			Snap(x1,y1);
 			Oberon.FadeCursor(Oberon.Mouse);
-			Display3.Rect(NIL, Display3.invertC,Display.solid,Min(x0,x), Min(y0,y), ABS(x0-x), ABS(y0-y), 1, Display.invert);
+			Display3.Rect(R, Display3.invertC,Display.solid,Min(x0,x), Min(y0,y), ABS(x0-x), ABS(y0-y), 1, Display.invert);
 			IF callback # NIL THEN callback(x, y, Min(x0,x1), Min(y0,y1),ABS(x0-x1), ABS(y0-y1),keysum) END
 		UNTIL  keys = {}
 	END sizeRect;	

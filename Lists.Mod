@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Lists;	(** portable *) (* jm 18.4.95 *)
+MODULE Lists; (** portable *) (* jm 18.4.95 *)
 
 (** Implementation of scrollable lists.
 *)
@@ -28,8 +16,8 @@ MODULE Lists;	(** portable *) (* jm 18.4.95 *)
 	15.5.95 - changed scrolling behaviour back
 	9.5.95 - changed copy over, now works even when focus ist alredy set (ps - 9.5.96)
 *)
-IMPORT Files, Fonts, Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Input, Texts, Attributes, FileDir,
-	Floppy := Diskette;
+IMPORT Files, Fonts, Display, Display3, Printer, Printer3, Effects, Objects, Gadgets, Oberon, Input, Texts, 
+	Attributes, FileDir(*, Floppy := Diskette*);
 	
 CONST
 	barw = 18;
@@ -839,7 +827,7 @@ BEGIN
 			IF F.bar.pos >= F.noitems THEN F.bar.pos := 0 END;
 			(* Updatebar(F, h); *)
 			Update(F);
-			F.time := 0;
+			F.time := -1
 		ELSIF keysum = {0, 1} THEN (* copy over *)
 			GetSelection(F, T);
 			C.F := NIL; C.text := T; C.beg := 0; C.end := T.len; Display.Broadcast(C);
@@ -853,14 +841,14 @@ BEGIN
 			F.focus := TRUE; Gadgets.Update(F); keysum:= {};
 			REPEAT Effects.TrackMouse(M.keys, M.X, M.Y, Effects.Arrow); keysum := keysum + M.keys UNTIL M.keys = {}; 			IF keysum = {2, 1} THEN (* copy over *)
 				Oberon.GetSelection(T, beg, end, time);
-				IF time > 0 THEN InsertItems(F, T, beg, end) END
+				IF time # -1 THEN InsertItems(F, T, beg, end) END
 			END
 		ELSE
 			keysum:= {};
 			REPEAT Effects.TrackMouse(M.keys, M.X, M.Y, Effects.Arrow); keysum := keysum + M.keys UNTIL M.keys = {};
 			IF keysum = {2, 1} THEN (* copy over *)
 				Oberon.GetSelection(T, beg, end, time);
-				IF time > 0 THEN InsertItems(F, T, beg, end) END
+				IF time # -1 THEN InsertItems(F, T, beg, end) END
 			END
 		END;
 		M.res := 0;
@@ -931,7 +919,7 @@ BEGIN
 								IF F.focus THEN F.focus := FALSE; Gadgets.Update(F) END;
 							END;
 							IF M.id = Oberon.neutralize THEN 
-								DeselectList(F, redraw); F.time := 0; Search(F, 0X);
+								DeselectList(F, redraw); F.time := -1; Search(F, 0X);
 								IF redraw OR F.focus THEN F.focus := FALSE; Gadgets.Update(F) END
 							END;
 						END
@@ -943,7 +931,7 @@ BEGIN
 						END
 					ELSIF M IS Oberon.SelectMsg THEN
 						WITH M: Oberon.SelectMsg DO
-							IF (F.time > M.time) & (M.stamp # F.stamp) THEN
+							IF (((M.time-F.time) < 0) OR (M.time = -1)) & (M.stamp # F.stamp) THEN
 								F.stamp := F.time; GetSelection(F, T);
 								IF T.len # 0 THEN M.text := T; M.sel := F; M.beg := 0; M.end := T.len; M.time := F.time END
 							END
@@ -1079,13 +1067,13 @@ PROCEDURE GetDir(mask : ARRAY OF CHAR; text : Texts.Text);
 	VAR pre : ARRAY 32 OF CHAR; i : INTEGER; 
 BEGIN
 	i := 0;
-	WHILE (mask[i] > " ") & (mask[i] # "/") DO pat[i] := mask[i]; INC(i);  END;
+	WHILE (mask[i] > " ") & (mask[i] # "/") DO pat[i] := mask[i]; INC(i) END;
 	pat[i] := 0X;
 	i := 0;
 	WHILE pat[i] > "*" DO pre[i] := pat[i]; INC(i) END;
 	pre[i] := 0X; pos := i;
 	FileDir.Enumerate(pre,FALSE,ListFiles);
-	Texts.Append(text,W.buf);
+	Texts.Append(text,W.buf)
 END GetDir;
 
 PROCEDURE Copy(source : ARRAY OF CHAR; VAR dest : ARRAY OF CHAR);
@@ -1093,7 +1081,7 @@ PROCEDURE Copy(source : ARRAY OF CHAR; VAR dest : ARRAY OF CHAR);
 BEGIN
 	j := 0; WHILE (source[j] = " ") DO INC(j); END;
 	i := 0; dest[i] := source[j]; WHILE (source[j] # 0X) & (source[j] # " ")  DO INC(i); INC(j); dest[i] := source[j] END;
-	dest[i] := 0X;
+	dest[i] := 0X
 END Copy;
 
 (** Used in the form:
@@ -1156,6 +1144,7 @@ BEGIN
 	IF (name[0] > " ") & (name[0] < CHR(127)) & Match(name,pat) THEN Texts.WriteString(W,name); Texts.WriteLn(W) END
 END EntryHandler;
 
+(*
 PROCEDURE GetDiskette(mask: ARRAY OF CHAR; text: Texts.Text);
 	VAR i, a, b: INTEGER; 
 BEGIN
@@ -1167,6 +1156,7 @@ BEGIN
 	Floppy.CloseVol();
 	Texts.Append(text,W.buf);
 END GetDiskette;
+*)
 
 (* Windows version
 PROCEDURE GetDiskette(mask: ARRAY OF CHAR; text: Texts.Text);
@@ -1179,6 +1169,7 @@ BEGIN
 END GetDiskette;
 *)
 
+(*
 (** Same as Directory, except the files on Diskette are searched. This command is not functional on all platforms. *)
 PROCEDURE Diskette*; (* "mask" "objname" *)
 VAR S: Attributes.Scanner; mask: ARRAY 32 OF CHAR; o: Objects.Object;
@@ -1199,7 +1190,8 @@ BEGIN
 		END
 	END
 END Diskette;
-		
+*)
+
 PROCEDURE LibDir(name: ARRAY OF CHAR; text: Texts.Text);
 VAR  L: Objects.Library; ref, i: INTEGER; libName, objName: ARRAY 32 OF CHAR; 
 BEGIN
@@ -1214,12 +1206,12 @@ BEGIN
 			Objects.GetName(L.dict, ref, objName);
 			IF (objName[0] # 0X) & (objName[0] >= "A") & (objName[0] <=  "Z") THEN
 				Texts.WriteString(W, libName); Texts.Write(W, ".");
-				Texts.WriteString(W, objName); Texts.WriteLn(W);
-				END;
+				Texts.WriteString(W, objName); Texts.WriteLn(W)
+			END;
 			INC(ref)
 		UNTIL ref = L.maxref
 	END;
-	Texts.Append(text,W.buf);
+	Texts.Append(text,W.buf)
 END LibDir;
 
 (** Used in the form:

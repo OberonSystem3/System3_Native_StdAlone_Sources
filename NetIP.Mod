@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetIP;	(** non-portable *)	(* 16.08.96 mg *)
 
@@ -19,25 +7,25 @@ IMPORT SYSTEM, Kernel, NetBase;
 
 CONST
 	echoreply* = 0; unreachable* = 3; sourceq = 4; echorequest* = 8; timexc = 11;
-	parm = 12; timrq = 13; timrp = 14; maskrequest* = 17; maskreply = 18;
+	parm = 12; (*timrq = 13; timrp = 14;*) maskrequest* = 17; maskreply = 18;
 		
-	UDP* = 17; TCP* = 6; ICMP = 1; EGP = 8;
+	UDP* = 17; TCP* = 6; ICMP = 1; (*EGP = 8;*)
 
 	ipid = 0800H; ipver = 4;
 
 	TTL = 32; MinHdrLen* = 20;
 
-	PLen = 8; IcmpHdrLen = 8; DataLength = 56;
+	PLen = 8; (*IcmpHdrLen = 8;*) DataLength = 56;
 
 	MaxService = 18;	MaxRoutes* = 2;
 
-	AdrLen* = 4;
+	AdrLen* = 4;	(* must be 4 *)
 
 	(* ARP/RARP *)
 	
-	hw = 1; arpid = 0806H; rarpid = 08035H;
+	hw = 1; arpid = 0806H; (*rarpid = 08035H;*)
 
-	request = 1; reply = 2; requestr = 3; replyr = 4;
+	request = 1; reply = 2; (*requestr = 3; replyr = 4;*)
 
 	free = 0; pending = 1; resolved = 2;
 	
@@ -66,9 +54,9 @@ TYPE
 		hwlen*: SHORTINT;
 		prlen*: SHORTINT;
 		op*: INTEGER;
-		sha*: ARRAY NetBase.AdrLen OF SYSTEM.BYTE;
+		sha*: NetBase.MacAdr;
 		spa*: Adr;
-		tha*: ARRAY NetBase.AdrLen OF SYSTEM.BYTE;
+		tha*: NetBase.MacAdr;
 		tpa*: Adr
 	END;
 
@@ -79,7 +67,7 @@ TYPE
 		state: INTEGER;
 		att, ttl: INTEGER;
 		queue: NetBase.Queue;	(* state = free => Empty(queue) *)
-		hwa: ARRAY NetBase.AdrLen OF SYSTEM.BYTE;
+		hwa: NetBase.MacAdr;
 		pra: Adr;
 		route: Route;
 		next: Entry
@@ -150,8 +138,6 @@ VAR
 	netmask, submask: SET;	(* masks for broadcast check (Broadcast) *)
 
 	NreceivedArp, NsentArp, Nreceived, Nsent, NreceivedIcmp, NsentIcmp: LONGINT;
-
-	i: INTEGER;
 
 	(* ARP *)
 
@@ -233,7 +219,8 @@ VAR
 	tentry: Entry;
 BEGIN tentry := NIL;
 	entry := cache.next;
-	WHILE (entry # cache) & ((entry.state = free) OR ~NetBase.Equal(adr, entry.pra, AdrLen)) DO
+	WHILE (entry # cache) & ((entry.state = free) OR 
+			(SYSTEM.VAL(LONGINT, adr) # SYSTEM.VAL(LONGINT, entry.pra))) DO
 		IF entry.state = free THEN tentry := entry END;
 		entry := entry.next
 	END;
@@ -246,18 +233,19 @@ VAR
 	arp: Arp;
 	dev: NetBase.Device;
 	item: NetBase.Item;
-BEGIN dev := route.dev; NetBase.NewItem(item);
+BEGIN
+	dev := route.dev; NetBase.NewItem(item);
 	DEC(item.ofs, arplen);  INC(item.len, arplen);
 	arp := SYSTEM.VAL(Arp, SYSTEM.ADR(item.data[item.ofs]));
 	arp.hwtype := hw; NetBase.HostToNet(arp.hwtype);
 	arp.prtype := ipid; NetBase.HostToNet(arp.prtype);
-	arp.hwlen := NetBase.AdrLen; arp.prlen := AdrLen;
+	arp.hwlen := NetBase.MacAdrLen; arp.prlen := AdrLen;
 	arp.op := request; NetBase.HostToNet(arp.op);
 	
-	NetBase.Copy(dev.hostAdr, arp.sha, NetBase.AdrLen);
-	NetBase.Copy(route.adr, arp.spa, AdrLen);
-	NetBase.Copy(NetBase.anyadr, arp.tha, NetBase.AdrLen);
-	NetBase.Copy(ipdst, arp.tpa, AdrLen);
+	arp.sha := dev.hostAdr;
+	arp.spa := route.adr;
+	arp.tha := NetBase.anyadr;
+	arp.tpa := ipdst;
 	
 	dev.Send(dev, arpid, dev.castAdr, item);
 	INC(NsentArp)
@@ -272,7 +260,7 @@ VAR
 	fnd: BOOLEAN;
 BEGIN	(* assumed: address is resolved *)
 	IF Trace THEN Kernel.WriteString("ArpSend: ") END;
-	IF NetBase.Equal(route.adr, ipdst, AdrLen) THEN
+	IF SYSTEM.VAL(LONGINT, route.adr) = SYSTEM.VAL(LONGINT, ipdst) THEN
 		IF Trace THEN Kernel.WriteString("local") END;
 		IPReceive(item)
 	ELSIF IsBroadcast(ipdst) THEN dev := route.dev;
@@ -297,7 +285,7 @@ BEGIN	(* assumed: address is resolved *)
 			IF entry = NIL THEN NewEntry(entry) END;
 			entry.state := pending; entry.att := 1; entry.ttl := rsend;
 			NetBase.PutItem(entry.queue, item); entry.route := route;
-			NetBase.Copy(ipdst, entry.pra, AdrLen);
+			entry.pra := ipdst;
 			SendArp(route, ipdst)
 		END
 	END;
@@ -326,7 +314,9 @@ VAR
 	hdr: IPHeader;
 	dev: NetBase.Device;
 	dmy: ARRAY 1 OF SYSTEM.BYTE;
-BEGIN DEC(item.ofs, iplen); INC(item.len, iplen);	(* add IP header *)
+	i: INTEGER;
+BEGIN
+	DEC(item.ofs, iplen); INC(item.len, iplen);	(* add IP header *)
 	hdr := SYSTEM.VAL(IPHeader, SYSTEM.ADR(item.data[item.ofs]));
 	VerLen(hdr); hdr.tos := 0; hdr.len := item.len;	(* length includes IP header *)
 	hdr.id := SHORT(ippackid); ippackid := (ippackid + 1) MOD MAX(INTEGER);
@@ -377,11 +367,12 @@ VAR
 	item: NetBase.Item;
 	icmphdr: ICMPHeader;
 	echo: EchoMsg;
-	gnl: GenMsg;
-	prm: ParamMsg;
+	(*gnl: GenMsg;*)
+	(*prm: ParamMsg;*)
 	(*mask: MaskMsg;*)
 	i: INTEGER;
-BEGIN NetBase.NewItem(item);
+BEGIN
+	NetBase.NewItem(item);
 
 	CASE type OF
 	echoreply, echorequest:
@@ -395,14 +386,14 @@ BEGIN NetBase.NewItem(item);
 			WHILE i < DataLength DO echo.optdata[i] := CHR(i); INC(i) END
 		END
 	|unreachable, timexc, sourceq:
-		HALT(MAX(INTEGER))	(* not implemented yet *)
+		IF Trace THEN HALT(MAX(INTEGER)) END	(* not implemented yet *)
 (*
 		gnl := SYSTEM.VAL(GenMsg, SYSTEM.ADR(icmphdr.optdata[0]));
 		gnl.uusd := 0; dlen := MinHdrLen + PLen;
 		SYSTEM.MOVE(SYSTEM.ADR(item.data[0]), SYSTEM.ADR(gnl.optdata[0]), dlen)
 *)
 	|parm:
-		HALT(MAX(INTEGER))	(* not implemented yet *)
+		IF Trace THEN HALT(MAX(INTEGER)) END	(* not implemented yet *)
 (*
 		prm := SYSTEM.VAL(ParamMsg, SYSTEM.ADR(icmphdr.optdata[0]));
 		prm.ptr := SHORT(val1); prm.uusd1 := 0; prm.uusd2 := 0;
@@ -410,11 +401,11 @@ BEGIN NetBase.NewItem(item);
 		SYSTEM.MOVE(SYSTEM.ADR(item.data[0]), SYSTEM.ADR(prm.optdata[0]), dlen)
 *)
 	|maskrequest:
-		HALT(MAX(INTEGER))	(* not implemented yet *)
+		IF Trace THEN HALT(MAX(INTEGER)) END	(* not implemented yet *)
 (*
 		mask := SYSTEM.VAL(MaskMsg, SYSTEM.ADR(icmphdr.optdata[0]));
-		mask.id := 0; (* here has to come something *) mask.seq := 0; 
-		NetBase.Copy(IPany, mask.mask, AdrLen); dlen := AdrLen
+		mask.id := 0; (* here has to come something *) mask.seq := 0;
+		mask.mask := IPany; dlen := AdrLen
 *)
 	ELSE NetBase.RecycleItem(item); RETURN
 	END;
@@ -444,7 +435,7 @@ BEGIN
 				IF HdrLen(hdr) = MinHdrLen THEN	(* can not currently handle options *)
 					NetBase.NetToHost(hdr.len); NetBase.NetToHost(hdr.id); NetBase.NetToHost(hdr.frag);
 					IF (hdr.frag = 0) OR (hdr.frag DIV 2000H = 2) THEN
-						IF NetBase.Equal(hdr.dst, routes[0].adr, AdrLen) OR bcast THEN
+						IF (SYSTEM.VAL(LONGINT, hdr.dst) = SYSTEM.VAL(LONGINT, routes[0].adr)) OR bcast THEN
 							demux[hdr.protocol](item)
 						ELSE NetBase.RecycleItem(item)
 						END
@@ -479,10 +470,10 @@ BEGIN INC(NreceivedIcmp);
 			NetBase.NetToHost(echo.id); NetBase.NetToHost(echo.seq);		
 			ICMPSend(hdr.src, echoreply, 0, echo.id, echo.seq, echo.optdata)
 		ELSIF icmphdr.type = maskreply THEN i := 0;
-			WHILE (i < nofRoutes) & ~NetBase.Equal(hdr.dst, routes[i].adr, AdrLen) DO INC(i) END;
+			WHILE (i < nofRoutes) & (SYSTEM.VAL(LONGINT, hdr.dst) # SYSTEM.VAL(LONGINT, routes[i].adr)) DO INC(i) END;
 			IF i < nofRoutes THEN
-				mask := SYSTEM.VAL(MaskMsg, SYSTEM.ADR(item.data[item.ofs]) + SIZE(ICMPHeaderDesc)); 
-				NetBase.Copy(mask.mask, routes[i].subnet, AdrLen)
+				mask := SYSTEM.VAL(MaskMsg, SYSTEM.ADR(item.data[item.ofs]) + SIZE(ICMPHeaderDesc));
+				routes[i].subnet := mask.mask
 			END
 		ELSE
 			CASE icmphdr.type OF
@@ -494,7 +485,7 @@ BEGIN INC(NreceivedIcmp);
 			ELSE
 			END
 		END
-	ELSE (*Kernel.WriteString("Bad ICMP checksum"); Kernel.WriteLn*)
+	ELSIF Trace THEN Kernel.WriteString("Bad ICMP checksum"); Kernel.WriteLn
 	END;
 	NetBase.RecycleItem(item)
 END ICMPReceive;
@@ -519,7 +510,7 @@ VAR
 	dev: NetBase.Device;
 	entry: Entry;
 	it: NetBase.Item;
-	prtype, hwtype: INTEGER;
+	prtype, hwtype, i: INTEGER;
 	fnd: BOOLEAN;
 BEGIN INC(NreceivedArp);
 	arp := SYSTEM.VAL(Arp, SYSTEM.ADR(item.data[item.ofs]));
@@ -527,7 +518,8 @@ BEGIN INC(NreceivedArp);
 	prtype := arp.prtype; NetBase.NetToHost(prtype);
 	IF (hwtype = hw) & (prtype = ipid) THEN
 		FindEntry(arp.spa, entry, fnd);
-		IF fnd THEN NetBase.Copy(arp.sha, entry.hwa, arp.hwlen);
+		IF fnd THEN
+			entry.hwa := arp.sha;
 			entry.state := resolved; entry.ttl := timo; route := entry.route; dev := route.dev;
 			WHILE entry.queue.len > 0 DO NetBase.GetItem(entry.queue, it);
 				dev.Send(dev, ipid, entry.hwa, it)
@@ -535,20 +527,17 @@ BEGIN INC(NreceivedArp);
 		ELSE
 			IF entry = NIL THEN NewEntry(entry) END;
 			entry.state := resolved; entry.att := 0; entry.ttl := timo;
-			NetBase.Copy(arp.sha, entry.hwa, NetBase.AdrLen);
-			NetBase.Copy(arp.spa, entry.pra, AdrLen);
+			entry.hwa := arp.sha; entry.pra := arp.spa;
 			entry.route := routes[GetRoute(entry.pra)]
 		END;
 		NetBase.NetToHost(arp.op);
 		IF arp.op = request THEN i := GetRoute(arp.tpa);
-			IF NetBase.Equal(routes[i].adr, arp.tpa, AdrLen) THEN
+			IF SYSTEM.VAL(LONGINT, routes[i].adr) = SYSTEM.VAL(LONGINT, arp.tpa) THEN
 				arp.op := reply; NetBase.HostToNet(arp.op);
 				
-				NetBase.Copy(arp.spa, arp.tpa, AdrLen);
-				NetBase.Copy(arp.sha, arp.tha, NetBase.AdrLen);
-
-				NetBase.Copy(routes[i].adr, arp.spa, AdrLen);
-				dev := routes[i].dev; NetBase.Copy(dev.hostAdr, arp.sha, NetBase.AdrLen);
+				dev := routes[i].dev;
+				arp.tpa := arp.spa; arp.tha := arp.sha;
+				arp.spa := routes[i].adr; arp.sha := dev.hostAdr;
 				item.len := arplen;
 				dev.Send(dev, arpid, arp.tha, item)
 			ELSE NetBase.RecycleItem(item)
@@ -592,7 +581,7 @@ PROCEDURE RemoveDemux* (service: INTEGER);
 BEGIN demux[service] := Dmy
 END RemoveDemux;
 
-PROCEDURE StartIP*;
+PROCEDURE Start*;
 BEGIN
 	NetBase.InstallProtocol(ArpReceive, arpid);
 	NreceivedArp := 0; NsentArp := 0; cache.next := cache;
@@ -601,9 +590,9 @@ BEGIN
 	NetBase.InstallTask(Timer);
 	Nreceived := 0; Nsent := 0; NreceivedIcmp := 0; NsentIcmp := 0;
 	echoreqs := 0; echoreps := 0; unreachmsgs := 0; srcreqs := 0; timeouts := 0; parmsgs := 0
-END StartIP;
+END Start;
 
-PROCEDURE StopIP*;
+PROCEDURE Stop*;
 VAR cur: Entry;  item: NetBase.Item;
 BEGIN
 	cur := cache.next;
@@ -614,7 +603,7 @@ BEGIN
 		cur := cur.next
 	END;
 	nofRoutes := 0
-END StopIP;
+END Stop;
 
 PROCEDURE SetDirectedCast* (route: Route);
 BEGIN
@@ -631,6 +620,8 @@ BEGIN
 	routes[nofRoutes] := route; INC(nofRoutes)
 END InstallRoute;
 
+PROCEDURE Init;
+VAR i: INTEGER;
 BEGIN
 	nofRoutes := 0;
 	IPall[0] := 0FFX; IPall[1] := 0FFX; IPall[2] := 0FFX; IPall[3] := 0FFX;
@@ -641,8 +632,9 @@ BEGIN
 
 	i := 0; WHILE i < MaxService DO demux[i] := Dmy; INC(i) END;
 
-	InstallDemux(ICMPReceive, ICMP);
+	InstallDemux(ICMPReceive, ICMP)
+END Init;
 
-	NreceivedArp := 0; NsentArp := 0; Nreceived := 0; Nsent := 0; NreceivedIcmp := 0; NsentIcmp := 0;
-	echoreqs := 0; echoreps := 0; unreachmsgs := 0; srcreqs := 0; timeouts := 0; parmsgs := 0
+BEGIN
+	Init
 END NetIP.

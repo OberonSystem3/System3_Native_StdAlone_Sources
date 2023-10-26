@@ -1,22 +1,9 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE In; (** portable *)	(* based on module from "Programming in Oberon" *)
 
-(** Stream oriented text input. Module In encapsulates the parameter scanning process of commands.
-*)
+(** Stream oriented text input. Module In encapsulates the parameter scanning process of commands. *)
 
 IMPORT Texts, Oberon;
 
@@ -24,14 +11,15 @@ VAR
 	Done*: BOOLEAN;	(** Has the last scan operation been successful? *)
 	S: Texts.Scanner;
 
-(** Initializes the parameter scanner. The parameter stream is assumed to be the selection when ^ is scanned, the marked text viewer when * is scanned; otherwise the text that follows the command itself. *)
+(** Initializes the parameter scanner. The parameter stream is assumed to be the selection when ^ is scanned, 
+the marked text viewer when * is scanned; otherwise the text that follows the command itself. *)
 PROCEDURE Open*;
 VAR beg, end, time: LONGINT; T: Texts.Text;
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN
 		Oberon.GetSelection(T, beg, end, time);
-		IF time >= 0 THEN Texts.OpenScanner(S, T, beg); Done := TRUE
+		IF time # -1 THEN Texts.OpenScanner(S, T, beg); Done := TRUE
 		ELSE Done := FALSE
 		END
 	ELSIF (S.class = Texts.Char) & (S.c = "*") THEN
@@ -124,13 +112,17 @@ END In.
 
 (** Remarks:
 
-1. Module In provides a primitive interface to parameter scanning. It is mainly used in situations where the command parameters must appear in a predefined sequence, and for Oberon beginners. A more flexible means of scanning parameters is provided in the Texts module.
+1. Module In provides a primitive interface to parameter scanning. It is mainly used in situations where the 
+command parameters must appear in a predefined sequence, and for Oberon beginners. A more flexible 
+means of scanning parameters is provided in the Texts module.
 
-2. Suppose we need to program a command Example.Calculate. There are three ways of passing parameters to this command:
+2. Suppose we need to program a command Example.Calculate. There are three ways of passing parameters 
+to this command:
 
-	Example.Calculate par1 par2 par3 ~	Parameters follow directly after the command.
+	Example.Calculate par1 par2 par3 ~	Parameters follow directly after the command.
 	Example.Calculate ^	Parameters are contained in the text selection.
-	Example.Calculate *	Parameters are found in the marked text viewer.
+	Example.Calculate *	Parameters are found in the marked text viewer.
+	
 To hide the three parameter passing styles, we can program Example.Calculate in the following way:
 
 	PROCEDURE Calculate*;
@@ -142,7 +134,9 @@ To hide the three parameter passing styles, we can program Example.Calculate in 
 		END
 	END Calculate;
 
-After each call to an In scan procedure, the In.Done flag is set to true if a parameter of that type was found in the parameters. If an unexpected parameter (say an integer instead of an string) was scanned, In.Done is is set to FALSE and scanning is immediately terminated. Calls to In will now have no effect until In.Open is called again.
+After each call to an In scan procedure, the In.Done flag is set to true if a parameter of that type was found 
+in the parameters. If an unexpected parameter (say an integer instead of an string) was scanned, In.Done is 
+set to FALSE and scanning is immediately terminated. Calls to In will now have no effect until In.Open is called again.
 
 3. The parameter scanner ignores whitespace (characters SPACE 20X, TAB 9X, and CR 0DX).
 *)

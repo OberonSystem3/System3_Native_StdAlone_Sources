@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE TelnetGadgets;	(** portable *)	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994*)
+MODULE TelnetGadgets; (** portable *)	(* ip/mh/mg 17.3.94 / 5.7.1994 / 05.09.94, RS, Mon, 5-Sep-1994*)
 	IMPORT Kernel, Fonts, Display, Printer, Texts, Oberon, Objects, Terminals, TerminalGadgets, Gadgets, NetSystem, NetTools,
-		Strings, HyperDocs, Documents, Desktops, TextGadgets, TextDocs, Input, SYSTEM;
+		Strings, HyperDocs, Documents, Desktops, TextGadgets, TextDocs, Input;
 
 	CONST
 		OpenHeight = 24;
@@ -184,7 +172,7 @@ BEGIN
 				Terminals.SendString(me.T, me.passwd); Terminals.Send(me.T, 0DX);
 				me.passwd[0] := 0X
 			END;
-			me.time := Oberon.Time() + Input.TimeUnit DIV 50
+			me.time := Oberon.Time() + Input.TimeUnit DIV 10
 		ELSE
 			IF C # NIL THEN
 				NetTools.Disconnect(C)
@@ -193,7 +181,7 @@ BEGIN
 			Terminals.Flush(me.T);
 			WriteString(me.T,"Port released"); WriteLn(me.T);
 			Terminals.Flush(me.T);
-			Oberon.Remove(me);
+			Oberon.Remove(me)
 		END
 	END
 END Receiver;
@@ -205,7 +193,7 @@ BEGIN
 	NetSystem.Write(C, 0FFX); NetSystem.Write(C, 0FBX); NetSystem.Write(C, 018X)
 END SetUp;
 
-	PROCEDURE CloseFrame(F: SYSTEM.PTR);
+	PROCEDURE CloseFrame(F: PTR);
 	BEGIN
 		WITH F: TerminalGadgets.Frame DO
 			IF (F.text # NIL) & (F.text IS Terminal) THEN
@@ -223,10 +211,13 @@ END SetUp;
 			C: NetSystem.Connection;
 			user0: ARRAY 32 OF CHAR;
 	BEGIN
-		COPY(user, user0);
-		IF passwd = "" THEN NetSystem.GetPassword("telnet", host, user, passwd) END;
-		IF user = "" THEN COPY(user0, user) END;
-		NEW(task); task.safe := FALSE; task.handle := Receiver; task.colon := 0; task.T := F.text(Terminal);
+		IF (user # "") & (passwd = "") THEN
+			COPY(user, user0);
+			NetSystem.GetPassword("telnet", host, user, passwd);
+			IF user = "" THEN COPY(user0, user) END
+		END;
+		NEW(task); task.safe := FALSE; task.time := Oberon.Time();
+		task.handle := Receiver; task.colon := 0; task.T := F.text(Terminal);
 		WriteString(task.T,"Trying ..."); WriteLn(task.T);
 		Terminals.Flush(task.T);
 		IF NetTools.Connect(C, port, host, FALSE) THEN

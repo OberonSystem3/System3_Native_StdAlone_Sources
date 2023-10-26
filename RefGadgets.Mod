@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE RefGadgets;	(** portable *)  (** PS   *)
 
@@ -315,8 +303,9 @@ BEGIN
 	REPEAT
 		Effects.TrackMouse(M.keys, M.X, M.Y, cursor);
 		keysum := keysum + M.keys;
-		IF ((M.keys = {0,1}) OR (M.keys = {1, 2})) & ~drag &F.canDrag THEN
-			drag:= TRUE; IF 0 IN M.keys THEN cursor:= Effects.CopyHand ELSE cursor:= Effects.MoveHand END
+		IF ((M.keys = {1, 0}) OR (Oberon.New & (M.keys = {2, 0})) OR (M.keys = {1, 2})) & ~drag & F.canDrag THEN
+			drag:= TRUE;
+			IF 0 IN M.keys THEN cursor:= Effects.CopyHand ELSE cursor:= Effects.MoveHand END
 		ELSIF (keysum = {0, 1, 2}) & drag THEN cursor:= Effects.Arrow
 		END;
 		IF in & ((M.X < x) OR (M.Y < y) OR (M.X > r) OR (M.Y > s) OR drag) THEN (* mouse leaves frame or dragging *)
@@ -327,8 +316,10 @@ BEGIN
 	UNTIL M.keys = {};
 	Restore(F, Q, x, y, w, h, FALSE);
 	IF ~in & ~drag THEN keysum:= {} END;
-	IF keysum = {1} THEN Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL)
-	ELSIF (keysum # {0, 1, 2}) & drag THEN DropObject(F.val, M.X, M.Y, (0 IN keysum))
+	IF (keysum = {1}) OR (Oberon.New & (keysum = {2})) THEN
+		Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL)
+	ELSIF (keysum # {0, 1, 2}) & drag THEN
+		DropObject(F.val, M.X, M.Y, (0 IN keysum))
 	END;
 	M.res := 0
 END TrackMiddle;
@@ -407,7 +398,7 @@ BEGIN
 					ELSIF M IS Oberon.InputMsg THEN
 						WITH M: Oberon.InputMsg DO
 							IF M.id = Oberon.track THEN
-								IF Gadgets.InActiveArea(F, M) & (M.keys = {1}) THEN
+								IF Gadgets.InActiveArea(F, M) & ((M.keys = {1}) OR (Oberon.New & (M.keys = {2}))) THEN
 									IF F.val # NIL THEN TrackMiddle(F, M)
 									ELSE
 										REPEAT Effects.TrackMouse(M.keys, M.X, M.Y, Effects.Arrow) UNTIL M.keys = {};
@@ -532,7 +523,7 @@ END RefGadgets.
 Frame
 	Create with:	Gadgets.Insert RefGadgets.NewFrame
 	Alias:	-
-	Function:	This frame stores a reference to any object of type Objects.Object. A refrence frame has the ability to execute a command when clicked on. The frame distinguish three kinds of representation;  -> no object,  -> object is a visual gadget or  -> object is a model. When the reference is changed by user interaction (dropping or copy over), it also has the ability to execute a command. References can be changed either by dropping a reference from an otherreference frame, dropping a visual gadget into a frame or copy over a selected gadget. Dragging follows the standard oberon rules. If the dragged reference represents a visual gadget, a drop messgae is sent to the receiving frame. If the dragged reference represents a model, a link message with name set to 'Model' is sent to the receiving frame. The mouse cursor changes its look;  -> drop the referenced object or  -> drop a copy of the referenced object
+	Function:	This frame stores a reference to any object of type Objects.Object. A refrence frame has the ability to execute a command when clicked on. The frame distinguish three kinds of representation; (box with black cross) -> no object, (box with black square) -> object is a visual gadget or (box with black circle) -> object is a model. When the reference is changed by user interaction (dropping or copy over), it also has the ability to execute a command. References can be changed either by dropping a reference from an otherreference frame, dropping a visual gadget into a frame or copy over a selected gadget. Dragging follows the standard oberon rules. If the dragged reference represents a visual gadget, a drop messgae is sent to the receiving frame. If the dragged reference represents a model, a link message with name set to 'Model' is sent to the receiving frame. The mouse cursor changes its look; (hand with arrow) -> drop the referenced object or (hand with one black and one white square) -> drop a copy of the referenced object
 	Attributes:	
 		Cmd	Command executed when clicking on the frame.
 		ConsumeCmd	Command executed when an object is dropped or copied over.

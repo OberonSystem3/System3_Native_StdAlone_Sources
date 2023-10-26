@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetTCP;	(** non-portable *)	(* 16.08.96 mg *)
 
@@ -24,6 +12,8 @@ CONST
 CONST
 (* send/receive buffer size *)
 	BufSize = 2 * 4096;
+	
+	MaxSMSS = 1420;
 
 TYPE
 	Header* = POINTER TO HeaderDesc;
@@ -49,9 +39,9 @@ TYPE
 		xcnt: INTEGER;	(* number of retransmissions *)
 		xamt, pamt: LONGINT;	(* retransmission/persist delays *)
 		code, flags: SET;
-		smss, rmss: INTEGER;
+		smss, rmss: INTEGER;	(* send/receive maximum segment size *)
 		swin, swl1, swl2, slast: LONGINT;
-		iss, suna, snext, rnext, cwin: LONGINT;
+		iss, suna, snext, rnext, cwin: LONGINT;	(* suna = seq num unacked? *)
 		rup: INTEGER;
 		ocsem: INTEGER;
 		pcon: Listener;
@@ -108,7 +98,7 @@ CONST
 	twomsl = 120*Kernel.TimeUnit; timeo = 20*Kernel.TimeUnit;
 
 (* return codes *)	
-	ok = 0; sys = -1; crf = -2; crs = -3; cnx = -4; cne = -5; (*irs = -6;*) cti = -7;
+	ok = 0; sys = -1; crf = -2; crs = -3; (*cnx = -4; cne = -5; irs = -6;*) cti = -7;
 
 (* event codes *)
 	deleteev = 0; retransev = 1; sendev = 2; persistev = 3;
@@ -123,6 +113,14 @@ VAR
 	iss: LONGINT;
 	tasklist: Connection;
 	Nreceived, Nsent: LONGINT;
+
+PROCEDURE WriteIP(ip: NetIP.Adr);
+BEGIN
+	Kernel.WriteInt(ORD(ip[0]) MOD 100H, 1);  Kernel.WriteChar(".");
+	Kernel.WriteInt(ORD(ip[1]) MOD 100H, 1);  Kernel.WriteChar(".");
+	Kernel.WriteInt(ORD(ip[2]) MOD 100H, 1);  Kernel.WriteChar(".");
+	Kernel.WriteInt(ORD(ip[3]) MOD 100H, 1)
+END WriteIP;
 
 PROCEDURE HLen (tcph: Header): INTEGER;
 VAR set: SET;
@@ -193,6 +191,16 @@ BEGIN
 	END;
 	IF tv # sq THEN pv.next := tv.next; DEC(sqct) END
 END ClearEvent;
+
+PROCEDURE Remove(c: Connection);
+VAR p, n: Connection;
+BEGIN
+	p := NIL;  n := tasklist;
+	WHILE (n # NIL) & (n # c) DO p := n;  n := n.next END;
+	IF n # NIL THEN
+		IF p = NIL THEN tasklist := c.next ELSE p.next := c.next END
+	END
+END Remove;
 
 PROCEDURE SetEvent (C: Connection; type: SHORTINT; time: LONGINT);
 VAR sv, tv, pv: Event;
@@ -312,6 +320,7 @@ BEGIN
 		ntcph.code := SHORT(SHORT(SYSTEM.VAL(LONGINT, {Ack})));
 		ntcph.offs := MinOffset; ntcph.up := 0;
 		ntcph.win := SHORT(RWindow(C));
+		(*IF ntcph.win = 0 THEN Kernel.WriteString("SendAck win=0 "); ShowConnection(C) END;*)
 		SendItem(iph.dst, iph.src, item)
 	END
 END SendAck;
@@ -355,7 +364,7 @@ BEGIN
 		item.data[item.ofs+2] := l[1]; item.data[item.ofs+3] := l[0]
 	END;
 	WHILE dlen > 0 DO dlen0 := SHORT(Min(dlen, BufSize - sfst));
-		NetBase.FastCopy(SYSTEM.ADR(C.sbuf[sfst]), SYSTEM.ADR(item.data[spos]), dlen0);
+		SYSTEM.MOVE(SYSTEM.ADR(C.sbuf[sfst]), SYSTEM.ADR(item.data[spos]), dlen0);
 		sfst := (sfst + dlen0) MOD BufSize; DEC(dlen, dlen0); INC(spos, dlen0)
 	END;
 
@@ -365,6 +374,7 @@ BEGIN
 	tcph.seq := hseq; tcph.ack := C.rnext; tcph.code := hcode;
 	IF Syn IN C.code THEN tcph.offs := MaxOffset ELSE tcph.offs := MinOffset END;
 	tcph.win := SHORT(RWindow(C)); tcph.up := 0;
+	(*IF tcph.win = 0 THEN Kernel.WriteString("SendData win=0"); ShowConnection(C) END;*)
 
 	SendItem(C.lip, C.rip, item)
 END SendData;
@@ -400,6 +410,7 @@ END Trans;
 
 PROCEDURE Output (C: Connection; type: SHORTINT);
 BEGIN
+	(*Kernel.WriteInt(type, 1);  Kernel.WriteChar(" ");  ShowConnection(C);*)
 	IF type # deleteev THEN
 		IF C.outstate = idle THEN
 			IF type = sendev THEN Trans(C) END
@@ -432,7 +443,7 @@ BEGIN ack := FALSE;
 		offs := LONG(NetIP.MinHdrLen + HLen(tcph)); len0 := len;
 		WHILE len0 > 0 DO l := Min(len0, BufSize - C.rlst);
 			dst := SYSTEM.ADR(C.rbuf[C.rlst]);
-			NetBase.FastCopy(SYSTEM.ADR(item.data[item.ofs+offs]), dst, l);
+			SYSTEM.MOVE(SYSTEM.ADR(item.data[item.ofs+offs]), dst, l);
 			C.rlst := (C.rlst + l) MOD BufSize; DEC(len0, l); INC(offs, l)
 		END;
 		C.rnext := C.rnext + len; C.rcnt := C.rcnt + len;
@@ -452,7 +463,7 @@ BEGIN ack := FALSE;
 			offs := LONG(NetIP.MinHdrLen + HLen(tcph)) + overlap; len0 := len;
 			WHILE len0 > 0 DO l := Min(len0, BufSize - C.rlst);
 				dst := SYSTEM.ADR(C.rbuf[C.rlst]);
-				NetBase.FastCopy(SYSTEM.ADR(item.data[item.ofs+offs]), dst, l);
+				SYSTEM.MOVE(SYSTEM.ADR(item.data[item.ofs+offs]), dst, l);
 				C.rlst := (C.rlst + l) MOD BufSize; DEC(len0, l); INC(offs, l)
 			END;
 			C.rnext := C.rnext + len; C.rcnt := C.rcnt + len;
@@ -507,6 +518,7 @@ BEGIN
 			IF Syn IN code THEN
 				INC(i, 2); l[0] := item.data[item.ofs+i]; INC(i); l[1] := item.data[item.ofs+i]; INC(i);
 				smss := SYSTEM.VAL(INTEGER, l); NetBase.NetToHost(smss);
+				IF smss > MaxSMSS THEN smss := MaxSMSS END;
 				C.smss := SHORT(Min(smss - MinHLen, C.smss));
 			END;
 		ELSE EXIT
@@ -540,7 +552,7 @@ BEGIN
 	C.rcnt := 0; C.scnt := 0;
 	C.flags := {}; C.res := ok;
 	C.instate := closed; C.outstate := idle;
-	C.smss := 1500 - MinHLen- NetIP.MinHdrLen (*536;*);
+	C.smss := MaxSMSS (*1500 - MinHLen- NetIP.MinHdrLen*) (*536;*);
 	C.swin := C.smss; C.rmss := C.smss;
 	C.iss := iss; INC(iss, TcpIncr);
 	C.snext := C.iss; C.suna := C.iss; C.swl2 := C.iss;
@@ -557,16 +569,6 @@ BEGIN
 	n := tasklist;  WHILE (n # NIL) & (n # c) DO n := n.next END;
 	IF n = NIL THEN c.next := tasklist;  tasklist := c END
 END Install;
-
-PROCEDURE Remove(c: Connection);
-VAR p, n: Connection;
-BEGIN
-	p := NIL;  n := tasklist;
-	WHILE (n # NIL) & (n # c) DO p := n;  n := n.next END;
-	IF n # NIL THEN
-		IF p = NIL THEN tasklist := c.next ELSE p.next := c.next END
-	END
-END Remove;
 
 PROCEDURE ProcListen (L: Listener; item: NetBase.Item; iph: NetIP.IPHeader; tcph: Header; code: SET);
 VAR C: Connection; ack, res: BOOLEAN;
@@ -666,6 +668,7 @@ PROCEDURE ProcEstab (C: Connection; item: NetBase.Item; iph: NetIP.IPHeader; tcp
 VAR
 	ack0, ack1: BOOLEAN;
 BEGIN
+	(*Kernel.WriteString("ProcEstab ");  ShowConnection(C);*)
 	IF {Rst, Syn} * code # {} THEN
 		IF Syn IN code THEN
 			SendRst(iph, tcph, code)
@@ -772,7 +775,7 @@ VAR tv: Event;  c: Connection;  item: NetBase.Item;
 BEGIN
 	c := tasklist;
 	WHILE c # NIL DO
-		WHILE c.rq.len > 0 DO
+		WHILE (c.rq.len > 0) & (RWindow(c) - c.rmss > 0) DO
 			NetBase.GetItem(c.rq, item); INC(Nreceived); Handle(c, item)
 		END;
 		c := c.next
@@ -852,7 +855,7 @@ BEGIN
 			IF l > 0 THEN len0 := l;
 				WHILE len0 > 0 DO l0 := Min(len0, BufSize - C.slst);
 					dst := SYSTEM.ADR(C.sbuf[C.slst]);
-					NetBase.FastCopy(SYSTEM.ADR(buf[beg]), dst, l0);
+					SYSTEM.MOVE(SYSTEM.ADR(buf[beg]), dst, l0);
 					C.slst := (C.slst + l0) MOD BufSize; DEC(len0, l0); INC(beg, l0)
 				END;
 				C.scnt := C.scnt + l; len := len - l;
@@ -879,7 +882,7 @@ BEGIN
 				IF len > C.rcnt THEN len := C.rcnt END; len0 := len;
 				WHILE len0 > 0 DO l := Min(len0, BufSize - C.rfst);
 					dst := SYSTEM.ADR(buf[beg]);
-					NetBase.FastCopy(SYSTEM.ADR(C.rbuf[C.rfst]), dst, l);
+					SYSTEM.MOVE(SYSTEM.ADR(C.rbuf[C.rfst]), dst, l);
 					C.rfst := (C.rfst + l) MOD BufSize; DEC(len0, l); INC(beg, l)
 				END;
 				C.rcnt := C.rcnt - len
@@ -906,7 +909,7 @@ BEGIN
 			IF (C.ocsem > 0) & (C.res = ok) THEN
 				Install(C); res := Done
 			ELSE
-				IF res = ok THEN ClearEvent(C, retransev);
+				IF C.res = ok THEN ClearEvent(C, retransev);
 					res := Timeout;
 				ELSE res := NotDone
 				END;
@@ -920,6 +923,37 @@ BEGIN
 	ELSE res := LocalPortInUse
 	END
 END Connect;
+
+PROCEDURE AsyncConnect* (VAR C: Connection; lport: INTEGER; radr: NetIP.Adr; rport: INTEGER; VAR res: INTEGER);
+VAR item: NetBase.Item; timeout: LONGINT;
+BEGIN
+	IF NetPorts.Available(NetIP.routes[0].adr, lport, radr, rport) THEN
+		Create(C);
+		IF NetPorts.Access(C, NetIP.routes[0].adr, lport, radr, rport, NetPorts.active) THEN
+			C.instate := sent; C.code := {Syn}; Output(C, sendev);
+
+			timeout := Kernel.GetTimer() + timeo; DEC(C.ocsem);
+			WHILE (C.ocsem < 1) & (Kernel.GetTimer() - timeout < 0) DO
+				NetBase.Poll; NetPorts.Enumerate(Poll)
+			END;
+
+			IF (C.ocsem > 0) & (C.res = ok) THEN
+				Install(C); res := Done
+			ELSE
+				IF C.res = ok THEN ClearEvent(C, retransev);
+					res := Timeout;
+				ELSE res := NotDone
+				END;
+				C.instate := closed; NetPorts.Release(C);
+				WHILE C.rq.len > 0 DO
+					NetBase.GetItem(C.rq, item); NetBase.RecycleItem(item)
+				END
+			END
+		ELSE res := DescriptorInUse
+		END
+	ELSE res := LocalPortInUse
+	END
+END AsyncConnect;
 
 PROCEDURE Listen* (VAR L: Listener; lport: INTEGER; radr: NetIP.Adr; rport: INTEGER; VAR res: INTEGER);
 BEGIN 
@@ -974,7 +1008,8 @@ BEGIN L.state := closed;
 END Close;
 
 PROCEDURE Connected* (C: Connection): BOOLEAN;
-BEGIN RETURN ~(rfin IN C.flags)
+BEGIN
+	RETURN ~(rfin IN C.flags)
 END Connected;
 
 PROCEDURE Available* (C: Connection): LONGINT;
@@ -1015,14 +1050,6 @@ BEGIN
 	IF sffirst IN s THEN Kernel.WriteString("Sffirst") END
 END WriteFlags;
 
-PROCEDURE WriteIP(ip: NetIP.Adr);
-BEGIN
-	Kernel.WriteInt(ORD(ip[0]) MOD 100H, 1);  Kernel.WriteChar(".");
-	Kernel.WriteInt(ORD(ip[1]) MOD 100H, 1);  Kernel.WriteChar(".");
-	Kernel.WriteInt(ORD(ip[2]) MOD 100H, 1);  Kernel.WriteChar(".");
-	Kernel.WriteInt(ORD(ip[3]) MOD 100H, 1)
-END WriteIP;
-
 PROCEDURE WriteInState(s: LONGINT);
 BEGIN
 	CASE s OF
@@ -1052,6 +1079,41 @@ BEGIN
 	END
 END WriteOutState;
 
+PROCEDURE ShowConnection(c: Connection);
+BEGIN
+	WriteIP(c.lip);  Kernel.WriteChar(":");  Kernel.WriteInt(c.lport, 1);  Kernel.WriteChar(" ");
+	WriteIP(c.rip);  Kernel.WriteChar(":");  Kernel.WriteInt(c.rport, 1);
+	Kernel.WriteString(" in=");  WriteInState(c.instate);
+	Kernel.WriteString(" out=");  WriteOutState(c.outstate);
+	Kernel.WriteLn;
+	Kernel.WriteString(" res=");  Kernel.WriteInt(c.res, 1);	(* return code *)
+	Kernel.WriteString(" xcnt=");  Kernel.WriteInt(c.xcnt, 1);	(* number of retransmissions *)
+	Kernel.WriteString(" xamt=");  Kernel.WriteInt(c.xamt, 1);	(* retransmission delay *)
+	Kernel.WriteString(" pamt=");  Kernel.WriteInt(c.pamt, 1);	(* persist delay *)
+	Kernel.WriteString(" code=");  WriteCode(c.code);	(* packet bits in connection *)
+	Kernel.WriteString(" flags=");  WriteFlags(c.flags);	(* communication flags *)
+	Kernel.WriteString(" rwin=");  Kernel.WriteInt(RWindow(c), 1);  (* receive window *)
+	Kernel.WriteLn;
+	Kernel.WriteString(" rcnt=");  Kernel.WriteInt(c.rcnt, 1);	(* bytes in receive buffer *)
+	Kernel.WriteString(" scnt=");  Kernel.WriteInt(c.scnt, 1);	(* bytes in send buffer *)
+	Kernel.WriteString(" swin=");  Kernel.WriteInt(c.swin, 1);	(* send window *)
+	Kernel.WriteString(" smss=");  Kernel.WriteInt(c.smss, 1);	(* send MSS *)
+	Kernel.WriteString(" rmss=");  Kernel.WriteInt(c.rmss, 1);	(* receive MSS *)
+	Kernel.WriteString(" rup=");  Kernel.WriteInt(c.rup, 1);	(* urgent p *)
+	Kernel.WriteString(" ocsem=");  Kernel.WriteInt(c.ocsem, 1);
+	Kernel.WriteLn;
+	Kernel.WriteString(" iss=");  Kernel.WriteInt(c.iss, 1);	(* initial seq *)
+	Kernel.WriteString(" swl2=");  Kernel.WriteInt(c.swl2, 1);	(* highest ack seen *)
+	Kernel.WriteString(" suna=");  Kernel.WriteInt(c.suna, 1);	(* unacked? *)
+	Kernel.WriteString(" snext=");  Kernel.WriteInt(c.snext, 1);	(* next send seq *)
+	Kernel.WriteString(" slast=");  Kernel.WriteInt(c.slast, 1);	(* last seq after Disconnect *)
+	Kernel.WriteLn;
+	Kernel.WriteString(" swl1=");  Kernel.WriteInt(c.swl1, 1);	(* highest seq seen *)
+	Kernel.WriteString(" rnext=");  Kernel.WriteInt(c.rnext, 1);	(* next recv seq *)
+	Kernel.WriteString(" cwin=");  Kernel.WriteInt(c.cwin, 1);	(* seq of recv window end *)
+	Kernel.WriteLn
+END ShowConnection;
+
 PROCEDURE ShowState*;
 VAR c: Connection;
 BEGIN
@@ -1063,36 +1125,7 @@ BEGIN
 	Kernel.WriteLn;
 	c := tasklist;
 	WHILE c # NIL DO
-		WriteIP(c.lip);  Kernel.WriteChar(":");  Kernel.WriteInt(c.lport, 1);  Kernel.WriteChar(" ");
-		WriteIP(c.rip);  Kernel.WriteChar(":");  Kernel.WriteInt(c.rport, 1);
-		Kernel.WriteString(" in=");  WriteInState(c.instate);
-		Kernel.WriteString(" out=");  WriteOutState(c.outstate);
-		Kernel.WriteLn;
-		Kernel.WriteString(" res=");  Kernel.WriteInt(c.res, 1);	(* return code *)
-		Kernel.WriteString(" xcnt=");  Kernel.WriteInt(c.xcnt, 1);	(* number of retransmissions *)
-		Kernel.WriteString(" xamt=");  Kernel.WriteInt(c.xamt, 1);	(* retransmission delay *)
-		Kernel.WriteString(" pamt=");  Kernel.WriteInt(c.pamt, 1);	(* persist delay *)
-		Kernel.WriteString(" code=");  WriteCode(c.code);	(* packet bits in connection *)
-		Kernel.WriteString(" flags=");  WriteFlags(c.flags);	(* communication flags *)
-		Kernel.WriteLn;
-		Kernel.WriteString(" rcnt=");  Kernel.WriteInt(c.rcnt, 1);	(* bytes in receive buffer *)
-		Kernel.WriteString(" scnt=");  Kernel.WriteInt(c.scnt, 1);	(* bytes in send buffer *)
-		Kernel.WriteString(" swin=");  Kernel.WriteInt(c.swin, 1);	(* send window *)
-		Kernel.WriteString(" smss=");  Kernel.WriteInt(c.smss, 1);	(* send MSS *)
-		Kernel.WriteString(" rmss=");  Kernel.WriteInt(c.rmss, 1);	(* receive MSS *)
-		Kernel.WriteString(" rup=");  Kernel.WriteInt(c.rup, 1);	(* urgent p *)
-		Kernel.WriteString(" ocsem=");  Kernel.WriteInt(c.ocsem, 1);
-		Kernel.WriteLn;
-		Kernel.WriteString(" iss=");  Kernel.WriteInt(c.iss, 1);	(* initial seq *)
-		Kernel.WriteString(" swl2=");  Kernel.WriteInt(c.swl2, 1);	(* highest ack seen *)
-		Kernel.WriteString(" suna=");  Kernel.WriteInt(c.suna, 1);	(* unacked? *)
-		Kernel.WriteString(" snext=");  Kernel.WriteInt(c.snext, 1);	(* next send seq *)
-		Kernel.WriteString(" slast=");  Kernel.WriteInt(c.slast, 1);	(* last seq after Disconnect *)
-		Kernel.WriteLn;
-		Kernel.WriteString(" swl1=");  Kernel.WriteInt(c.swl1, 1);	(* highest seq seen *)
-		Kernel.WriteString(" rnext=");  Kernel.WriteInt(c.rnext, 1);	(* next recv seq *)
-		Kernel.WriteString(" cwin=");  Kernel.WriteInt(c.cwin, 1);	(* seq of recv window end *)
-		Kernel.WriteLn;
+		ShowConnection(c);
 		c := c.next
 	END
 END ShowState;
@@ -1100,7 +1133,6 @@ END ShowState;
 BEGIN
 	NEW(sq);
 	sq.next := sq; sqct := 0; iss := Kernel.GetTimer();
-	Nreceived := 0; Nsent := 0;
 	tasklist := NIL;
 	demux[closed] := ProcClosed; demux[sent] := ProcSent;
 	demux[rcvd] := ProcRcvd; demux[estab] := ProcEstab;
@@ -1108,8 +1140,6 @@ BEGIN
 	demux[clwait] := ProcClwait; demux[clos] := ProcClos;
 	demux[lack] := ProcLack; demux[tiwait] := ProcTiwait
 END NetTCP.
-
-Compiler.Compile NetTCP.Mod\s NetSystem.Mod ~
 
 (*
 TestTCP.Test 1 lillian 1024	(* receive *)

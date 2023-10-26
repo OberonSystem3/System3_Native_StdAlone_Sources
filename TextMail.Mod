@@ -1,50 +1,22 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 
-	IMPORT FileDir, Files, Texts, TextFrames, Oberon, Viewers, MenuViewers, NS := NetSystem, Display, Fonts, Strings;
+	IMPORT Files, Texts, TextFrames, Oberon, Viewers, MenuViewers, NS := NetSystem, Display, Fonts, Strings;
 	
 	CONST POP = 110; SMTP = 25; TAB = 9X; CR = 0DX; LF = 0AX; maxlen = 32;
 		StandardMenu = "System.Close System.Copy System.Grow Edit.Search Edit.Store";
 		CopySelf = TRUE;
 		
 	VAR
-		res*: INTEGER; M, fpos: INTEGER;
+		res*: INTEGER; M: INTEGER;
         W: Texts.Writer;
 		iso, quoted: BOOLEAN;
 		host: ARRAY 32 OF CHAR;
         spat: ARRAY maxlen OF CHAR; (*file name pattern, search pattern*)
         d: ARRAY 256 OF INTEGER;
 
-    PROCEDURE ReadLInt (VAR R: Files.Rider; VAR n: LONGINT);
-      VAR i: INTEGER; ch: CHAR;
-    BEGIN n := 0; Files.Read(R, ch);
-      WHILE ("0" <= ch) & (ch <= "9") DO 
-        n := n*10 + (ORD(ch) - ORD("0")); Files.Read(R, ch)
-      END
-    END ReadLInt;
-
-    PROCEDURE WriteLInt (VAR R: Files.Rider; n: LONGINT);
-      VAR i: INTEGER; d: ARRAY 14 OF INTEGER;
-    BEGIN i := 0;
-      REPEAT d[i] := SHORT(n MOD 10); n := n DIV 10; INC(i) UNTIL n = 0;
-      WHILE i # 14 DO d[i] := 0; INC(i) END;
-      REPEAT DEC(i); Files.Write(R, CHR(ORD("0") + d[i])) UNTIL i = 0
-    END WriteLInt;
-	
 	PROCEDURE MarkedText(): Texts.Text;
 	VAR V, F: Display.Frame;
 	BEGIN V := Oberon.MarkedViewer();
@@ -72,7 +44,6 @@ MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 	PROCEDURE OpenViewer(name: ARRAY OF CHAR; T: Texts.Text; user: BOOLEAN);
 	VAR V: MenuViewers.Viewer; X, Y: INTEGER;
 			menu: ARRAY 128 OF CHAR;
-			t: TextFrames.Frame;
 	BEGIN X := Oberon.Mouse.X;
 		IF user THEN
 			Oberon.AllocateUserViewer(Oberon.UserTrack(X), X, Y);
@@ -108,11 +79,11 @@ MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 		RETURN (t[i] = 0X)
 	END Prefix;
 
-	PROCEDURE Copy(i: INTEGER; VAR s, t: ARRAY OF CHAR);	(*chop off first i characters*)
-	VAR j: INTEGER;
-	BEGIN j := 0;
-		WHILE s[i] = " " DO INC(i) END;	(*skip leading blanks*)
-		WHILE s[i] # 0X DO t[j] := s[i]; INC(j); INC(i) END;
+	PROCEDURE Copy(i: LONGINT; VAR s, t: ARRAY OF CHAR);	(*chop off first i characters*)
+	VAR j, li, lj: LONGINT;
+	BEGIN j := 0; li := LEN(s); lj := LEN(t)-1;
+		WHILE (i < li) & (s[i] = " ") DO INC(i) END;	(*skip leading blanks*)
+		WHILE (i < li) & (j < lj) & (s[i] # 0X) DO t[j] := s[i]; INC(j); INC(i) END;
         t[j] := 0X
 	END Copy;
 
@@ -428,7 +399,7 @@ MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 	END GetAll;
 
     PROCEDURE Store*;
-	  VAR S: Texts.Scanner; T: Texts.Text; RT: Texts.Reader; f: Files.File; ch: CHAR; len: LONGINT;
+	  VAR S: Texts.Scanner; T: Texts.Text; f: Files.File; len: LONGINT;
 	BEGIN
       Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
       IF S.class = Texts.Name THEN T := MarkedText();
@@ -654,7 +625,7 @@ MODULE TextMail;	(** portable *)	(*RS/ARD/JG, 12.10.97*)
 	
     PROCEDURE Cite*;
       VAR  V: Viewers.Viewer; R: Texts.Reader; T: TextFrames.Frame;
-        pos, beg, end, time: LONGINT; ch: CHAR;
+        pos, end: LONGINT; ch: CHAR;
     BEGIN
       V := Oberon.MarkedViewer();
       IF (V.dsc # NIL) & (V.dsc.next IS TextFrames.Frame) THEN

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Telnet;	(** portable *)	(* ip/mg 17.3.94 / 07.04.95 *)
 
@@ -171,7 +159,7 @@ BEGIN NetSystem.Write(C, 0FFX); NetSystem.Write(C, 0FDX); NetSystem.Write(C, 03X
 	NetSystem.Write(C, 0FFX); NetSystem.Write(C, 0FBX); NetSystem.Write(C, 018X)
 END SetUp;
 
-PROCEDURE Open*;	(** ^ |  ( hostname | IP address ) [port] **)
+PROCEDURE Open*;	(** ^ |  ( hostname | IP address ) [port] *)
 VAR
 	S: Texts.Scanner;
 	F: TerminalFrames.Frame;
@@ -186,7 +174,7 @@ VAR
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
 	IF (S.class = Texts.Char) & (S.c = "^") THEN Oberon.GetSelection(text, beg, end, time);
-		IF time > 0 THEN Texts.OpenScanner(S, text, beg); Texts.Scan(S) END
+		IF time # -1 THEN Texts.OpenScanner(S, text, beg); Texts.Scan(S) END
 	END;
 	IF S.class IN {Texts.Name, Texts.String} THEN
 		Texts.WriteString(W, "Telnet.Open "); Texts.WriteString(W, S.s); 
@@ -199,8 +187,8 @@ BEGIN
 		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
 		IF res = NetSystem.done THEN
 			NEW(T); Terminals.Open(T, TextFrames.Text(""), Send0, Break0, TerminalFrames.NotifyDisplay, OpenHeight);
-			NEW(task); task.safe := FALSE; task.handle := Receiver; task.T := T;
-			T.localecho := FALSE; T.C := C; T.task := task;
+			NEW(task); task.safe := FALSE; task.handle := Receiver; task.time := Oberon.Time();
+			task.T := T; T.localecho := FALSE; T.C := C; T.task := task;
 			NEW(F); TerminalFrames.Open(F, TerminalFrames.Handle, T, Fonts.This("Courier10.Scn.Fnt"));
 			Oberon.AllocateUserViewer(Oberon.Mouse.X, x, y);
 			V := MenuViewers.New(TextFrames.NewMenu(S.s, menu), F, TextFrames.menuH, x, y);

@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Attributes; (** portable *) (* jm 14.3.95 *)
+MODULE Attributes; (** portable *)	(* jm 14.3.95 *)
 
 (** Module Attributes manages the attribute lists of the gadgets, provides an improved scanner with macro substitution facilities for executing commands, and supplies type conversion routines.
 *)
@@ -89,7 +77,7 @@ TYPE
 	Attr* = POINTER TO AttrDesc;
 	AttrDesc* = RECORD
 		next*: Attr;
-		name*: ARRAY 32 OF CHAR;
+		name*: Objects.Name
 	END;
 	
 	BoolAttr* = POINTER TO BoolDesc;
@@ -242,14 +230,14 @@ END OpenScanner;
       ELSIF (ch # " ") & (ch # TAB) & (ch # LF) THEN EXIT
       END ;
       Read(S.R, ch);
-      IF S.R.eot THEN EXIT END;
+      IF S.R.eot THEN EXIT END
     END;
     S.eot := S.R.eot;
     IF S.eot THEN S.class := Inval; RETURN END;
     IF ~(S.eot) &  ~(S.R.R.lib IS Fonts.Font) THEN
     	S.R.R.lib.GetObj(S.R.R.lib, ORD(ch), S.o);
     	S.class := Obj; Read(S.R, ch)
-    ELSIF (("A" <= CAP(ch)) & (CAP(ch) <= "Z")) OR (ch = ":") OR (ch = "/") OR (ch = ".") OR
+    ELSIF (("A" <= CAP(ch)) & (CAP(ch) <= "Z")) (*OR (ch = ":")*) OR (ch = "/") OR (ch = ".") OR
     	((ch >= 80X) & (ch <= 96X)) (* german characters *) THEN (*name*)
       old := S.R.substitute;
       REPEAT S.s[i] := ch; INC(i); Read(S.R, ch)
@@ -279,7 +267,7 @@ END OpenScanner;
       IF ("0" <= ch) & (ch <= "9") THEN (*number*)
         hex := FALSE; j := 0;
         LOOP d[i] := ch; INC(i); Read(S.R, ch);
-          IF ch < "0" THEN EXIT END;
+          IF (ch < "0") OR (i >= maxD) THEN EXIT END;
           IF "9" < ch THEN
             IF ("A" <= ch) & (ch <= "F") THEN hex := TRUE; ch := CHR(ORD(ch)-7)
             ELSIF ("a" <= ch) & (ch <= "f") THEN hex := TRUE; ch := CHR(ORD(ch)-27H)
@@ -296,7 +284,7 @@ END OpenScanner;
           IF neg THEN S.i := -k ELSE S.i := k END 
         ELSIF ch = "." THEN (*read real*)
           Read(S.R, ch); h := i;
-          WHILE ("0" <= ch) & (ch <= "9") DO d[i] := ch; INC(i); Read(S.R, ch) END ;
+          WHILE ("0" <= ch) & (ch <= "9") & (i <= maxD) DO d[i] := ch; INC(i); Read(S.R, ch) END ;
                     (*-------- floating-point handling BM -----------------------------------*)
           WHILE i MOD 8 # 0 DO d[i] := "0"; INC(i) END;
           j := 0; k := 0; k1 := 0; k2 := 0; k3 := 0; (* store digits 0..7, 8..15, 16..23, 24..31 in k, k1, k2, k3 *)
@@ -402,7 +390,7 @@ END StoreAttributes;
 
 (** Load attribute list resulting in a list A. *)
 PROCEDURE LoadAttributes*(VAR R: Files.Rider; VAR A: Attr);
-VAR ch: CHAR; name: ARRAY 32 OF CHAR; b: BoolAttr; c: CharAttr; i: IntAttr; r: RealAttr; s: StringAttr; a, a0: Attr;
+VAR ch: CHAR; name: Objects.Name; b: BoolAttr; c: CharAttr; i: IntAttr; r: RealAttr; s: StringAttr; a, a0: Attr;
 BEGIN
 	A := NIL;
 	Files.Read(R, ch);

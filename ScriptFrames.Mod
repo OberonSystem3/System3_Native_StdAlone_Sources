@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 
@@ -126,6 +114,8 @@ MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 		show: PROCEDURE(F: Frame; pos: LONGINT);
 		
 		FullColor, BackCol, BarCol: INTEGER;
+		
+		saved: Oberon.CaretMsg;
 
 	PROCEDURE Min (i, j: LONGINT): LONGINT;
 	BEGIN IF i >= j THEN RETURN j ELSE RETURN i END
@@ -902,7 +892,8 @@ MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 			IF (pos < F.org) OR (pos >= Lim(F)) THEN show(F, pos) END;
 			LocatePos(F, pos, F.carLoc); Marks(F, car); F.car := TRUE;	(*old version*)
 			SetAttributes(F, F.carLoc.pos)
-		END
+		END;
+		saved.car := NIL; saved.text := NIL
 	END SetCaret;
 
 	PROCEDURE RemoveCaret* (F: Frame);
@@ -1317,6 +1308,17 @@ MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 		END
 	END CopyOver;
 
+	PROCEDURE CopyRecall* (F: Frame);
+		VAR pos: LONGINT;
+	BEGIN
+		IF F.car THEN
+			Texts.Recall(XW.buf);
+			pos := F.carLoc.pos + XW.buf.len;
+			Texts.Insert(F.text, F.carLoc.pos, XW.buf);
+			SetCaret(F, pos)
+		END
+	END CopyRecall;
+
 	PROCEDURE GetSelection* (F: Frame; VAR M: Oberon.SelectMsg);
 	BEGIN
 		IF F.sel THEN
@@ -1412,7 +1414,20 @@ MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 	END ScrollToEnd;
 --no scroll--*)
 (*--end scroll--*)
-
+	
+	PROCEDURE SaveCaret;
+	BEGIN
+		saved.car := NIL; saved.text := NIL;
+		saved.id := Oberon.get; Display.Broadcast(saved)
+	END SaveCaret;
+	
+	PROCEDURE RestoreCaret;
+	BEGIN
+		IF (saved.car # NIL) & (saved.text # NIL) THEN
+			saved.id := Oberon.set; Display.Broadcast(saved)
+		END
+	END RestoreCaret;
+	
 	PROCEDURE Edit* (F: Frame; x, y, X, Y: INTEGER; Keys: SET);
 		VAR
 			M: Oberon.ConsumeMsg;
@@ -1468,17 +1483,28 @@ MODULE ScriptFrames;	(** portable *) (* RS, Wed, 9-Jun-1993*)
 				ELSE
 					IF pos >= 0 THEN Call(F, pos, ML IN keysum) END
 				END
-			ELSIF ML IN Keys THEN Oberon.Defocus; TrackCaret(F, x, y, X, Y, keysum);
-				IF F.car THEN
-					IF keysum = {ML, MM} THEN	(*copy from selection*)
-						Oberon.GetSelection(text, beg, end, time);
-						IF time >= 0 THEN CopyOver(F, text, beg, end) END
-					ELSIF keysum = {ML, MR} THEN	(*copy font*)
-						Oberon.GetSelection(text, beg, end, time);
-						IF (time >= 0) & (F.carLoc.pos < F.text.len) THEN
-							Texts.OpenReader(R, F.text, F.carLoc.pos); Texts.Read(R, ch);
-							IF (R.lib # NIL) & (R.lib IS Fonts.Font) THEN
-								Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+			ELSIF ML IN Keys THEN
+				IF Oberon.New & F.car & (Pos(F, X - F.X - x, Y - F.Y - y) = F.carLoc.pos) THEN (*click on caret*)
+					Oberon.Defocus; RestoreCaret; TrackWord(F, x, y, X, Y, pos, keysum);
+					IF MR IN keysum THEN
+						IF (pos >= 0) & ~(MM IN keysum) THEN CallCmd(OpenCmd, F, pos, FALSE) END
+					ELSE
+						IF pos >= 0 THEN Call(F, pos, FALSE) END
+					END
+				ELSE
+					IF Oberon.New THEN SaveCaret END;
+					Oberon.Defocus; TrackCaret(F, x, y, X, Y, keysum);
+					IF F.car THEN
+						IF keysum = {ML, MM} THEN	(*copy from selection*)
+							Oberon.GetSelection(text, beg, end, time);
+							IF time >= 0 THEN CopyOver(F, text, beg, end) ELSE CopyRecall(F) END
+						ELSIF keysum = {ML, MR} THEN	(*copy font*)
+							Oberon.GetSelection(text, beg, end, time);
+							IF (time >= 0) & (F.carLoc.pos < F.text.len) THEN
+								Texts.OpenReader(R, F.text, F.carLoc.pos); Texts.Read(R, ch);
+								IF (R.lib # NIL) & (R.lib IS Fonts.Font) THEN
+									Texts.ChangeLooks(text, beg, end, {0, 1, 2}, R.lib, R.col, R.voff)
+								END
 							END
 						END
 					END
@@ -1775,3 +1801,5 @@ BEGIN
 	Asr := Fonts.Default.maxY; Dsr := -Fonts.Default.minY;
 	Texts.OpenWriter(W); Texts.OpenWriter(KW); Texts.OpenWriter(XW)
 END ScriptFrames.
+
+System.Free Script ScriptFrames ~

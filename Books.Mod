@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Books;	(** portable *) (* ejz, further hacked by jm *)
+MODULE Books; (** portable *)	(* ejz   *)
 	IMPORT Books0, Panels, Objects, Documents, Gadgets, Display, Display3, TextGadgets, TextGadgets0, BasicGadgets,
 		Texts, Fonts, Oberon, Modules, Desktops, Effects;
 
@@ -1059,7 +1047,7 @@ MODULE Books;	(** portable *) (* ejz, further hacked by jm *)
 	END GetFrame;
 	
 (* display error-messages for return-value of Oberon.Call *)
-	PROCEDURE ShowCallErr(res: INTEGER; s: ARRAY OF CHAR);
+	PROCEDURE ShowCallErr(s: ARRAY OF CHAR);
 	BEGIN
 		Texts.WriteString(Wr, "Call error: ");
 		Texts.WriteString(Wr, s); Texts.WriteString(Wr, Modules.resMsg);
@@ -1125,7 +1113,7 @@ MODULE Books;	(** portable *) (* ejz, further hacked by jm *)
 						par.pos := Texts.Pos(S);
 						Oberon.Call(S.s, par, 2 IN keysum, res);
 						IF res # 0 THEN
-							ShowCallErr(res, S.s)
+							ShowCallErr(S.s)
 						END
 					END
 				ELSIF obj.mode = note THEN

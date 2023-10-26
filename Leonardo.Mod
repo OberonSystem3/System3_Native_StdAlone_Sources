@@ -1,1211 +1,1887 @@
-MODULE Leonardo;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
+MODULE Leonardo; (** portable **)	(* eos   *)
+
+	(**
+		Model of the Leonardo figure editor
+	**)
+	
 	IMPORT
-		Files, Display, Input, Math, Objects, Fonts, Texts, Strings, Pictures, Oberon, Printer, Display3, Effects, Printer3, Attributes,
-		Gadgets, BasicGadgets, Documents, Desktops, RembrandtDocs, GfxMatrix, GfxMaps, GfxPictures, Gfx, GfxBuffer, GfxPS,
-		Figures, FigureGadgets, LeoFrames;
+		Files, Display, Objects, Texts, Oberon, Strings, Gadgets, GfxMatrix, GfxRegions, Gfx;
 		
 	
 	CONST
-		MenuBar = "Desktops.Copy[Copy] Leonardo.Undo[Undo] Leonardo.Redo[Redo] Desktops.StoreDoc[Store]";
-		ML = 2; MM = 1; MR = 0;
-		RulerWidth = 16;
+		get* = 1; reset* = 2; validate* = 3;	(** select message **)
+		integrate* = 1; delete* = 2; clone* = 3;	(** control message **)
+		up* = 1; down* = 2; top* = 3; bottom* = 4; reverse* = 5;	(** priority message **)
+		active* = 1; passive* = 2; marksonly* = 3; marked* = 4;	(** render message **)
+		accumulate* = 2;	(** matrix message **)
+		inside* = 1; overlap* = 2; project* = 3;	(** locate message **)
+		apply* = 1; notify* = 2;	(** transform message **)
+		
+		border* = 12;	(** number of display units around shape bounding box available for rendering selection marks **)
 		
 	
 	TYPE
-		(** ruler frame **)
-		Ruler* = POINTER TO RulerDesc;
-		RulerDesc* = RECORD (Gadgets.FrameDesc)
-			ox, oy, scale, unit: REAL;	(* copies of corresponding values in content frame => catch updates of coordinate system *)
+		(** graphical objects **)
+		Shape* = POINTER TO ShapeDesc;
+		ShapeDesc* = RECORD (Objects.ObjDesc)
+			cont*: Shape;	(** shape containing this shape **)
+			up*, down*: Shape;	(** predecessor and successor in doubly linked list **)
+			llx*, lly*, urx*, ury*: REAL;	(** bounding box in global coordinates **)
+			bw*: REAL;	(** border width (additional space around box affected by rendering) **)
+			sel*: BOOLEAN;	(** true if shape or one of its components is selected **)
+			marked*: BOOLEAN;	(** true if shape is temporarily marked **)
 		END;
 		
-		StoreMsg = RECORD (Display.FrameMsg)
-			fig: Figures.Figure
+		(** container shapes containing component shapes **)
+		Container* = POINTER TO ContainerDesc;
+		ContainerDesc* = RECORD (ShapeDesc)
+			bottom*, top*: Shape;	(** bottommost and topmost component shape **)
+			subsel*: BOOLEAN;	(** true if at least one component is selected **)
+		END;
+		
+		Figure* = POINTER TO FigureDesc;
+		
+		(** layers within a figure **)
+		Layer* = POINTER TO LayerDesc;
+		LayerDesc* = RECORD (ContainerDesc)
+			fig*: Figure;	(** figure that layer is part of **)
+			name*: ARRAY 16 OF CHAR;	(** layer name **)
+			display*, print*, align*: BOOLEAN;	(** flags **)
+		END;
+		
+		Command = POINTER TO CommandDesc;
+		
+		(** figure model **)
+		FigureDesc* = RECORD (Objects.ObjDesc)
+			bottom*, top*: Shape;	(** layers containing shapes **)
+			active*: Layer;	(** currently editable layer **)
+			seltime*: LONGINT;	(** time of current selection, negative for empty selection **)
+			damage: GfxRegions.Region;	(* accumulated area that should be updated *)
+			bw: REAL;	(* maximal border width around damage area *)
+			lockLevel: INTEGER;	(* number of times updates have been disabled *)
+			cmdLevel: INTEGER;	(* number of nested commands that are currently open *)
+			maxCmds, nofCmds: INTEGER;	(* maximal and current number of undoable commands retained *)
+			curCmd: Command;	(* current command *)
+			firstCmd: Command;	(* first command that can still be undone *)
+			undoCmd: Command;	(* command to undo next *)
+		END;
+		
+		(** undoable commands **)
+		Action* = POINTER TO ActionDesc;
+		ActionProc* = PROCEDURE (fig: Figure; action: Action);
+		ActionDesc* = RECORD
+			do*, undo*: ActionProc;	(* handler for executing and undoing actions *)
+			link: Action;	(* link to next action *)
+		END;
+		
+		CommandDesc = RECORD
+			next, prev: Command;	(* links to next and previous command *)
+			actions, done, last: Action;	(* list of actions *)
+		END;
+		
+		ControlAction* = POINTER TO ControlActionDesc;
+		ControlActionDesc* = RECORD (ActionDesc)
+			down, bottom, top, up: Shape;
+			cont: Container;
+		END;
+		
+		AttrAction = POINTER TO AttrActionDesc;
+		AttrActionDesc = RECORD (ActionDesc)
+			shape: Shape;	(* affected shape *)
+			name: ARRAY 32 OF CHAR;	(* attribute name *)
+		END;
+		
+		IntAction = POINTER TO IntActionDesc;
+		IntActionDesc = RECORD (AttrActionDesc)
+			int: LONGINT;
+		END;
+		
+		RealAction = POINTER TO RealActionDesc;
+		RealActionDesc = RECORD (AttrActionDesc)
+			real: REAL;
+		END;
+		
+		StringAction = POINTER TO StringActionDesc;
+		StringActionDesc = RECORD (AttrActionDesc)
+			str: ARRAY 64 OF CHAR;
+		END;
+		
+		(** figure update message **)
+		UpdateMsg* = RECORD (Display.FrameMsg)
+			fig*: Figure;	(** affected figure **)
+			reg*: GfxRegions.Region;	(** affected area **)
+			bw*: REAL;	(** border around affected area **)
+		END;
+		
+		(** shape messages **)
+		ShapeMsg* = RECORD (Objects.ObjMsg)
+			fig*: Figure;	(** containing figure **)
+		END;
+		
+		UnmarkMsg = RECORD (ShapeMsg)
+			(* currently private, only used to unmark transformed shapes in CancelTransform *)
+		END;
+		
+		SelectMsg* = RECORD (ShapeMsg)
+			id*: INTEGER;	(** get/reset/validate **)
+			res*: Shape;	(** linked list of shapes which handled 'get' (in top-down order) **)
+		END;
+		
+		ControlMsg* = RECORD (ShapeMsg)
+			id*: INTEGER;	(** integrate/delete/clone **)
+			bottom*, top*: Shape;	(** shape list for consume (in) and clone (out) **)
+			cont*, up*, down*: Shape;	(** position where to integrate **)
+		END;
+		
+		OrderMsg* = RECORD (ShapeMsg)
+			id*: INTEGER;	(** up/down/top/bottom/reverse **)
+		END;
+		
+		(** shape messages transporting a local coordinate system **)
+		LocalizedMsg* = RECORD (ShapeMsg)
+			lgm*: GfxMatrix.Matrix;	(** conversion from local to global coordinates **)
+		END;
+		
+		ValidateMsg* = RECORD (LocalizedMsg)
+		END;
+		
+		CoordMsg* = RECORD (LocalizedMsg)
+			dest*: Shape;	(** destination shape **)
+			res*: GfxMatrix.Matrix;	(** local to global transformation of destination shape **)
+		END;
+		
+		ConsumeMsg* = RECORD (LocalizedMsg)
+			llx*, lly*, urx*, ury*: REAL;	(** target location (in global coordinates) **)
+			bottom*, top*: Shape;	(** shapes to consume **)
+			slgm*: GfxMatrix.Matrix;	(** source shape's coordinate space **)
+			recv*: Shape;	(** consuming target shape **)
+		END;
+		
+		RenderMsg* = RECORD (LocalizedMsg)
+			id*: INTEGER;	(** active/passive/marksonly/marked **)
+			ctxt*: Gfx.Context;	(** associated context **)
+			gsm*: GfxMatrix.Matrix;	(** conversion from global to standard coordinates **)
+			llx*, lly*, urx*, ury*: REAL;	(** clip rectangle (in global coordinates) **)
+		END;
+		
+		LocateMsg* = RECORD (LocalizedMsg)
+			id*: INTEGER;	(** inside/overlap/project **)
+			llx*, lly*, urx*, ury*: REAL;	(** rectangle within which to locate (in global coordinates) **)
+			res*: Shape;	(** linked list of shapes which handled message (in top-down order) **)
+			x*, y*: REAL;	(** point to project **)
+			px*, py*: REAL;	(** projected coordinates **)
+		END;
+		
+		TransformMsg* = RECORD (LocalizedMsg)
+			id*: INTEGER;	(** apply/notify **)
+			notify*: BOOLEAN;	(** to be set by receiver if additional notify cycle is necessary **)
+			mat*: GfxMatrix.Matrix;	(** transformation matrix in global coordinates **)
+		END;
+		
+		MatrixMsg* = RECORD (LocalizedMsg)
+			dest*: Shape;	(** destination shape **)
+			x0*, y0*, x1*, y1*, tol*: REAL;	(** drag vector and locate tolerance (in global coordinates) **)
+			done*: BOOLEAN;	(** set by destination shape **)
+			mat*: GfxMatrix.Matrix;	(** resulting global transformation matrix **)
+		END;
+		
+		(** shape message for broadcasts in display space **)
+		BroadcastMsg* = RECORD (Display.FrameMsg)
+			(**
+				empty base type, but is propagated within shape hierarchy
+				affected shapes should just mark themselves; after the broadcast, a validate message is sent to all shapes
+			**)
 		END;
 		
 	
 	VAR
 		W: Texts.Writer;
-		RulerFont: Fonts.Font;	(* font for rendering ruler ticks *)
-		HResize, VResize, HAlign, VAlign: BasicGadgets.Integer;
 		
 	
-	(**--- Rulers ---**)
+	(**--- Updates ---**)
 	
-	PROCEDURE ForwardRuler (r: Ruler; fx, fy: INTEGER; VAR msg: Display.FrameMsg);
-		VAR tx, ty: INTEGER;
+	PROCEDURE Update (fig: Figure);
+		VAR um: UpdateMsg;
 	BEGIN
-		tx := msg.x; ty := msg.y;
-		msg.x := fx; msg.y := fy + r.H - 1;
-		Figures.Forward(r, r.dsc, msg);
-		msg.x := tx; msg.y := ty
-	END ForwardRuler;
+		um.F := NIL; um.fig := fig; um.reg := fig.damage; um.bw := fig.bw;
+		Display.Broadcast(um);
+		GfxRegions.Clear(fig.damage); fig.bw := 0
+	END Update;
 	
-	PROCEDURE SetRulerMask (frame: Display.Frame; mask: Display3.Mask);
-		VAR om: Display3.OverlapMsg;
+	(** disable broadcast of update messages (nested calls allowed) **)
+	PROCEDURE DisableUpdate* (fig: Figure);
 	BEGIN
-		om.M := mask; om.x := 0; om.y := 0; om.F := frame; om.dlink := NIL; om.res := -1;
-		frame.handle(frame, om)
-	END SetRulerMask;
+		INC(fig.lockLevel)
+	END DisableUpdate;
 	
-	PROCEDURE SetRulerContentMask (r: Ruler);
-		VAR mask: Display3.Mask;
+	(** re-enable update broadcasts; pending updates are immediately broadcast **)
+	PROCEDURE EnableUpdate* (fig: Figure);
 	BEGIN
-		IF r.mask = NIL THEN
-			SetRulerMask(r.dsc, NIL)
-		ELSE
-			Display3.Copy(r.mask, mask);
-			mask.x := 0; mask.y := 0;
-			Display3.Intersect(mask, r.dsc.X, r.dsc.Y, r.dsc.W, r.dsc.H);
-			mask.x := -r.dsc.X; mask.y := -(r.dsc.Y + r.dsc.H - 1);
-			Display3.Shift(mask);
-			SetRulerMask(r.dsc, mask)
+		DEC(fig.lockLevel);
+		IF (fig.lockLevel = 0) & ~GfxRegions.Empty(fig.damage) THEN
+			Update(fig)
 		END
-	END SetRulerContentMask;
+	END EnableUpdate;
 	
-	PROCEDURE TrackRuler (r: Ruler; fx, fy: INTEGER; VAR msg: Oberon.InputMsg);
-		VAR ix, iy, iw, ih, mx, x, y, my: INTEGER; keysum, keys: SET; mask: Display3.Mask;
+	(** update rectangle **)
+	PROCEDURE UpdateRect* (fig: Figure; llx, lly, urx, ury, bw: REAL);
+		VAR llu, llv, uru, urv: INTEGER;
 	BEGIN
-		ix := fx + RulerWidth; iy := fy + r.H - RulerWidth; iw := r.W - RulerWidth; ih := r.H - RulerWidth;
-		IF Effects.Inside(msg.X, msg.Y, ix, iy, iw, RulerWidth) & ((msg.keys = {ML}) OR (msg.keys = {MR})) THEN
-			Oberon.FadeCursor(Oberon.Mouse);
-			Gadgets.MakeMask(r, fx, fy, msg.dlink, mask);
-			Display3.ReplConst(mask, Display3.invertC, msg.X, fy, 1, r.H, Display.invert);
-			mx := msg.X; keysum := msg.keys;
-			REPEAT
-				Input.Mouse(keys, x, y);
-				keysum := keysum + keys;
-				IF (keys # {}) & (x # mx) & (x >= ix) & (x < ix + iw) THEN
-					Oberon.FadeCursor(Oberon.Mouse);
-					Display3.ReplConst(mask, Display3.invertC, mx, fy, 1, r.H, Display.invert);
-					Display3.ReplConst(mask, Display3.invertC, x, fy, 1, r.H, Display.invert);
-					mx := x
-				END;
-				Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, x, y)
-			UNTIL keys = {};
-			Oberon.FadeCursor(Oberon.Mouse);
-			Display3.ReplConst(mask, Display3.invertC, mx, fy, 1, r.H, Display.invert);
-			IF keysum = {MR} THEN
-				FigureGadgets.ScrollFrame(r.dsc(LeoFrames.Frame), ix + iw - mx, 0)
-			ELSIF keysum = {ML} THEN
-				FigureGadgets.ScrollFrame(r.dsc(LeoFrames.Frame), ix - mx, 0)
-			END
-		ELSIF Effects.Inside(msg.X, msg.Y, fx, fy, RulerWidth, ih) & ((msg.keys = {ML}) OR (msg.keys = {MR})) THEN
-			Oberon.FadeCursor(Oberon.Mouse);
-			Gadgets.MakeMask(r, fx, fy, msg.dlink, mask);
-			Display3.ReplConst(mask, Display3.invertC, fx, msg.Y, r.W, 1, Display.invert);
-			my := msg.Y; keysum := msg.keys;
-			REPEAT
-				Input.Mouse(keys, x, y);
-				keysum := keysum + keys;
-				IF (keys # {}) & (y # my) & (y >= fy) & (y < iy) THEN
-					Oberon.FadeCursor(Oberon.Mouse);
-					Display3.ReplConst(mask, Display3.invertC, fx, my, r.W, 1, Display.invert);
-					Display3.ReplConst(mask, Display3.invertC, fx, y, r.W, 1, Display.invert);
-					my := y
-				END;
-				Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, x, y)
-			UNTIL keys = {};
-			Oberon.FadeCursor(Oberon.Mouse);
-			Display3.ReplConst(mask, Display3.invertC, fx, my, r.W, 1, Display.invert);
-			IF keysum = {ML} THEN
-				FigureGadgets.ScrollFrame(r.dsc(LeoFrames.Frame), 0, fy + ih - my)
-			ELSIF keysum = {MR} THEN
-				FigureGadgets.ScrollFrame(r.dsc(LeoFrames.Frame), 0, fy - my)
-			END
-		ELSIF Effects.Inside(msg.X, msg.Y, fx, iy, RulerWidth, RulerWidth) & ((msg.keys = {ML}) OR (msg.keys = {MR})) THEN
-			Oberon.RemoveMarks(fx, iy, RulerWidth, RulerWidth);
-			Gadgets.MakeMask(r, fx, fy, msg.dlink, mask);
-			Display3.Rect3D(mask, Display3.bottomC, Display3.topC, fx, iy, RulerWidth, RulerWidth, 1, Display.replace);
-			Display3.ReplConst(mask, Display3.black, fx + RulerWidth DIV 4, iy + RulerWidth DIV 2, RulerWidth DIV 2, 1, Display.replace);
-			IF msg.keys = {2} THEN
-				Display3.ReplConst(mask, Display3.black, fx + RulerWidth DIV 2, iy + RulerWidth DIV 4, 1, RulerWidth DIV 2, Display.replace)
-			END;
-			mx := msg.X; my := msg.Y; keysum := msg.keys;
-			REPEAT
-				Input.Mouse(keys, x, y);
-				keysum := keysum + keys;
-				Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, x, y)
-			UNTIL keys = {};
-			Oberon.FadeCursor(Oberon.Mouse);
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, iy, RulerWidth, RulerWidth, 1, Display.replace);
-			IF keysum = {MR} THEN	(* zoom out *)
-				FigureGadgets.ZoomFrame(r.dsc(LeoFrames.Frame), 0.5)
-			ELSIF keysum = {ML} THEN	(* zoom in *)
-				FigureGadgets.ZoomFrame(r.dsc(LeoFrames.Frame), 2)
-			END
-		ELSE
-			x := msg.X; y := msg.Y
-		END;
-		Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, x, y);
-		msg.res := 0
-	END TrackRuler;
-	
-	PROCEDURE RestoreRuler (r: Ruler; x, y, w, h, fx, fy: INTEGER; mask: Display3.Mask; dlink: Objects.Object);
-		CONST
-			rw = RulerWidth - 1;
-		VAR
-			f: LeoFrames.Frame; ix, iy, iw, ih, lx, rx, by, ty: INTEGER; fig: Figures.Figure; dm: Display.DisplayMsg;
-			dtick, xt, yt: REAL; scale, skip, n: LONGINT;
-		
-		PROCEDURE number (mask: Display3.Mask; x, y: INTEGER; n: LONGINT; down: BOOLEAN);
-			VAR dx, cx, cy, cw, ch: INTEGER; pat: Display.Pattern; m: LONGINT;
-		BEGIN
-			IF n < 0 THEN
-				Fonts.GetChar(RulerFont, "-", dx, cx, cy, cw, ch, pat);
-				Display3.CopyPattern(mask, Display3.black, pat, x + cx, y + cy, Display.paint);
-				IF down THEN DEC(y, RulerFont.height) ELSE INC(x, dx) END;
-				n := -n
-			END;
-			m := 100000;
-			WHILE m > n DO m := m DIV 10 END;
-			WHILE m > 1 DO
-				Fonts.GetChar(RulerFont, CHR(ORD("0") + n DIV m), dx, cx, cy, cw, ch, pat);
-				Display3.CopyPattern(mask, Display3.black, pat, x + cx, y + cy, Display.paint);
-				IF down THEN DEC(y, RulerFont.height) ELSE INC(x, dx) END;
-				n := n MOD m; m := m DIV 10
-			END;
-			Fonts.GetChar(RulerFont, CHR(ORD("0") + n), dx, cx, cy, cw, ch, pat);
-			Display3.CopyPattern(mask, Display3.black, pat, x + cx, y + cy, Display.paint)
-		END number;
-		
-	BEGIN
-		f := r.dsc(LeoFrames.Frame);
-		ix := fx + RulerWidth; iy := fy + r.H - RulerWidth; iw := r.W - RulerWidth; ih := r.H - RulerWidth;
-		Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, iy, RulerWidth, RulerWidth, 1, Display.replace);
-		Display3.ReplConst(mask, Display3.groupC, fx, fy, rw, ih, Display.replace);
-		Display3.ReplConst(mask, Display3.black, ix - 1, fy, 1, ih, Display.replace);
-		Display3.ReplConst(mask, Display3.groupC, ix, iy + 1, iw, rw, Display.replace);
-		Display3.ReplConst(mask, Display3.black, ix, iy, iw, 1, Display.replace);
-		ASSERT((f.obj # NIL) & (f.obj IS Figures.Figure));
-		fig := f.obj(Figures.Figure);
-		lx := SHORT(ENTIER(fx + RulerWidth + r.ox + 0.5));
-		rx := lx + SHORT(ENTIER(fig.width * r.scale + 0.5));
-		by := SHORT(ENTIER(fy + f.H + r.oy + 0.5));
-		ty := by + SHORT(ENTIER(fig.height * r.scale + 0.5));
-		IF (ix <= lx) & (rx <= ix + iw) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, lx, iy + 1, rx - lx, rw, 1, Display.replace)
-		ELSIF (ix <= lx) & (lx < ix + iw) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, lx, iy + 1, ix + iw - lx, rw, 1, Display.replace)
-		ELSIF (ix < rx) & (rx <= ix + iw) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, ix, iy + 1, rx - ix, rw, 1, Display.replace)
-		ELSIF (lx <= ix) & (ix + iw <= rx) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, ix, iy + 1, iw, rw, 1, Display.replace)
-		END;
-		IF (fy <= by) & (ty <= iy) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, by, rw, ty - by, 1, Display.replace)
-		ELSIF (fy <= by) & (by < iy) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, by, rw, iy - by, 1, Display.replace)
-		ELSIF (fy < ty) & (ty <= iy) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, fy, rw, ty - fy, 1, Display.replace)
-		ELSIF (by <= fy) & (iy <= ty) THEN
-			Display3.FilledRect3D(mask, Display3.topC, Display3.bottomC, Display3.textbackC, fx, fy, rw, ih, 1, Display.replace)
-		END;
-		
-		dtick := r.unit * r.scale; scale := 1;
-		WHILE dtick < 10 DO
-			dtick := 10*dtick; scale := 10*scale
-		END;
-		IF dtick < 20 THEN
-			skip := 10
-		ELSIF dtick < 40 THEN
-			skip := 5
-		ELSE
-			skip := 1
-		END;
-		n := -ENTIER(r.ox/dtick); xt := lx + n * dtick + 0.5;
-		WHILE xt < fx + r.W DO
-			IF n MOD skip = 0 THEN
-				Display3.ReplConst(mask, Display3.black, SHORT(ENTIER(xt)), iy+3, 1, rw-2, Display.replace);
-				number(mask, SHORT(ENTIER(xt))+2, iy+3, n * scale, FALSE)
+		IF (llx < urx) & (lly < ury) THEN
+			llu := SHORT(ENTIER(llx)); llv := SHORT(ENTIER(lly));
+			uru := -SHORT(ENTIER(-urx)); urv := -SHORT(ENTIER(-ury));
+			IF fig.lockLevel > 0 THEN
+				GfxRegions.AddRect(fig.damage, llu, llv, uru, urv);
+				IF bw > fig.bw THEN fig.bw := bw END
 			ELSE
-				Display3.ReplConst(mask, Display3.black, SHORT(ENTIER(xt)), iy+11, 1, rw-11, Display.replace)
+				GfxRegions.SetToRect(fig.damage, llu, llv, uru, urv);
+				fig.bw := bw;
+				Update(fig)
+			END
+		END
+	END UpdateRect;
+	
+	(** update shape area **)
+	PROCEDURE UpdateShape* (fig: Figure; shape: Shape);
+	BEGIN
+		IF (shape.llx < shape.urx) & (shape.lly < shape.ury) THEN
+			UpdateRect(fig, shape.llx, shape.lly, shape.urx, shape.ury, shape.bw)
+		ELSIF shape IS Layer THEN	(* empty layer must generate updates, too *)
+			UpdateRect(fig, GfxRegions.LBound, GfxRegions.LBound, GfxRegions.UBound, GfxRegions.UBound, 0)
+		END
+	END UpdateShape;
+	
+	
+	(**--- Selection ---**)
+	
+	PROCEDURE ValidateSelection* (fig: Figure);
+		VAR sm: SelectMsg; layer: Shape;
+	BEGIN
+		sm.id := validate;
+		fig.handle(fig, sm);
+		layer := fig.bottom; WHILE (layer # NIL) & ~layer(Layer).subsel DO layer := layer.up END;
+		IF layer # NIL THEN fig.seltime := Oberon.Time()	(* layer contains selected shapes *)
+		ELSE fig.seltime := -1
+		END;
+	END ValidateSelection;
+	
+	(** return current selection as a linked list of shapes **)
+	PROCEDURE Selection* (fig: Figure): Shape;
+		VAR sm: SelectMsg;
+	BEGIN
+		Objects.Stamp(sm); sm.id := get; sm.res := NIL;
+		IF fig.seltime >= 0 THEN
+			fig.handle(fig, sm)
+		END;
+		RETURN sm.res
+	END Selection;
+	
+	(** select linked list of shapes **)
+	PROCEDURE Select* (fig: Figure; shapes: Shape);
+		VAR obj: Objects.Object; sh: Shape;
+	BEGIN
+		IF shapes # NIL THEN
+			DisableUpdate(fig);
+			obj := shapes;
+			WHILE obj # NIL DO
+				sh := obj(Shape); sh.sel := TRUE; obj := obj.slink;
+				UpdateShape(fig, sh)
 			END;
-			INC(n);
-			xt := xt + dtick
-		END;
-		n := ENTIER(-r.oy/dtick); yt := by + n * dtick + 0.5;
-		WHILE yt > fy DO
-			IF n MOD skip = 0 THEN
-				Display3.ReplConst(mask, Display3.black, fx+1, SHORT(ENTIER(yt)), rw-2, 1, Display.replace);
-				number(mask, fx + 6, SHORT(ENTIER(yt))-10, n * scale, TRUE)
-			ELSE
-				Display3.ReplConst(mask, Display3.black, fx+1, SHORT(ENTIER(yt)), rw-11, 1, Display.replace)
+			ValidateSelection(fig);
+			EnableUpdate(fig)
+		END
+	END Select;
+	
+	(** deselect linked list of shapes **)
+	PROCEDURE Deselect* (fig: Figure; shapes: Shape);
+		VAR obj: Objects.Object; sm: SelectMsg;
+	BEGIN
+		IF shapes # NIL THEN
+			DisableUpdate(fig);
+			obj := shapes; sm.fig := fig; sm.id := reset;
+			WHILE obj # NIL DO
+				obj.handle(obj, sm); obj := obj.slink
 			END;
-			DEC(n);
-			yt := yt - dtick
+			ValidateSelection(fig);
+			EnableUpdate(fig)
+		END
+	END Deselect;
+	
+	(** make selection empty **)
+	PROCEDURE ClearSelection* (fig: Figure);
+		VAR sm: SelectMsg;
+	BEGIN
+		IF fig.seltime >= 0 THEN
+			DisableUpdate(fig);
+			sm.id := reset; fig.handle(fig, sm);
+			fig.seltime := -1;
+			EnableUpdate(fig)
+		END
+	END ClearSelection;
+	
+	(** mark shapes in selection **)
+	PROCEDURE MarkSelection* (fig: Figure);
+		VAR sm: SelectMsg; obj: Objects.Object;
+	BEGIN
+		IF fig.seltime >= 0 THEN
+			Objects.Stamp(sm); sm.id := get; sm.res := NIL; fig.handle(fig, sm);
+			obj := sm.res;
+			WHILE obj # NIL DO
+				obj(Shape).marked := TRUE; obj := obj.slink
+			END
+		END
+	END MarkSelection;
+	
+	
+	(**--- Commands ---**)
+	
+	(** validate all shapes in figure **)
+	PROCEDURE Validate* (fig: Figure);
+		VAR vm: ValidateMsg;
+	BEGIN
+		DisableUpdate(fig);
+		Objects.Stamp(vm); fig.handle(fig, vm);
+		EnableUpdate(fig)
+	END Validate;
+	
+	PROCEDURE InvertActions (cmd: Command);
+		VAR cur, link: Action;
+	BEGIN
+		cur := cmd.actions; cmd.actions := NIL;
+		WHILE cur # NIL DO
+			link := cur.link; cur.link := cmd.actions; cmd.actions := cur; cur := link
+		END
+	END InvertActions;
+	
+	PROCEDURE DoActions (fig: Figure; cmd: Command);
+		VAR cur: Action;
+	BEGIN
+		InvertActions(cmd);
+		DisableUpdate(fig);
+		ClearSelection(fig);
+		cur := cmd.actions;
+		WHILE cur # NIL DO
+			cur.do(fig, cur); cur := cur.link
 		END;
-		
-		Objects.Stamp(dm); dm.device := Display.screen; dm.id := Display.full; dm.F := f; dm.dlink := dlink; dm.res := -1;
-		IF (x > RulerWidth) OR (x + w < r.W) OR (y > 0) OR (y + h < r.H - RulerWidth) THEN
-			dm.id := Display.area;
-			dm.u := x - RulerWidth; dm.v := y - ih + 1; dm.w := w; dm.h := h
+		ValidateSelection(fig); Validate(fig);
+		EnableUpdate(fig)
+	END DoActions;
+	
+	PROCEDURE UndoActions (fig: Figure; cmd: Command);
+		VAR cur: Action;
+	BEGIN
+		InvertActions(cmd);
+		DisableUpdate(fig);
+		ClearSelection(fig);
+		cur := cmd.actions;
+		WHILE cur # NIL DO
+			cur.undo(fig, cur); cur := cur.link
 		END;
-		ForwardRuler(r, fx, fy, dm);
-		IF Gadgets.selected IN r.state THEN
-			Display3.FillPattern(mask, Display3.white, Display3.selectpat, fx, fy, fx + x, fy + y, w, h, Display.paint)
+		ValidateSelection(fig); Validate(fig);
+		EnableUpdate(fig)
+	END UndoActions;
+	
+	(** begin a new command (nested calls allowed) **)
+	PROCEDURE BeginCommand* (fig: Figure);
+	BEGIN
+		INC(fig.cmdLevel);
+		IF fig.cmdLevel = 1 THEN
+			NEW(fig.curCmd)
 		END
-	END RestoreRuler;
+	END BeginCommand;
 	
-	PROCEDURE PrintRuler (r: Ruler; VAR msg: Display.DisplayMsg);
-		VAR mask: Display3.Mask; x, y, w, h, tx, ty: INTEGER;
+	(** add an action to the current command **)
+	PROCEDURE AddAction* (fig: Figure; action: Action);
+		VAR cmd: Command;
 	BEGIN
-		Gadgets.MakePrinterMask(r, msg.x, msg.y, msg.dlink, mask);
-		x := msg.x + SHORT(LONG(r.X) * 10000 DIV Printer.Unit);
-		y := msg.y + SHORT(LONG(r.Y) * 10000 DIV Printer.Unit);
-		w := SHORT(LONG(r.W) * 10000 DIV Printer.Unit);
-		h := SHORT(LONG(r.H) * 10000 DIV Printer.Unit);
-		Printer3.ReplConst(mask, Display3.groupC, x, y, w, h, Display.replace);
-		tx := msg.x; ty := msg.y;
-		msg.x := msg.x + x; msg.y := msg.y + y;
-		Figures.Forward(r, r.dsc, msg);
-		msg.x := tx; msg.y := ty
-	END PrintRuler;
+		ASSERT((action.do # NIL) & (action.undo # NIL), 100);
+		ASSERT(fig.cmdLevel > 0, 101);
+		action.link := NIL;
+		cmd := fig.curCmd;
+		IF cmd.last = NIL THEN cmd.actions := action
+		ELSE cmd.last.link := action
+		END;
+		cmd.last := action
+	END AddAction;
 	
-	PROCEDURE ModifyRuler (r: Ruler; VAR msg: Display.ModifyMsg);
-		VAR mm: Display.ModifyMsg;
+	(** cancel the current command and revert all changes it may already have applied **)
+	PROCEDURE CancelCommand* (fig: Figure);
+		VAR cmd: Command;
 	BEGIN
-		Objects.Stamp(mm); mm.id := Display.extend; mm.F := r.dsc; mm.mode := Display.state;
-		mm.X := RulerWidth; mm.Y := 1 - msg.H; mm.W := msg.W - RulerWidth; mm.H := msg.H - RulerWidth;
-		mm.dX := mm.X - r.dsc.X; mm.dY := mm.Y - r.dsc.Y; mm.dW := mm.W - r.dsc.W; mm.dH := mm.H - r.dsc.H;
-		mm.x := 0; mm.y := 0; mm.res := -1;
-		r.dsc.handle(r.dsc, mm);
-		Gadgets.framehandle(r, msg)
-	END ModifyRuler;
-	
-	PROCEDURE ModifyRulerContent (r: Ruler; VAR msg: Display.ModifyMsg);
-		VAR mm: Display.ModifyMsg;
-	BEGIN
-		IF msg.stamp # r.stamp THEN
-			r.stamp := msg.stamp; mm.id := Display.extend; mm.F := r; mm.mode := Display.display;
-			mm.X := r.X + msg.dX; mm.Y := r.Y + msg.dY; mm.W := msg.W + RulerWidth; mm.H := msg.H + RulerWidth;
-			mm.dX := msg.dX; mm.dY := msg.dY; mm.dW := mm.W - r.W; mm.dH := mm.H - r.H;
-			Display.Broadcast(mm)
-		END
-	END ModifyRulerContent;
-	
-	PROCEDURE CopyRuler (VAR msg: Objects.CopyMsg; from, to: Ruler);
-		VAR cm: Objects.CopyMsg;
-	BEGIN
-		Gadgets.CopyFrame(msg, from, to);
-		Objects.Stamp(cm); cm.id := Objects.shallow;
-		from.dsc.handle(from.dsc, cm);
-		to.dsc := cm.obj(Gadgets.Frame);
-		to.ox := from.ox; to.oy := from.oy; to.scale := from.scale; to.unit := from.unit
-	END CopyRuler;
-	
-	PROCEDURE HandleRuler (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR r, copy: Ruler; fx, fy: INTEGER; mask: Display3.Mask; frame: LeoFrames.Frame; ver: LONGINT;
-	BEGIN
-		r := obj(Ruler);
-		IF msg IS Display.FrameMsg THEN
-			WITH msg: Display.FrameMsg DO
-				IF (msg.F = NIL) OR (msg.F = r) THEN
-					IF msg IS Oberon.InputMsg THEN
-						WITH msg: Oberon.InputMsg DO
-							fx := msg.x + r.X; fy := msg.y + r.Y;
-							IF (msg.id = Oberon.track) & Gadgets.InActiveArea(r, msg) & ~(Gadgets.selected IN r.state) THEN
-								IF Effects.Inside(msg.X, msg.Y, fx + RulerWidth, fy, r.W - RulerWidth, r.H - RulerWidth) THEN
-									ForwardRuler(r, fx, fy, msg)
-								ELSE
-									TrackRuler(r, fx, fy, msg)
-								END
-							ELSIF msg.id = Oberon.consume THEN
-								ForwardRuler(r, fx, fy, msg)
-							ELSE
-								Gadgets.framehandle(r, msg)
-							END
-						END
-					ELSIF msg IS Display.DisplayMsg THEN
-						WITH msg: Display.DisplayMsg DO
-							fx := msg.x + r.X; fy := msg.y + r.Y;
-							IF msg.device = Display.screen THEN
-								IF (msg.id = Display.full) OR (msg.F = NIL) THEN
-									Gadgets.MakeMask(r, fx, fy, msg.dlink, mask);
-									RestoreRuler(r, 0, 0, r.W, r.H, fx, fy, mask, msg.dlink)
-								ELSIF msg.id = Display.area THEN
-									Gadgets.MakeMask(r, fx, fy, msg.dlink, mask);
-									Display3.AdjustMask(mask, fx + msg.u, fy + r.H - 1 + msg.v, msg.w, msg.h);
-									RestoreRuler(r, msg.u, msg.v + r.H - 1, msg.w, msg.h, fx, fy, mask, msg.dlink)
-								END
-							ELSIF msg.device = Display.printer THEN
-								IF msg.id = Display.contents THEN
-									ForwardRuler(r, fx, fy, msg)
-								ELSIF msg.id = Display.full THEN
-									PrintRuler(r, msg)
-								END
-							END
-						END
-					ELSIF msg IS Display.ModifyMsg THEN
-						ModifyRuler(r, msg(Display.ModifyMsg))
-					ELSIF msg IS Display.LocateMsg THEN
-						WITH msg: Display.LocateMsg DO
-							fx := msg.x + r.X; fy := msg.y + r.Y;
-							IF (msg.loc = NIL) & Effects.Inside(msg.X, msg.Y, fx, fy, r.W, r.H) THEN
-								ForwardRuler(r, fx, fy, msg);
-								IF msg.loc = NIL THEN
-									msg.loc := r; msg.u := msg.X - fx; msg.v := msg.Y - (fy + r.H - 1); msg.res := 0
-								END
-							END
-						END
-					ELSIF msg IS Display3.OverlapMsg THEN
-						r.mask := msg(Display3.OverlapMsg).M;
-						SetRulerContentMask(r)
-					ELSIF msg.F # NIL THEN
-						Gadgets.framehandle(r, msg)
-					ELSE
-						ForwardRuler(r, msg.x + r.X, msg.y + r.Y, msg)
-					END
-				ELSIF msg.F = r.dsc THEN
-					IF msg IS Display3.UpdateMaskMsg THEN
-						SetRulerContentMask(r)
-					ELSIF msg IS Display.ModifyMsg THEN
-						ModifyRulerContent(r, msg(Display.ModifyMsg))
-					ELSIF msg IS Display.DisplayMsg THEN
-						frame := r.dsc(LeoFrames.Frame);
-						IF (frame.ox # r.ox) OR (frame.oy # r.oy) OR (frame.scale # r.scale) OR (frame.unit # r.unit) THEN
-							r.ox := frame.ox; r.oy := frame.oy; r.scale := frame.scale; r.unit := frame.unit;
-							Gadgets.Update(r);
-							msg.res := 0
-						ELSE
-							ForwardRuler(r, msg.x + r.X, msg.y + r.Y, msg)
-						END
-					ELSE
-						ForwardRuler(r, msg.x + r.X, msg.y + r.Y, msg)
-					END
-				ELSE
-					ForwardRuler(r, msg.x + r.X, msg.y + r.Y, msg)
-				END
-			END
-		ELSIF msg IS Gadgets.UpdateMsg THEN
-			WITH msg: Gadgets.UpdateMsg DO
-				IF msg.obj = r.dsc(LeoFrames.Frame).obj THEN r.scale := 0 END;	(* force update when content frame is refreshed *)
-				ForwardRuler(r, msg.x + r.X, msg.y + r.Y, msg)
-			END
-		ELSIF msg IS Objects.AttrMsg THEN
-			WITH msg: Objects.AttrMsg DO
-				Figures.HandleGenAttr(msg, "Leonardo.NewRuler");
-				IF msg.res < 0 THEN
-					Gadgets.framehandle(r, msg)
-				END
-			END
-		ELSIF msg IS Objects.CopyMsg THEN
-			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # r.stamp THEN
-					NEW(copy); r.dlink := copy; r.stamp := msg.stamp;
-					CopyRuler(msg, r, copy)
-				END;
-				msg.obj := r.dlink
-			END
-		ELSIF msg IS Objects.BindMsg THEN
-			r.dsc.handle(r.dsc, msg);
-			Gadgets.framehandle(r.dsc, msg)
-		ELSIF msg IS Objects.FileMsg THEN
-			WITH msg: Objects.FileMsg DO
-				Gadgets.framehandle(r, msg);
-				IF msg.id = Objects.store THEN
-					Files.WriteNum(msg.R, 1);
-					Gadgets.WriteRef(msg.R, r.lib, r.dsc)
-				ELSIF msg.id = Objects.load THEN
-					Files.ReadNum(msg.R, ver);
-					IF ver = 1 THEN
-						Gadgets.ReadRef(msg.R, r.lib, obj);
-						IF (obj # NIL) & (obj IS LeoFrames.Frame) THEN
-							r.dsc := obj(LeoFrames.Frame)
-						ELSE
-							obj := Gadgets.CreateObject("Leonardo.NewFrame");
-							r.dsc := obj(LeoFrames.Frame)
-						END
-					END
-				END
-			END
-		ELSE
-			Gadgets.framehandle(r, msg)
-		END
-	END HandleRuler;
-	
-	PROCEDURE InitRuler* (r: Ruler; main: LeoFrames.Frame);
-	BEGIN
-		r.handle := HandleRuler;
-		r.dsc := main;
-		IF main # NIL THEN
-			r.W := main.W + RulerWidth; r.H := main.H + RulerWidth;
-			main.X := RulerWidth; main.Y := -r.H;
-			r.ox := main.ox; r.oy := main.oy; r.scale := main.scale; r.unit := main.unit
-		END
-	END InitRuler;
-	
-	PROCEDURE NewRuler*;
-		VAR r: Ruler;
-	BEGIN
-		NEW(r); InitRuler(r, NIL);
-		Objects.NewObj := r
-	END NewRuler;
-	
-	
-	(**--- Document ---**)
-	
-	PROCEDURE LoadDoc (doc: Documents.Document);
-		VAR
-			main: LeoFrames.Frame; file: Files.File; r: Files.Rider; tag, ref: INTEGER; name: ARRAY 64 OF CHAR; ch: CHAR;
-			lib: Objects.Library; len: LONGINT; obj: Objects.Object; ff: FigureGadgets.Frame; fig: Figures.Figure;
-			layer: LeoFrames.Layer; ruler: Ruler;
-	BEGIN
-		main := NIL;
-		file := Files.Old(doc.name);
-		IF file # NIL THEN
-			Files.Set(r, file, 0);
-			Files.ReadInt(r, tag);
-			IF tag = Documents.Id THEN
-				Files.ReadString(r, name);
-				Files.ReadInt(r, doc.X); Files.ReadInt(r, doc.Y);
-				Files.ReadInt(r, doc.W); Files.ReadInt(r, doc.H);
-				Files.ReadInt(r, ref);
-				Files.Read(r, ch);
-				IF ch = Objects.LibBlockId THEN
-					NEW(lib); Objects.OpenLibrary(lib);
-					Objects.LoadLibrary(lib, file, Files.Pos(r), len);
-					lib.GetObj(lib, ref, obj);
-					IF (obj # NIL) & (obj IS LeoFrames.Frame) THEN
-						main := obj(LeoFrames.Frame);
-						ASSERT((main.obj # NIL) & (main.obj IS Figures.Figure), 110);
-					ELSIF (obj # NIL) & (obj IS FigureGadgets.Frame) THEN
-						ff := obj(FigureGadgets.Frame);
-						ASSERT((ff.obj # NIL) & (ff.obj IS Figures.Figure), 111);
-						NEW(main); LeoFrames.InitFrame(main, ff.obj(Figures.Figure), Figures.cm, 10);
-						main.col := ff.col; main.ox := ff.ox; main.oy := ff.oy; main.scale := ff.scale
-					END
-				END
+		cmd := fig.curCmd;
+		IF cmd.actions # NIL THEN
+			IF cmd.done # NIL THEN cmd.done.link := NIL; cmd.last := cmd.done
+			ELSE cmd.actions := NIL; cmd.last := NIL
 			END
 		END;
-		IF main = NIL THEN	(* open with empty figure *)
-			IF doc.name = "" THEN doc.name := "Unnamed.Fig" END;
-			NEW(fig); Figures.Init(fig, Figures.A4W, Figures.A4H);
-			NEW(layer); LeoFrames.InitLayer(layer, "Main", TRUE, TRUE, TRUE, TRUE);
-			Figures.Integrate(fig, fig.root, layer);
-			NEW(main); LeoFrames.InitFrame(main, fig, Figures.cm, 10)
+		IF (fig.cmdLevel = 1) & (cmd.actions # NIL) THEN
+			UndoActions(fig, cmd)
 		END;
-		NEW(ruler); InitRuler(ruler, main);
-		Documents.Init(doc, ruler)
-	END LoadDoc;
+		DEC(fig.cmdLevel)
+	END CancelCommand;
 	
-	PROCEDURE StoreDoc (doc: Documents.Document);
-		VAR
-			bak: ARRAY 64 OF CHAR; res: INTEGER; frame: Display.Frame; main: LeoFrames.Frame; bm: Objects.BindMsg;
-			file: Files.File; r: Files.Rider; len: LONGINT; sm: StoreMsg;
+	(** commit current command and execute actions **)
+	PROCEDURE EndCommand* (fig: Figure);
+		VAR cmd: Command; cur: Action;
 	BEGIN
-		Texts.WriteString(W, "Store ");
-		Texts.Write(W, 22X); Texts.WriteString(W, doc.name); Texts.Write(W, 22X);
-		Texts.Append(Oberon.Log, W.buf);
-		
-		(* keep backup *)
-		COPY(doc.name, bak);
-		Strings.Append(bak, ".Bak");
-		Files.Rename(doc.name, bak, res);
-		
-		frame := doc.dsc;
-		IF (frame # NIL) & (frame IS Ruler) THEN frame := frame.dsc END;
-		IF (frame # NIL) & (frame IS LeoFrames.Frame) THEN
-			main := frame(LeoFrames.Frame);
-			NEW(bm.lib); Objects.OpenLibrary(bm.lib);
-			main.handle(main, bm);
-			
-			file := Files.New(doc.name);
-			IF file # NIL THEN
-				Files.Set(r, file, 0);
-				Files.WriteInt(r, Documents.Id);
-				Files.WriteString(r, "Leonardo.NewDoc");
-				Files.WriteInt(r, doc.X); Files.WriteInt(r, doc.Y);
-				Files.WriteInt(r, doc.W); Files.WriteInt(r, doc.H);
-				Files.WriteInt(r, main.ref);
-				Objects.StoreLibrary(bm.lib, file, Files.Pos(r), len);
-				Files.Register(file);
-				sm.F := NIL; sm.fig := main.obj(Figures.Figure);
-				Display.Broadcast(sm)
-			ELSE
-				Texts.WriteString(W, " - invalid document name")
-			END
-		ELSE
-			Texts.WriteString(W, " - no figure frame")
-		END;
-		Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-	END StoreDoc;
-	
-	PROCEDURE HandleDocAttr (doc: Documents.Document; VAR msg: Objects.AttrMsg);
-	BEGIN
-		IF msg.id = Objects.get THEN
-			IF msg.name = "Gen" THEN
-				msg.class := Objects.String; msg.s := "Leonardo.NewDoc"; msg.res := 0
-			ELSIF msg.name = "Adaptive" THEN
-				msg.class := Objects.Bool; msg.b := TRUE; msg.res := 0
-			ELSE
-				Documents.Handler(doc, msg)
-			END
-		ELSE
-			Documents.Handler(doc, msg)
-		END
-	END HandleDocAttr;
-	
-	PROCEDURE HandleDocLink (doc: Documents.Document; VAR msg: Objects.LinkMsg);
-	BEGIN
-		IF msg.id = Objects.get THEN
-			IF msg.name = "DeskMenu" THEN
-				msg.obj := Gadgets.CopyPublicObject("Leonardo.DeskMenu", TRUE);
-				IF msg.obj = NIL THEN msg.obj := Desktops.NewMenu(MenuBar) END;
-				msg.res := 0
-			ELSIF msg.name = "SystemMenu" THEN
-				msg.obj := Gadgets.CopyPublicObject("Leonardo.SystemMenu", TRUE);
-				IF msg.obj = NIL THEN msg.obj := Desktops.NewMenu(MenuBar) END;
-				msg.res := 0
-			ELSIF msg.name = "UserMenu" THEN
-				msg.obj := Gadgets.CopyPublicObject("Leonardo.UserMenu", TRUE);
-				IF msg.obj = NIL THEN msg.obj := Desktops.NewMenu(MenuBar) END;
-				msg.res := 0
-			ELSE
-				Documents.Handler(doc, msg)
-			END
-		ELSE
-			Documents.Handler(doc, msg)
-		END
-	END HandleDocLink;
-	
-	PROCEDURE HandleDoc* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR doc: Documents.Document; main: LeoFrames.Frame; menu, f: Display.Frame; s: ARRAY 64 OF CHAR;
-	BEGIN
-		doc := obj(Documents.Document);
-		IF msg IS Figures.UpdateMsg THEN
-			WITH msg: Figures.UpdateMsg DO
-				main := doc.dsc.dsc(LeoFrames.Frame);
-				IF (main.obj = msg.fig) & ~(16 IN doc.state) THEN
-					INCL(doc.state, 16);
-					menu := Desktops.CurMenu(msg.dlink);
-					IF menu # NIL THEN
-						f := menu.dsc;
-						WHILE f # NIL DO
-							Attributes.GetString(f, "Caption", s);
-							IF s = "Store" THEN
-								Attributes.SetString(f, "Caption", "Store!");
-								Gadgets.Update(f);
-								f := NIL
-							ELSE
-								f := f.next
-							END
-						END
-					END
-				END;
-				Documents.Handler(doc, msg)
-			END
-		ELSIF msg IS StoreMsg THEN
-			WITH msg: StoreMsg DO
-				main := doc.dsc.dsc(LeoFrames.Frame);
-				IF (msg.fig = main.obj) & (16 IN doc.state) THEN
-					EXCL(doc.state, 16);
-					menu := Desktops.CurMenu(msg.dlink);
-					IF menu # NIL THEN
-						f := menu.dsc;
-						WHILE f # NIL DO
-							Attributes.GetString(f, "Caption", s);
-							IF s = "Store!" THEN
-								Attributes.SetString(f, "Caption", "Store");
-								Gadgets.Update(f);
-								f := NIL
-							ELSE
-								f := f.next
-							END
-						END
-					END
-				END;
-				Documents.Handler(doc, msg)
-			END
-		ELSIF msg IS Objects.AttrMsg THEN
-			HandleDocAttr(doc, msg(Objects.AttrMsg))
-		ELSIF msg IS Objects.LinkMsg THEN
-			HandleDocLink(doc, msg(Objects.LinkMsg))
-		ELSE
-			Documents.Handler(doc, msg)
-		END
-	END HandleDoc;
-	
-	(** initialize document **)
-	PROCEDURE InitDoc* (doc: Documents.Document);
-	BEGIN
-		doc.handle := HandleDoc;
-		doc.Load := LoadDoc; doc.Store := StoreDoc;
-		doc.X := 0; doc.W := Display.Width DIV 2; doc.H := Display.Height DIV 2
-	END InitDoc;
-	
-	(** document generator **)
-	PROCEDURE NewDoc*;
-		VAR doc: Documents.Document;
-	BEGIN
-		NEW(doc); InitDoc(doc);
-		Objects.NewObj := doc
-	END NewDoc;
-	
-	(** open document with figure **)
-	PROCEDURE OpenFigure* (fig: Figures.Figure; name: ARRAY OF CHAR);
-		VAR frame: LeoFrames.Frame; doc: Documents.Document; ruler: Ruler;
-	BEGIN
-		NEW(frame); LeoFrames.InitFrame(frame, fig, Figures.cm, 10);
-		NEW(doc); InitDoc(doc);
-		COPY(name, doc.name);
-		NEW(ruler); InitRuler(ruler, frame);
-		Documents.Init(doc, ruler);
-		Desktops.ShowDoc(doc)
-	END OpenFigure;
-	
-	
-	(**--- Editing Commands ---**)
-	
-	PROCEDURE FindFrame* (VAR frame: LeoFrames.Frame);
-		VAR f: Display.Frame; x, y: INTEGER;
-	BEGIN
-		Gadgets.ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, f, x, y);
-		IF (f # NIL) & (f IS LeoFrames.Frame) THEN
-			frame := f(LeoFrames.Frame)
-		ELSE
-			frame := NIL
-		END
-	END FindFrame;
-	
-	PROCEDURE FindFigure* (VAR fig: Figures.Figure);
-		VAR doc: Documents.Document; f: Display.Frame; x, y: INTEGER; frame: Gadgets.Frame; sm: Display.SelectMsg;
-	BEGIN
-		fig := NIL;
-		doc := Desktops.CurDoc(Gadgets.context);
-		IF doc # NIL THEN
-			f := doc.dsc;
-			IF (f # NIL) & (f IS Gadgets.Frame) THEN
-				frame := f(Gadgets.Frame);
-				IF (frame.obj # NIL) & (frame.obj IS Figures.Figure) THEN
-					fig := frame.obj(Figures.Figure)
-				ELSIF (frame.dsc # NIL) & (frame.dsc IS Gadgets.Frame) THEN	(* is probably ruler *)
-					frame := frame.dsc(Gadgets.Frame);
-					IF (frame.obj # NIL) & (frame.obj IS Figures.Figure) THEN
-						fig := frame.obj(Figures.Figure)
-					END
+		cmd := fig.curCmd;
+		IF cmd.actions # NIL THEN
+			DisableUpdate(fig);
+			IF cmd.done # NIL THEN cur := cmd.done.link	(* don't re-execute actions of nested commands *)
+			ELSE cur := cmd.actions
+			END;
+			WHILE cur # NIL DO
+				cur.do(fig, cur); cur := cur.link
+			END;
+			cmd.done := cmd.last;	(* last action that has been executed *)
+			ValidateSelection(fig); Validate(fig);
+			IF fig.cmdLevel = 1 THEN
+				fig.undoCmd.next := cmd; cmd.prev := fig.undoCmd; cmd.next := NIL;
+				fig.undoCmd := cmd; fig.curCmd := NIL;
+				IF fig.nofCmds = fig.maxCmds THEN fig.firstCmd := fig.firstCmd.next; fig.firstCmd.prev := NIL
+				ELSE INC(fig.nofCmds)
 				END
-			END
+			END;
+			EnableUpdate(fig)
 		END;
-		IF (fig = NIL) & Oberon.Pointer.on THEN
-			Gadgets.ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, f, x, y);
-			IF (f # NIL) & (f IS Gadgets.Frame) THEN
-				frame := f(Gadgets.Frame);
-				IF (frame.obj # NIL) & (frame.obj IS Figures.Figure) THEN
-					fig := frame.obj(Figures.Figure)
-				END
-			END
-		END;
-		IF fig = NIL THEN
-			sm.F := NIL; sm.id := Display.get; sm.sel := NIL; sm.obj := NIL; sm.time := -1;
-			Display.Broadcast(sm);
-			IF (sm.time >= 0) & (sm.sel # NIL) & (sm.sel IS Gadgets.Frame) THEN
-				frame := sm.sel(Gadgets.Frame);
-				IF (frame.obj # NIL) & (frame.obj IS Figures.Figure) THEN
-					fig := frame.obj(Figures.Figure)
-				END
-			END
-		END;
-		IF fig = NIL THEN
-			Gadgets.ThisFrame(Oberon.Pointer.X, Oberon.Pointer.Y, f, x, y);
-			IF (f # NIL) & (f IS Gadgets.Frame) THEN
-				frame := f(Gadgets.Frame);
-				IF (frame.obj # NIL) & (frame.obj IS Figures.Figure) THEN
-					fig := frame.obj(Figures.Figure)
-				END
-			END
-		END
-	END FindFigure;
+		DEC(fig.cmdLevel)
+	END EndCommand;
 	
-	(** undo last operation **)
-	PROCEDURE Undo*;
-		VAR fig: Figures.Figure;
+	(** undo next undoable command **)
+	PROCEDURE Undo* (fig: Figure);
+		VAR cmd: Command;
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.Undo(fig)
+		ASSERT(fig.cmdLevel = 0, 100);
+		cmd := fig.undoCmd;
+		IF cmd.prev # NIL THEN
+			fig.undoCmd := cmd.prev;
+			UndoActions(fig, cmd);
+			DEC(fig.nofCmds)
 		END
 	END Undo;
 	
-	(** redo most recently undone operation **)
-	PROCEDURE Redo*;
-		VAR fig: Figures.Figure;
+	(** redo most recently undone command **)
+	PROCEDURE Redo* (fig: Figure);
+		VAR cmd: Command;
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.Redo(fig)
+		ASSERT(fig.cmdLevel = 0, 100);
+		cmd := fig.undoCmd.next;
+		IF cmd # NIL THEN
+			fig.undoCmd := cmd;
+			DoActions(fig, cmd);
+			INC(fig.nofCmds)
 		END
 	END Redo;
 	
-	(** open marked frame displaying figure as Leonardo document **)
-	PROCEDURE Open*;
-		VAR s: Attributes.Scanner; fig: Figures.Figure;
-	BEGIN
-		Attributes.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);
-		Attributes.Scan(s);
-		IF (s.class = Attributes.Char) & (s.c = "*") THEN
-			FindFigure(fig);
-			IF fig # NIL THEN
-				Oberon.FadeCursor(Oberon.Pointer);	(* otherwise document is more likely to appear on top of marked figure *)
-				OpenFigure(fig, "Unnamed.Fig")
-			END
-		END
-	END Open;
 	
-	(** integrate marked document in a figure at caret **)
-	PROCEDURE Integrate*;
-		VAR fig: Figures.Figure; llx, lly, urx, ury, bw: REAL; frame: FigureGadgets.Frame;
+	(**--- Shape Attributes ---**)
+	
+	PROCEDURE DoBoolAction (fig: Figure; act: Action);
+		VAR ba: AttrAction; am: Objects.AttrMsg;
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetShapeBox(fig.root, llx, lly, urx, ury, bw);
-			IF (llx < urx) & (lly < ury) THEN
-				NEW(frame); FigureGadgets.InitFrame(frame, NIL);	(* fig = NIL => frame origin remains at (0, 0) *)
-				frame.obj := fig;
-				frame.ox := -(llx - bw); frame.oy := -(ury + bw);
-				frame.W := SHORT(ENTIER(urx - llx + 2*bw)); frame.H := SHORT(ENTIER(ury - lly + 2*bw));
-				INCL(frame.state, Gadgets.transparent);
-				Gadgets.Integrate(frame)
+		ba := act(AttrAction);
+		am.id := Objects.get; COPY(ba.name, am.name); am.res := -1; ba.shape.handle(ba.shape, am);
+		am.b := ~am.b;
+		am.id := Objects.set; am.res := -1; ba.shape.handle(ba.shape, am);
+		ba.shape.sel := TRUE; ba.shape.marked := TRUE
+	END DoBoolAction;
+	
+	(** set boolean attribute value with undoable action **)
+	PROCEDURE SetBool* (fig: Figure; shape: Shape; name: ARRAY OF CHAR; val: BOOLEAN);
+		VAR am: Objects.AttrMsg; ba: AttrAction;
+	BEGIN
+		am.id := Objects.get; COPY(name, am.name); am.res := -1; shape.handle(shape, am);
+		IF (am.res >= 0) & (am.class = Objects.Bool) & (am.b # val) THEN
+			NEW(ba); ba.shape := shape; COPY(name, ba.name); ba.do := DoBoolAction; ba.undo := DoBoolAction;
+			AddAction(fig, ba)
+		END
+	END SetBool;
+	
+	PROCEDURE DoIntAction (fig: Figure; act: Action);
+		VAR ia: IntAction; am: Objects.AttrMsg; val: LONGINT;
+	BEGIN
+		ia := act(IntAction);
+		am.id := Objects.get; COPY(ia.name, am.name); am.res := -1; ia.shape.handle(ia.shape, am);
+		val := am.i; am.i := ia.int; ia.int := val;
+		am.id := Objects.set; am.res := -1; ia.shape.handle(ia.shape, am);
+		ia.shape.sel := TRUE; ia.shape.marked := TRUE
+	END DoIntAction;
+	
+	(** set integer attribute value with undoable action **)
+	PROCEDURE SetInt* (fig: Figure; shape: Shape; name: ARRAY OF CHAR; val: LONGINT);
+		VAR am: Objects.AttrMsg; ia: IntAction;
+	BEGIN
+		am.id := Objects.get; COPY(name, am.name); am.res := -1; shape.handle(shape, am);
+		IF (am.res >= 0) & (am.class = Objects.Int) & (am.i # val) THEN
+			NEW(ia); ia.shape := shape; COPY(name, ia.name); ia.int := val; ia.do := DoIntAction; ia.undo := DoIntAction;
+			AddAction(fig, ia)
+		END
+	END SetInt;
+	
+	PROCEDURE DoRealAction (fig: Figure; act: Action);
+		VAR ra: RealAction; am: Objects.AttrMsg; val: REAL;
+	BEGIN
+		ra := act(RealAction);
+		am.id := Objects.get; COPY(ra.name, am.name); am.res := -1; ra.shape.handle(ra.shape, am);
+		val := am.x; am.x := ra.real; ra.real := val;
+		am.id := Objects.set; am.res := -1; ra.shape.handle(ra.shape, am);
+		ra.shape.sel := TRUE; ra.shape.marked := TRUE
+	END DoRealAction;
+	
+	(** set real attribute value with undoable action **)
+	PROCEDURE SetReal* (fig: Figure; shape: Shape; name: ARRAY OF CHAR; val: REAL);
+		VAR am: Objects.AttrMsg; ra: RealAction;
+	BEGIN
+		am.id := Objects.get; COPY(name, am.name); am.res := -1; shape.handle(shape, am);
+		IF (am.res >= 0) & (am.class = Objects.Real) & (am.x # val) THEN
+			NEW(ra); ra.shape := shape; COPY(name, ra.name); ra.real := val; ra.do := DoRealAction; ra.undo := DoRealAction;
+			AddAction(fig, ra)
+		END
+	END SetReal;
+	
+	PROCEDURE DoStringAction (fig: Figure; act: Action);
+		VAR sa: StringAction; am: Objects.AttrMsg; val: ARRAY 64 OF CHAR;
+	BEGIN
+		sa := act(StringAction);
+		am.id := Objects.get; COPY(sa.name, am.name); am.res := -1; sa.shape.handle(sa.shape, am);
+		COPY(am.s, val); COPY(sa.str, am.s); COPY(val, sa.str);
+		am.id := Objects.set; am.res := -1; sa.shape.handle(sa.shape, am);
+		sa.shape.sel := TRUE; sa.shape.marked := TRUE
+	END DoStringAction;
+	
+	(** set string attribute value with undoable action **)
+	PROCEDURE SetString* (fig: Figure; shape: Shape; name, val: ARRAY OF CHAR);
+		VAR am: Objects.AttrMsg; sa: StringAction;
+	BEGIN
+		am.id := Objects.get; COPY(name, am.name); am.res := -1; shape.handle(shape, am);
+		IF (am.res >= 0) & (am.class = Objects.String) & (am.s # val) THEN
+			NEW(sa); sa.shape := shape; COPY(name, sa.name); COPY(val, sa.str); sa.do := DoStringAction; sa.undo := DoStringAction;
+			AddAction(fig, sa)
+		END
+	END SetString;
+	
+	(** set color value with undoable action **)
+	PROCEDURE SetColor* (fig: Figure; shape: Shape; col: Display.Color);
+		VAR r, g, b: INTEGER;
+	BEGIN
+		Display.GetColor(col, r, g, b);
+		SetInt(fig, shape, "Red", r); SetInt(fig, shape, "Green", g); SetInt(fig, shape, "Blue", b)
+	END SetColor;
+	
+	(** set matrix value with undoable action; element numbers are appended to base name **)
+	PROCEDURE SetMatrix* (fig: Figure; shape: Shape; name: ARRAY OF CHAR; mat: GfxMatrix.Matrix);
+		VAR l, row, col: INTEGER; attr: ARRAY 66 OF CHAR;
+	BEGIN
+		l := 0; WHILE name[l] # 0X DO attr[l] := name[l]; INC(l) END; attr[l+2] := 0X;
+		FOR row := 0 TO 2 DO
+			attr[l] := CHR(ORD("0") + row);
+			FOR col := 0 TO 1 DO
+				attr[l+1] := CHR(ORD("0") + col);
+				SetReal(fig, shape, attr, mat[row, col])
 			END
 		END
+	END SetMatrix;
+	
+	
+	(**--- Transformations ---**)
+	
+	PROCEDURE Exchange (a: AttrAction);
+		VAR am: Objects.AttrMsg; i: LONGINT; r: REAL; s: ARRAY 64 OF CHAR;
+	BEGIN
+		am.id := Objects.get; COPY(a.name, am.name); am.res := -1; a.shape.handle(a.shape, am);
+		CASE am.class OF
+		| Objects.Int: i := am.i; am.i := a(IntAction).int; a(IntAction).int := i
+		| Objects.Real: r := am.x; am.x := a(RealAction).real; a(RealAction).real := r;
+		| Objects.String: COPY(am.s, s); COPY(a(StringAction).str, am.s); COPY(s, a(StringAction).str)
+		| Objects.Bool: am.b := ~am.b
+		ELSE
+		END;
+		am.id := Objects.set; am.res := -1; a.shape.handle(a.shape, am);
+	END Exchange;
+	
+	(** begin transformation by applying matrix to shape list and marking affected shapes **)
+	PROCEDURE BeginTransform* (fig: Figure; list: Shape; VAR mat: GfxMatrix.Matrix);
+		VAR obj: Objects.Object; cmd: Command; done, cur: Action; tm: TransformMsg;
+	BEGIN
+		BeginCommand(fig);
+		obj := list; WHILE obj # NIL DO obj(Shape).marked := TRUE; obj := obj.slink END;
+		cmd := fig.curCmd; done := cmd.done;
+		tm.id := apply; tm.mat := mat;
+		REPEAT
+			Objects.Stamp(tm); tm.notify := FALSE; fig.handle(fig, tm);
+			IF done # NIL THEN cur := done.link ELSE cur := cmd.actions END;
+			WHILE cur # NIL DO
+				IF cur IS AttrAction THEN Exchange(cur(AttrAction)) END;
+				done := cur; cur := cur.link
+			END;
+			tm.id := notify
+		UNTIL ~tm.notify
+	END BeginTransform;
+	
+	(** cancel current transformation **)
+	PROCEDURE CancelTransform* (fig: Figure);
+		VAR cmd: Command; cur: Action; um: UnmarkMsg;
+	BEGIN
+		cmd := fig.curCmd;
+		IF cmd.done # NIL THEN cur := cmd.done.link ELSE cur := cmd.actions END;
+		WHILE cur # NIL DO
+			IF cur IS AttrAction THEN Exchange(cur(RealAction)) END;
+			cur := cur.link
+		END;
+		fig.handle(fig, um);
+		CancelCommand(fig)
+	END CancelTransform;
+	
+	(** commit current transformation **)
+	PROCEDURE EndTransform* (fig: Figure);
+		VAR cmd: Command; cur: Action;
+	BEGIN
+		cmd := fig.curCmd;
+		IF cmd.done # NIL THEN cur := cmd.done.link ELSE cur := cmd.actions END;
+		WHILE cur # NIL DO	(* undo REAL actions *)
+			IF cur IS RealAction THEN Exchange(cur(RealAction)) END;
+			cur := cur.link
+		END;
+		EndCommand(fig)	(* redo all actions and validate *)
+	END EndTransform;
+	
+	(** transform list of shapes by matrix **)
+	PROCEDURE Transform* (fig: Figure; list: Shape; VAR mat: GfxMatrix.Matrix);
+	BEGIN
+		BeginTransform(fig, list, mat);
+		EndTransform(fig)
+	END Transform;
+	
+	
+	(**--- Control ---**)
+	
+	(** integrate a linked list of shapes (top-down) **)
+	PROCEDURE Integrate* (fig: Figure; shapes: Shape);
+		VAR cm: ControlMsg; obj: Objects.Object; s: Shape;
+	BEGIN
+		DisableUpdate(fig); BeginCommand(fig);
+		ClearSelection(fig);
+		cm.id := integrate; cm.bottom := shapes; cm.top := shapes;
+		obj := shapes.slink;
+		WHILE obj # NIL DO
+			s := obj(Shape); s.up := cm.bottom; cm.bottom.down := s; cm.bottom := s;
+			obj := obj.slink
+		END;
+		cm.cont := fig.active; cm.down := fig.active.top; cm.up := NIL; fig.handle(fig, cm);
+		EndCommand(fig); EnableUpdate(fig)
 	END Integrate;
 	
-	(** open picture containing marked frame **)
-	PROCEDURE MakePicture*;
-		VAR fig: Figures.Figure; llx, lly, urx, ury, bw: REAL; map: GfxMaps.Map; ctxt: GfxBuffer.Context; pict: Pictures.Picture;
+	(** delete linked list of shapes **)
+	PROCEDURE Delete* (fig: Figure; shapes: Shape);
+		VAR obj: Objects.Object; cm: ControlMsg;
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetShapeBox(fig.root, llx, lly, urx, ury, bw);
-			IF (llx < urx) & (lly < ury) THEN
-				NEW(map); GfxMaps.Create(map, SHORT(ENTIER(urx - llx + 2*bw)), SHORT(ENTIER(ury - lly + 2*bw)), GfxMaps.I8);
-				NEW(ctxt); GfxBuffer.Init(ctxt, map);
-				GfxBuffer.SetCoordinates(ctxt, -(llx - bw), -(lly - bw), ctxt.scale);
-				Gfx.Reset(ctxt);
-				Figures.Render(fig, Figures.Print, ctxt);
-				NEW(pict); GfxPictures.MapToPict(map, pict, GfxMaps.DisplayPal);
-				RembrandtDocs.OpenPict(pict, "")
-			END
-		END
-	END MakePicture;
-	
-	(** create eps file containing marked figure; optional parameters are: [filename [resolution [level]]] **)
-	PROCEDURE MakeEPS*;
-		VAR
-			fig: Figures.Figure; llx, lly, urx, ury, bw: REAL; s: Attributes.Scanner; name: ARRAY 32 OF CHAR; res: LONGINT;
-			level2: BOOLEAN; ctxt: GfxPS.Context;
-	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetShapeBox(fig.root, llx, lly, urx, ury, bw);
-			IF (llx < urx) & (lly < ury) THEN
-				Attributes.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);
-				Attributes.Scan(s);
-				IF s.class = Attributes.Name THEN COPY(s.s, name); Attributes.Scan(s)
-				ELSE name := "Figure.eps"
-				END;
-				IF s.class = Attributes.Int THEN res := s.i; Attributes.Scan(s)
-				ELSE res := 300
-				END;
-				level2 := (s.class = Attributes.Int) & (s.i = 2);
-				Texts.WriteString(W, "creating "); Texts.Write(W, 22X); Texts.WriteString(W, name); Texts.Write(W, 22X);
-				Texts.WriteString(W, ", res="); Texts.WriteInt(W, res, 0);
-				IF level2 THEN Texts.WriteString(W, ", level=2") ELSE Texts.WriteString(W, ", level=1") END;
-				Texts.Append(Oberon.Log, W.buf);
-				NEW(ctxt); GfxPS.InitEPS(ctxt, level2, res);
-				GfxPS.Open(ctxt, Files.New(name));
-				Figures.Render(fig, Figures.Print, ctxt);
-				GfxPS.Close(ctxt);
-				Texts.WriteString(W, "  done"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-			END
-		END
-	END MakeEPS;
-	
-	(** delete current figure selection **)
-	PROCEDURE Delete*;
-		VAR fig: Figures.Figure; sel: Figures.Shape;
-	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF sel # NIL THEN
-				Figures.Delete(fig, sel)
-			END
-		END
+		obj := shapes;
+		WHILE obj # NIL DO
+			obj(Shape).marked := TRUE; obj := obj.slink
+		END;
+		BeginCommand(fig);
+		cm.id := delete; fig.handle(fig, cm);
+		EndCommand(fig)
 	END Delete;
 	
-	(** copy selection **)
-	PROCEDURE Duplicate*;
-		VAR fig: Figures.Figure; sel: Figures.Shape; mat: GfxMatrix.Matrix;
+	(** create a copy of a linked list of shapes within a figure **)
+	PROCEDURE Clone* (fig: Figure; shapes: Shape; VAR copy: Shape);
+		VAR obj: Objects.Object; cm: ControlMsg; um: UnmarkMsg; s: Shape;
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF sel # NIL THEN
-				Figures.DisableUpdate(fig);
-				GfxMatrix.Translate(GfxMatrix.Identity, 5, -5, mat);
-				Figures.Transform(fig, sel, mat);
-				Figures.CopyShapes(sel, sel);
-				Figures.Undo(fig);
-				LeoFrames.Integrate(fig, NIL, sel);
-				Figures.EnableUpdate(fig)
+		obj := shapes;
+		WHILE obj # NIL DO
+			obj(Shape).marked := TRUE; obj := obj.slink
+		END;
+		Objects.Stamp(cm); cm.id := clone; cm.bottom := NIL; cm.top := NIL;
+		fig.handle(fig, cm);
+		fig.handle(fig, um);
+		s := cm.bottom; copy := NIL;
+		WHILE s # NIL DO
+			s.slink := copy; copy := s; s := s.up
+		END
+	END Clone;
+	
+	(** consume list of shapes in target shape located at (x, y) **)
+	PROCEDURE Consume* (fig: Figure; llx, lly, urx, ury: REAL; shapes: Shape; VAR recv: Shape);
+		VAR obj, link: Objects.Object; crd: CoordMsg; cm: ConsumeMsg;
+	BEGIN
+		obj := shapes; shapes := NIL;
+		WHILE obj # NIL DO
+			link := obj.slink; obj.slink := shapes; shapes := obj(Shape); obj := link
+		END;
+		BeginCommand(fig); recv := NIL; obj := shapes;
+		WHILE obj # NIL DO
+			Objects.Stamp(cm); cm.llx := llx; cm.lly := lly; cm.urx := urx; cm.ury := ury;
+			cm.bottom := obj(Shape); cm.top := cm.bottom; obj := obj.slink;
+			WHILE (obj # NIL) & (obj = cm.top.up) DO
+				link := obj.slink; obj.slink := cm.top; cm.top := obj(Shape); obj := link
+			END;
+			crd.dest := cm.bottom; crd.res := GfxMatrix.Identity; fig.handle(fig, crd);
+			cm.slgm := crd.res; cm.recv := NIL;
+			fig.handle(fig, cm);
+			recv := cm.recv
+		END;
+		EndCommand(fig)
+	END Consume;
+	
+	
+	(**--- Render ---**)
+	
+	(** render figure on context **)
+	PROCEDURE Render* (fig: Figure; id: INTEGER; ctxt: Gfx.Context);
+		VAR rm: RenderMsg; gdm, dsm: GfxMatrix.Matrix;
+	BEGIN
+		Objects.Stamp(rm); rm.id := id; rm.ctxt := ctxt;
+		Gfx.GetClipRect(ctxt, rm.llx, rm.lly, rm.urx, rm.ury);
+		gdm := ctxt.ctm; Gfx.ResetCTM(ctxt);
+		GfxMatrix.Invert(ctxt.ctm, dsm);
+		GfxMatrix.Concat(gdm, dsm, rm.gsm);
+		Gfx.SetCTM(ctxt, gdm);
+		fig.handle(fig, rm)
+	END Render;
+	
+	
+	(**--- Locate ---**)
+	
+	(** locate shapes in figure **)
+	PROCEDURE Locate* (fig: Figure; id: INTEGER; llx, lly, urx, ury: REAL): Shape;
+		VAR lm: LocateMsg;
+	BEGIN
+		Objects.Stamp(lm); lm.id := id; lm.llx := llx; lm.lly := lly; lm.urx := urx; lm.ury := ury; lm.res := NIL;
+		fig.handle(fig, lm);
+		RETURN lm.res
+	END Locate;
+	
+	(** project point (x, y) to nearest shape within rectangle (llx, lly, urx, ury) **)
+	PROCEDURE Project* (fig: Figure; x, y, llx, lly, urx, ury: REAL; VAR px, py: REAL; VAR res: Shape);
+		VAR lm: LocateMsg;
+	BEGIN
+		Objects.Stamp(lm); lm.id := project; lm.res := NIL; lm.x := x; lm.y := y; lm.px := x; lm.py := y;
+		lm.llx := llx; lm.lly := lly; lm.urx := urx; lm.ury := ury;
+		fig.handle(fig, lm);
+		px := lm.px; py := lm.py; res := lm.res
+	END Project;
+	
+	
+	(**--- Standard Handles ---**)
+	
+	(** draw default shape handles (in local coordinates) **)
+	PROCEDURE DrawHandles* (llx, lly, urx, ury: REAL; VAR rm: RenderMsg);
+		VAR ctm, lsmat: GfxMatrix.Matrix; col: Gfx.Color; mx, my: REAL;
+		
+		PROCEDURE draw (x, y: REAL);
+		BEGIN
+			GfxMatrix.Apply(lsmat, x, y, x, y);	(* map local to standard coordinates *)
+			Gfx.DrawRect(rm.ctxt, x-2, y-2, x+2, y+2, {Gfx.Fill})
+		END draw;
+		
+	BEGIN
+		ctm := rm.ctxt.ctm; Gfx.ResetCTM(rm.ctxt);	(* context maps standard to device coordinates *)
+		col := rm.ctxt.fillCol; Gfx.SetFillColor(rm.ctxt, Gfx.DGrey);
+		mx := 0.5*(llx + urx); my := 0.5*(lly + ury);
+		GfxMatrix.Concat(rm.lgm, rm.gsm, lsmat);
+		draw(llx, ury); draw(mx, ury); draw(urx, ury);
+		draw(llx, my); draw(urx, my);
+		draw(llx, lly); draw(mx, lly); draw(urx, lly);
+		Gfx.SetFillColor(rm.ctxt, col); Gfx.SetCTM(rm.ctxt, ctm)
+	END DrawHandles;
+	
+	(** project point to default shape handles (in local coordinates) **)
+	PROCEDURE ProjectToHandles* (shape: Shape; llx, lly, urx, ury: REAL; VAR lm: LocateMsg);
+		VAR dmin, mx, my: REAL;
+		
+		PROCEDURE project (x, y: REAL);
+			VAR dx, dy, d: REAL;
+		BEGIN
+			GfxMatrix.Apply(lm.lgm, x, y, x, y);	(* convert point to global coordinates *)
+			IF (lm.llx <= x) & (x <= lm.urx) & (lm.lly <= y) & (y <= lm.ury) THEN
+				dx := x - lm.x; dy := y - lm.y; d := dx * dx + dy * dy;
+				IF d < dmin THEN
+					dmin := d; lm.px := x; lm.py := y; lm.res := shape
+				END
+			END
+		END project;
+		
+	BEGIN
+		dmin := MAX(REAL);
+		mx := 0.5*(llx + urx); my := 0.5*(lly + ury);
+		project(mx, my);
+		project(llx, lly); project(llx, ury); project(urx, ury); project(urx, lly);
+		project(mx, lly); project(mx, ury); project(llx, my); project(urx, my)
+	END ProjectToHandles;
+	
+	(** get transformation bound to clicked handle point **)
+	PROCEDURE GetHandleMatrix* (llx, lly, urx, ury: REAL; VAR msg: MatrixMsg);
+		VAR glmat: GfxMatrix.Matrix; mx, my, llu, llv, uru, urv: REAL;
+		
+		PROCEDURE translate;
+		BEGIN
+			GfxMatrix.Init(msg.mat, 1, 0, 0, 1, msg.x1 - msg.x0, msg.y1 - msg.y0);
+			msg.done := TRUE
+		END translate;
+		
+		(*
+		PROCEDURE rotate;
+			VAR x, y, dx0, dy0, dx1, dy1, t: REAL;
+		BEGIN
+			GfxMatrix.Apply(msg.lgm, mx, my, x, y);
+			dx0 := msg.x0 - x; dy0 := msg.y0 - y;
+			dx1 := msg.x1 - x; dy1 := msg.y1 - y;
+			t := Math.sqrt((dx1 * dx1 + dy1 * dy1)/(dx0 * dx0 + dy0 * dy0));
+			GfxMatrix.Get2PointTransform(x, y, x, y, msg.x0, msg.y0, x + dx1/t, y + dy1/t, msg.mat);
+			msg.done := TRUE
+		END rotate;
+		*)
+		
+		PROCEDURE scale (ox, oy: REAL);
+			VAR x0, y0, x1, y1: REAL; m: GfxMatrix.Matrix;
+		BEGIN
+			GfxMatrix.Apply(glmat, msg.x0, msg.y0, x0, y0); GfxMatrix.Apply(glmat, msg.x1, msg.y1, x1, y1);
+			GfxMatrix.ScaleAt(msg.lgm, ox, oy, (x1 - ox)/(x0 - ox), (y1 - oy)/(y0 - oy), m);
+			GfxMatrix.Concat(glmat, m, msg.mat);
+			msg.done := TRUE
+		END scale;
+		
+		PROCEDURE hscale (ox, oy: REAL);
+			VAR x0, y0, x1, y1: REAL; m: GfxMatrix.Matrix;
+		BEGIN
+			GfxMatrix.Apply(glmat, msg.x0, msg.y0, x0, y0); GfxMatrix.Apply(glmat, msg.x1, msg.y1, x1, y1);
+			GfxMatrix.ScaleAt(msg.lgm, ox, oy, (x1 - ox)/(x0 - ox), 1, m);
+			GfxMatrix.Concat(glmat, m, msg.mat);
+			msg.done := TRUE
+		END hscale;
+		
+		PROCEDURE vscale (ox, oy: REAL);
+			VAR x0, y0, x1, y1: REAL; m: GfxMatrix.Matrix;
+		BEGIN
+			GfxMatrix.Apply(glmat, msg.x0, msg.y0, x0, y0); GfxMatrix.Apply(glmat, msg.x1, msg.y1, x1, y1);
+			GfxMatrix.ScaleAt(msg.lgm, ox, oy, 1, (y1 - oy)/(y0 - oy), m);
+			GfxMatrix.Concat(glmat, m, msg.mat);
+			msg.done := TRUE
+		END vscale;
+		
+	BEGIN
+		mx := 0.5*(llx + urx); my := 0.5*(lly + ury);
+		GfxMatrix.Invert(msg.lgm, glmat);
+		GfxMatrix.ApplyToRect(glmat, msg.x0 - msg.tol, msg.y0 - msg.tol, msg.x0 + msg.tol, msg.y0 + msg.tol, llu, llv, uru, urv);
+		IF (llu <= mx) & (mx <= uru) THEN
+			IF (llv <= my) & (my <= urv) THEN translate
+			ELSIF (llv <= lly) & (lly <= urv) THEN vscale(mx, ury)
+			ELSIF (llv <= ury) & (ury <= urv) THEN vscale(mx, lly)
+			(*ELSE rotate*)
+			END
+		ELSIF (llu <= llx) & (llx <= uru) THEN
+			IF (llv <= my) & (my <= urv) THEN hscale(urx, my)
+			ELSIF (llv <= lly) & (lly <= urv) THEN scale(urx, ury)
+			ELSIF (llv <= ury) & (ury <= urv) THEN scale(urx, lly)
+			END
+		ELSIF (llu <= urx) & (urx <= uru) THEN
+			IF (llv <= my) & (my <= urv) THEN hscale(llx, my)
+			ELSIF (llv <= lly) & (lly <= urv) THEN scale(llx, ury)
+			ELSIF (llv <= ury) & (ury <= urv) THEN scale(llx, lly)
+			END
+		(*ELSIF (llv <= my) & (my <= urv) THEN rotate*)
+		END
+	END GetHandleMatrix;
+	
+	
+	(**--- Shapes ---**)
+	
+	(** return figure that shape is part of **)
+	PROCEDURE ContainingFigure* (shape: Shape): Figure;
+	BEGIN
+		IF shape = NIL THEN RETURN NIL END;
+		WHILE shape.cont # NIL DO shape := shape.cont END;
+		IF shape IS Layer THEN RETURN shape(Layer).fig
+		ELSE RETURN NIL
+		END
+	END ContainingFigure;
+	
+	(** get local coordinate system of shape **)
+	PROCEDURE GetCoordSystem* (shape: Shape; VAR lgm: GfxMatrix.Matrix);
+		VAR cm: CoordMsg; fig: Figure;
+	BEGIN
+		cm.dest := shape; cm.res := GfxMatrix.Identity;
+		fig := ContainingFigure(shape);
+		IF fig # NIL THEN fig.handle(fig, cm) END;
+		lgm := cm.res
+	END GetCoordSystem;
+	
+	(** default shape handler **)
+	PROCEDURE ShapeAttr* (shape: Shape; VAR msg: Objects.AttrMsg);
+	BEGIN
+		IF msg.id = Objects.enum THEN
+			msg.Enum("XMin"); msg.Enum("XMax");
+			msg.Enum("YMin"); msg.Enum("YMax");
+			msg.Enum("Border")
+		ELSIF msg.id = Objects.get THEN
+			IF msg.name = "XMin" THEN msg.class := Objects.Real; msg.x := shape.llx; msg.res := 0
+			ELSIF msg.name = "XMax" THEN msg.class := Objects.Real; msg.x := shape.urx; msg.res := 0
+			ELSIF msg.name = "YMin" THEN msg.class := Objects.Real; msg.x := shape.lly; msg.res := 0
+			ELSIF msg.name = "YMax" THEN msg.class := Objects.Real; msg.x := shape.ury; msg.res := 0
+			ELSIF msg.name = "Border" THEN msg.class := Objects.Real; msg.x := shape.bw; msg.res := 0
 			END
 		END
-	END Duplicate;
+	END ShapeAttr;
 	
-	(** group selected shapes **)
-	PROCEDURE Group*;
-		VAR fig: Figures.Figure; sel: Figures.Shape; obj, link: Objects.Object; group: Figures.Container;
+	PROCEDURE CopyShape* (VAR msg: Objects.CopyMsg; from, to: Shape);
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF sel # NIL THEN
-				obj := sel; sel := NIL;
-				WHILE obj # NIL DO
-					link := obj.slink; obj.slink := sel; sel := obj(Figures.Shape); obj := link
-				END;
-				NEW(group); Figures.InitGroup(group, NIL, NIL);
-				Figures.DisableUpdate(fig);
-				Figures.BeginCommand(fig);
-				LeoFrames.Integrate(fig, NIL, group);
-				LeoFrames.Integrate(fig, group, sel);
-				Figures.EndCommand(fig);
-				Figures.EnableUpdate(fig)
+		to.handle := from.handle;
+		to.llx := from.llx; to.lly := from.lly; to.urx := from.urx; to.ury := from.ury; to.bw := from.bw
+	END CopyShape;
+	
+	PROCEDURE HandleShape* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR shape, copy: Shape; cm: Objects.CopyMsg; am: Objects.AttrMsg; ver: LONGINT; int: INTEGER; real: REAL;
+	BEGIN
+		shape := obj(Shape);
+		IF msg IS UnmarkMsg THEN
+			shape.marked := FALSE
+		ELSIF msg IS ShapeMsg THEN
+			IF msg IS SelectMsg THEN
+				WITH msg: SelectMsg DO
+					IF (msg.id = get) & shape.sel THEN
+						shape.slink := msg.res; msg.res := shape
+					ELSIF (msg.id = reset) & shape.sel THEN
+						shape.sel := FALSE;
+						UpdateShape(msg.fig, shape)
+					END
+				END
+			ELSIF msg IS ControlMsg THEN
+				WITH msg: ControlMsg DO
+					IF (msg.id = clone) & shape.marked THEN
+						cm.stamp := msg.stamp; cm.id := Objects.shallow; shape.handle(shape, cm);
+						copy := cm.obj(Shape);
+						IF msg.bottom = NIL THEN msg.bottom := copy
+						ELSE msg.top.up := copy
+						END;
+						copy.down := msg.top; msg.top := copy
+					END
+				END
+			ELSIF msg IS ValidateMsg THEN
+				WITH msg: ValidateMsg DO
+					IF shape.marked THEN
+						shape.marked := FALSE; shape.cont.marked := TRUE
+					END
+				END
+			ELSIF msg IS CoordMsg THEN
+				WITH msg: CoordMsg DO
+					IF msg.dest = shape THEN
+						msg.res := msg.lgm
+					END
+				END
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			ShapeAttr(shape, msg(Objects.AttrMsg))
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF (msg.id = Objects.get) & (msg.name = "Down") THEN msg.obj := shape.down; msg.res := 0
+				ELSIF (msg.id = Objects.get) & (msg.name = "Up") THEN msg.obj := shape.up; msg.res := 0
+				END
+			END
+		ELSIF msg IS Objects.FindMsg THEN
+			WITH msg: Objects.FindMsg DO
+				am.id := Objects.get; am.name := "Name"; am.res := -1;
+				shape.handle(shape, am);
+				IF (am.res >= 0) & (am.class = Objects.String) & (am.s = msg.name) THEN
+					msg.obj := shape
+				END
+			END
+		ELSIF msg IS Objects.BindMsg THEN
+			Gadgets.BindObj(shape, msg(Objects.BindMsg).lib)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 2)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					IF ver = 1 THEN
+						Files.ReadInt(msg.R, int); Files.ReadInt(msg.R, int); Files.ReadInt(msg.R, int); Files.ReadInt(msg.R, int);
+						Files.ReadReal(msg.R, real)
+					END
+				END
 			END
 		END
-	END Group;
+	END HandleShape;
 	
-	(** ungroup selected groups **)
-	PROCEDURE Ungroup*;
-		VAR
-			fig: Figures.Figure; sel: Figures.Shape; obj, next: Objects.Object; gen: ARRAY 64 OF CHAR;
-			group: Figures.Container; ref: Figures.Reference; comp: Figures.Shape;
+	(** initialize default shape fields **)
+	PROCEDURE InitShape* (shape: Shape; handle: Objects.Handler);
 	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			Figures.DisableUpdate(fig);
-			Figures.BeginCommand(fig);
-			obj := sel;
+		shape.handle := handle;
+		shape.cont := NIL; shape.up := NIL; shape.down := NIL;
+		shape.llx := MAX(REAL); shape.lly := MAX(REAL); shape.urx := MIN(REAL); shape.ury := MIN(REAL); shape.bw := 0;
+		shape.sel := FALSE; shape.marked := FALSE
+	END InitShape;
+	
+	
+	(**--- Containers ---**)
+	
+	(** forward message to list of componets **)
+	PROCEDURE ToComponents* (bottom: Shape; VAR msg: Objects.ObjMsg);
+	BEGIN
+		WHILE bottom # NIL DO
+			bottom.handle(bottom, msg); bottom := bottom.up
+		END
+	END ToComponents;
+	
+	(** copy list of components **)
+	PROCEDURE CopyComponents* (VAR msg: Objects.CopyMsg; srcbot: Shape; VAR dstbot, dsttop: Shape);
+		VAR shape: Shape; cm: Objects.CopyMsg;
+	BEGIN
+		dstbot := NIL; dsttop := NIL; shape := srcbot;
+		IF shape # NIL THEN
+			cm.stamp := msg.stamp; cm.id := msg.id;
+			shape.handle(shape, cm);
+			dstbot := cm.obj(Shape); dsttop := dstbot;
+			shape := shape.up;
+			WHILE shape # NIL DO
+				cm.obj := NIL; shape.handle(shape, cm);
+				dsttop.up := cm.obj(Shape); dsttop.up.down := dsttop; dsttop := dsttop.up;
+				shape := shape.up
+			END
+		END
+	END CopyComponents;
+	
+	(** store components on rider **)
+	PROCEDURE WriteComponents* (VAR r: Files.Rider; lib: Objects.Library; bottom: Shape);
+	BEGIN
+		WHILE bottom # NIL DO
+			Gadgets.WriteRef(r, lib, bottom); bottom := bottom.up
+		END;
+		Gadgets.WriteRef(r, lib, NIL)
+	END WriteComponents;
+	
+	(** read components from rider **)
+	PROCEDURE ReadComponents* (VAR r: Files.Rider; lib: Objects.Library; VAR bottom, top: Shape);
+		VAR obj: Objects.Object;
+	BEGIN
+		bottom := NIL; top := NIL;
+		REPEAT
+			Gadgets.ReadRef(r, lib, obj)
+		UNTIL (obj = NIL) OR (obj IS Shape);
+		IF obj # NIL THEN
+			bottom := obj(Shape); top := bottom;
+			Gadgets.ReadRef(r, lib, obj);
 			WHILE obj # NIL DO
-				next := obj.slink;
-				IF obj IS Figures.Container THEN
-					Attributes.GetString(obj, "Gen", gen);
-					IF gen = "Figures.NewGroup" THEN	(* this is not very elegant, ugh *)
-						group := obj(Figures.Container);
-						ref := group.first; comp := ref.shape;
-						WHILE ref # group.last DO ref.shape.slink := ref.next.shape; ref := ref.next END;
-						ref.shape.slink := NIL;
-						LeoFrames.Integrate(fig, group.cont, comp);
-						group.slink := NIL;
-						Figures.Delete(fig, group)
+				IF obj IS Shape THEN
+					top.up := obj(Shape); top.up.down := top; top := top.up
+				END;
+				Gadgets.ReadRef(r, lib, obj)
+			END
+		END
+	END ReadComponents;
+	
+	(** compute bounding box and maximal border width of component list **)
+	PROCEDURE GetComponentsBox* (bottom: Shape; VAR llx, lly, urx, ury, bw: REAL);
+	BEGIN
+		llx := MAX(REAL); lly := MAX(REAL); urx := MIN(REAL); ury := MIN(REAL); bw := 0;
+		WHILE bottom # NIL DO
+			IF bottom.llx < llx THEN llx := bottom.llx END;
+			IF bottom.lly < lly THEN lly := bottom.lly END;
+			IF bottom.urx > urx THEN urx := bottom.urx END;
+			IF bottom.ury > ury THEN ury := bottom.ury END;
+			IF bottom.bw > bw THEN bw := bottom.bw END;
+			bottom := bottom.up
+		END
+	END GetComponentsBox;
+	
+	(** default container handler **)
+	PROCEDURE SelectContainer* (cont: Container; VAR msg: SelectMsg);
+		VAR cur: Shape; sm: SelectMsg;
+	BEGIN
+		IF (msg.id = get) & cont.sel THEN
+			IF cont.subsel THEN ToComponents(cont.bottom, msg)
+			ELSE cont.slink := msg.res; msg.res := cont
+			END
+		ELSIF (msg.id = reset) & cont.sel THEN
+			IF cont.subsel THEN
+				ToComponents(cont.bottom, msg);
+				cont.sel := FALSE; cont.subsel := FALSE
+			ELSE
+				cont.sel := FALSE;
+				UpdateShape(msg.fig, cont)
+			END
+		ELSIF msg.id = validate THEN
+			ToComponents(cont.bottom, msg);
+			cur := cont.bottom; WHILE (cur # NIL) & cur.sel DO cur := cur.up END;
+			IF (cont.bottom # NIL) & (cur = NIL) THEN	(* all components selected *)
+				sm.fig := msg.fig; sm.id := reset;
+				ToComponents(cont.bottom, sm);
+				cont.subsel := FALSE;
+				IF ~cont.sel THEN
+					UpdateShape(msg.fig, cont);
+					cont.sel := TRUE
+				END
+			ELSE
+				cur := cont.bottom; WHILE (cur # NIL) & ~cur.sel DO cur := cur.up END;
+				cont.subsel := cur # NIL;
+				IF cont.subsel & ~cont.sel THEN
+					cont.sel := TRUE;
+					UpdateShape(msg.fig, cont)
+				END
+			END
+		END
+	END SelectContainer;
+	
+	PROCEDURE ConsumeAction (fig: Figure; action: Action);
+		VAR act: ControlAction; cur: Shape; s: ARRAY 64 OF CHAR;
+	BEGIN
+		act := action(ControlAction);
+		act.bottom.down := act.down; act.top.up := act.up;
+		IF act.down # NIL THEN act.down.up := act.bottom ELSE act.cont.bottom := act.bottom END;
+		IF act.up # NIL THEN act.up.down := act.top ELSE act.cont.top := act.top END;
+		cur := act.bottom;
+		REPEAT
+			cur.cont := act.cont; cur.marked := TRUE; cur.sel := TRUE; cur := cur.up
+		UNTIL cur = act.up
+	END ConsumeAction;
+	
+	PROCEDURE DeleteAction (fig: Figure; action: Action);
+		VAR act: ControlAction; cur: Shape; sm: SelectMsg;
+	BEGIN
+		act := action(ControlAction);
+		act.bottom.down := NIL; act.top.up := NIL;
+		IF act.down # NIL THEN act.down.up := act.up ELSE act.cont.bottom := act.up END;
+		IF act.up # NIL THEN act.up.down := act.down ELSE act.cont.top := act.down END;
+		cur := act.bottom; sm.fig := fig; sm.id := reset;
+		REPEAT
+			IF cur.sel THEN cur.handle(cur, sm)	(* deselect and update *)
+			ELSE UpdateShape(fig, cur)	(* update now before shape is gone *)
+			END;
+			cur.cont := NIL; cur := cur.up
+		UNTIL cur = NIL;
+		act.cont.sel := TRUE; act.cont.marked := TRUE
+	END DeleteAction;
+	
+	PROCEDURE AddConsumeAction* (fig: Figure; down, bottom, top, up: Shape; cont: Container);
+		VAR act: ControlAction;
+	BEGIN
+		NEW(act); act.do := ConsumeAction; act.undo := DeleteAction;
+		act.down := down; act.bottom := bottom; act.top := top; act.up := up; act.cont := cont;
+		AddAction(fig, act)
+	END AddConsumeAction;
+	
+	PROCEDURE AddDeleteAction* (fig: Figure; down, bottom, top, up: Shape; cont: Container);
+		VAR act: ControlAction;
+	BEGIN
+		NEW(act); act.do := DeleteAction; act.undo := ConsumeAction;
+		act.down := down; act.bottom := bottom; act.top := top; act.up := up; act.cont := cont;
+		AddAction(fig, act)
+	END AddDeleteAction;
+	
+	PROCEDURE ControlContainer* (cont: Container; VAR msg: ControlMsg);
+		VAR bottom, top: Shape;
+	BEGIN
+		IF msg.id = integrate THEN
+			IF msg.cont = cont THEN
+				AddConsumeAction(msg.fig, msg.down, msg.bottom, msg.top, msg.up, cont)
+			ELSE
+				ToComponents(cont.bottom, msg)
+			END
+		ELSIF msg.id = delete THEN
+			ToComponents(cont.bottom, msg);
+			bottom := cont.bottom;
+			WHILE bottom # NIL DO
+				top := bottom;
+				IF bottom.marked THEN
+					WHILE (top # cont.top) & top.up.marked DO top := top.up END;
+					AddDeleteAction(msg.fig, bottom.down, bottom, top, top.up, cont)
+				END;
+				bottom := top.up
+			END
+		ELSIF msg.id = clone THEN
+			IF cont.marked THEN
+				HandleShape(cont, msg)
+			ELSE
+				ToComponents(cont.bottom, msg)
+			END
+		END
+	END ControlContainer;
+	
+	PROCEDURE OrderContainer* (cont: Container; VAR msg: OrderMsg);
+		VAR b, t, next, d, u: Shape;
+	BEGIN
+		ToComponents(cont.bottom, msg);
+		b := cont.bottom;
+		WHILE (b # NIL) & ~b.marked DO b := b.up END;
+		WHILE b # NIL DO
+			t := b;
+			WHILE (t.up # NIL) & t.up.marked DO t := t.up END;
+			IF (msg.id = up) & (t.up # NIL) THEN
+				BeginCommand(msg.fig);
+				AddDeleteAction(msg.fig, b.down, b, t, t.up, cont);
+				AddConsumeAction(msg.fig, t.up, b, t, t.up.up, cont);
+				EndCommand(msg.fig);
+				next := t
+			ELSIF (msg.id = down) & (b.down # NIL) THEN
+				next := b.down;
+				BeginCommand(msg.fig);
+				AddDeleteAction(msg.fig, b.down, b, t, t.up, cont);
+				AddConsumeAction(msg.fig, b.down.down, b, t, b.down, cont);
+				EndCommand(msg.fig)
+			ELSIF (msg.id = top) & (t.up # NIL) THEN
+				next := t.up;
+				BeginCommand(msg.fig);
+				AddDeleteAction(msg.fig, b.down, b, t, t.up, cont);
+				AddConsumeAction(msg.fig, cont.top, b, t, NIL, cont);
+				EndCommand(msg.fig)
+			ELSIF (msg.id = bottom) & (b.down # NIL) THEN
+				next := b.down;
+				BeginCommand(msg.fig);
+				AddDeleteAction(msg.fig, b.down, b, t, t.up, cont);
+				AddConsumeAction(msg.fig, NIL, b, t, cont.bottom, cont);
+				EndCommand(msg.fig)
+			ELSIF msg.id = reverse THEN
+				next := t.up; d := b.down; u := t.up;
+				WHILE b # t DO
+					AddDeleteAction(msg.fig, d, b, b, b.up, cont);
+					AddConsumeAction(msg.fig, t, b, b, u, cont);
+					u := b; b := b.up
+				END
+			ELSE
+				next := t.up
+			END;
+			b := next;
+			WHILE (b # NIL) & ~b.marked DO b := b.up END
+		END
+	END OrderContainer;
+	
+	PROCEDURE ConsumeContainer* (cont: Container; VAR msg: ConsumeMsg);
+	BEGIN
+		IF (msg.recv = NIL) & (msg.llx <= cont.urx + cont.bw) & (cont.llx - cont.bw <= msg.urx) &
+			(msg.lly <= cont.ury + cont.bw) & (cont.lly - cont.bw <= msg.ury)
+		THEN
+			ToComponents(cont.bottom, msg)
+		END
+	END ConsumeContainer;
+	
+	PROCEDURE RenderContainer* (cont: Container; VAR msg: RenderMsg);
+		VAR ctm: GfxMatrix.Matrix;
+	BEGIN
+		IF (msg.llx <= cont.urx + cont.bw) & (cont.llx - cont.bw <= msg.urx) &
+			(msg.lly <= cont.ury + cont.bw) & (cont.lly - cont.bw <= msg.ury)
+		THEN
+			ToComponents(cont.bottom, msg);
+			IF (msg.id IN {active, marksonly}) & cont.sel THEN
+				ctm := msg.ctxt.ctm; Gfx.ResetCTM(msg.ctxt); Gfx.Concat(msg.ctxt, msg.gsm);
+				DrawHandles(cont.llx, cont.lly, cont.urx, cont.ury, msg);
+				Gfx.SetCTM(msg.ctxt, ctm)
+			END
+		END
+	END RenderContainer;
+	
+	PROCEDURE ValidateContainer* (cont: Container; VAR msg: ValidateMsg);
+	BEGIN
+		ToComponents(cont.bottom, msg);
+		IF cont.marked THEN
+			IF cont.sel THEN
+				UpdateShape(msg.fig, cont)	(* update handles *)
+			END;
+			GetComponentsBox(cont.bottom, cont.llx, cont.lly, cont.urx, cont.ury, cont.bw);
+			cont.marked := FALSE; cont.cont.marked := TRUE;
+			IF cont.sel THEN
+				UpdateShape(msg.fig, cont)	(* update handles *)
+			END
+		END
+	END ValidateContainer;
+	
+	PROCEDURE GetContainerCoords* (cont: Container; VAR msg: CoordMsg);
+	BEGIN
+		IF (msg.dest # cont) &
+			(cont.llx <= msg.dest.llx) & (msg.dest.urx <= cont.urx) &
+			(cont.lly <= msg.dest.lly) & (msg.dest.lly <= cont.ury)
+		THEN
+			ToComponents(cont.bottom, msg)
+		END
+	END GetContainerCoords;
+	
+	PROCEDURE LocateContainer* (cont: Container; VAR msg: LocateMsg);
+		VAR res: Shape; lgm: GfxMatrix.Matrix;
+	BEGIN
+		IF (msg.llx <= cont.urx) & (cont.llx <= msg.urx) & (msg.lly <= cont.ury) & (cont.lly <= cont.ury) THEN
+			IF msg.id = inside THEN
+				IF (msg.llx <= cont.llx) & (cont.urx <= msg.urx) & (msg.lly <= cont.lly) & (cont.ury <= msg.ury) THEN
+					cont.slink := msg.res; msg.res := cont
+				ELSE
+					ToComponents(cont.bottom, msg)
+				END
+			ELSIF msg.id = overlap THEN
+				res := msg.res;
+				ToComponents(cont.bottom, msg);
+				IF (msg.res # res) & ~cont.sel THEN	(* locate container instead of component unless container selected *)
+					cont.slink := msg.res; msg.res := cont
+				END
+			ELSIF msg.id = project THEN
+				lgm := msg.lgm; msg.lgm := GfxMatrix.Identity;
+				ProjectToHandles(cont, cont.llx, cont.lly, cont.urx, cont.ury, msg);
+				msg.lgm := lgm;
+				ToComponents(cont.bottom, msg)
+			END
+		END
+	END LocateContainer;
+	
+	PROCEDURE TransformContainer* (cont: Container; VAR msg: TransformMsg);
+		VAR s: Shape;
+	BEGIN
+		IF msg.id = apply THEN
+			IF cont.marked THEN
+				s := cont.bottom;
+				WHILE s # NIL DO
+					IF ~s.marked THEN s.marked := TRUE; msg.notify := TRUE END;
+					s := s.up
+				END
+			END
+		END;
+		ToComponents(cont.bottom, msg)
+	END TransformContainer;
+	
+	PROCEDURE GetContainerMatrix* (cont: Container; VAR msg: MatrixMsg);
+	BEGIN
+		IF (msg.dest # cont) &
+			(cont.llx <= msg.dest.llx) & (msg.dest.urx <= cont.urx) &
+			(cont.lly <= msg.dest.lly) & (msg.dest.lly <= cont.ury)
+		THEN
+			ToComponents(cont.bottom, msg)
+		END
+	END GetContainerMatrix;
+	
+	PROCEDURE CopyContainer* (VAR msg: Objects.CopyMsg; from, to: Container);
+		VAR cur: Shape;
+	BEGIN
+		CopyShape(msg, from, to);
+		CopyComponents(msg, from.bottom, to.bottom, to.top);
+		cur := to.bottom;
+		WHILE cur # NIL DO
+			cur.cont := to; cur := cur.up
+		END
+	END CopyContainer;
+	
+	PROCEDURE HandleContainer* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR cont: Container; ver: LONGINT; cur: Shape; dummy: BOOLEAN;
+	BEGIN
+		cont := obj(Container);
+		IF msg IS ShapeMsg THEN
+			IF msg IS SelectMsg THEN
+				SelectContainer(cont, msg(SelectMsg))
+			ELSIF msg IS ControlMsg THEN
+				ControlContainer(cont, msg(ControlMsg))
+			ELSIF msg IS OrderMsg THEN
+				OrderContainer(cont, msg(OrderMsg))
+			ELSIF msg IS ValidateMsg THEN
+				ValidateContainer(cont, msg(ValidateMsg))
+			ELSIF msg IS CoordMsg THEN
+				GetContainerCoords(cont, msg(CoordMsg))
+			ELSIF msg IS ConsumeMsg THEN
+				ConsumeContainer(cont, msg(ConsumeMsg))
+			ELSIF msg IS RenderMsg THEN
+				RenderContainer(cont, msg(RenderMsg))
+			ELSIF msg IS LocateMsg THEN
+				LocateContainer(cont, msg(LocateMsg))
+			ELSIF msg IS TransformMsg THEN
+				TransformContainer(cont, msg(TransformMsg))
+			ELSIF msg IS MatrixMsg THEN
+				GetContainerMatrix(cont, msg(MatrixMsg))
+			ELSE
+				HandleShape(cont, msg);
+				ToComponents(cont.bottom, msg)
+			END
+		ELSIF msg IS BroadcastMsg THEN
+			ToComponents(cont.bottom, msg)
+		ELSIF msg IS Objects.AttrMsg THEN
+			ShapeAttr(cont, msg(Objects.AttrMsg))
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF (msg.id = Objects.get) & (msg.name = "Bottom") THEN msg.obj := cont.bottom; msg.res := 0
+				ELSIF (msg.id = Objects.get) & (msg.name = "Top") THEN msg.obj := cont.top; msg.res := 0
+				ELSE HandleShape(cont, msg)
+				END
+			END
+		ELSIF msg IS Objects.FindMsg THEN
+			ToComponents(cont.bottom, msg); HandleShape(cont, msg)
+		ELSIF msg IS Objects.BindMsg THEN
+			ToComponents(cont.bottom, msg); HandleShape(cont, msg)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				HandleShape(cont, msg);
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					WriteComponents(msg.R, cont.lib, cont.bottom)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					ReadComponents(msg.R, cont.lib, cont.bottom, cont.top);
+					cur := cont.bottom;
+					WHILE cur # NIL DO
+						cur.cont := cont; cur := cur.up
+					END;
+					GetComponentsBox(cont.bottom, cont.llx, cont.lly, cont.urx, cont.ury, cont.bw)
+				END
+			END
+		ELSE
+			HandleShape(cont, msg)
+		END
+	END HandleContainer;
+	
+	(** initialize default container fields **)
+	PROCEDURE InitContainer* (cont: Container; handle: Objects.Handler; bottom, top: Shape);
+	BEGIN
+		InitShape(cont, handle);
+		cont.bottom := bottom; cont.top := top;
+		GetComponentsBox(bottom, cont.llx, cont.lly, cont.urx, cont.ury, cont.bw);
+		WHILE bottom # NIL DO
+			bottom.cont := cont; bottom := bottom.up
+		END
+	END InitContainer;
+	
+	
+	(**--- Layers ---**)
+	
+	PROCEDURE LayerAttr (layer: Layer; VAR msg: Objects.AttrMsg);
+	BEGIN
+		IF msg.id = Objects.enum THEN
+			msg.Enum("Name"); msg.Enum("Display"); msg.Enum("Print"); msg.Enum("Align")
+		ELSIF msg.id = Objects.get THEN
+			IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "Leonardo.NewLayer"; msg.res := 0
+			ELSIF msg.name = "Item" THEN
+				msg.class := Objects.String; msg.res := 0;
+				msg.s := "Layer["; Strings.Append(msg.s, layer.name); Strings.AppendCh(msg.s, "]")
+			ELSIF msg.name = "Name" THEN msg.class := Objects.String; COPY(layer.name, msg.s); msg.res := 0
+			ELSIF msg.name = "Display" THEN msg.class := Objects.Bool; msg.b := layer.display; msg.res := 0
+			ELSIF msg.name = "Print" THEN msg.class := Objects.Bool; msg.b := layer.print; msg.res := 0
+			ELSIF msg.name = "Align" THEN msg.class := Objects.Bool; msg.b := layer.align; msg.res := 0
+			END
+		ELSIF msg.id = Objects.set THEN
+			IF msg.name = "Name" THEN
+				IF msg.class = Objects.String THEN COPY(msg.s, layer.name); msg.res := 0 END
+			ELSIF msg.name = "Display" THEN
+				IF msg.class = Objects.Bool THEN layer.display := msg.b; msg.res := 0 END
+			ELSIF msg.name = "Print" THEN
+				IF msg.class = Objects.Bool THEN layer.print := msg.b; msg.res := 0 END
+			ELSIF msg.name = "Align" THEN
+				IF msg.class = Objects.Bool THEN layer.align := msg.b; msg.res := 0 END
+			END
+		END;
+		HandleContainer(layer, msg)
+	END LayerAttr;
+	
+	PROCEDURE CopyLayer* (VAR msg: Objects.CopyMsg; from, to: Layer);
+	BEGIN
+		CopyContainer(msg, from, to);
+		COPY(from.name, to.name); to.display := from.display; to.print := from.print; to.align := from.align
+	END CopyLayer;
+	
+	PROCEDURE HandleLayer* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR layer, copy: Layer; cur: Shape; cm: ControlMsg; ver: LONGINT; dummy: BOOLEAN;
+	BEGIN
+		layer := obj(Layer);
+		IF msg IS ShapeMsg THEN
+			IF msg IS SelectMsg THEN
+				WITH msg: SelectMsg DO
+					IF msg.id = get THEN
+						ToComponents(layer.bottom, msg)	(* layers are never part of the selection *)
+					ELSIF msg.id = reset THEN
+						IF layer.subsel THEN
+							ToComponents(layer.bottom, msg); layer.subsel := FALSE
+						END;
+						layer.sel := FALSE
+					ELSIF msg.id = validate THEN
+						ToComponents(layer.bottom, msg);
+						cur := layer.bottom; WHILE (cur # NIL) & ~cur.sel DO cur := cur.up END;
+						layer.subsel := cur # NIL;
+						IF layer.sel THEN
+							UpdateShape(msg.fig, layer); layer.sel := FALSE
+						END
+					ELSE
+						SelectContainer(layer, msg)
+					END
+				END
+			ELSIF msg IS ValidateMsg THEN
+				WITH msg: ValidateMsg DO
+					ToComponents(layer.bottom, msg);
+					IF layer.marked THEN
+						GetComponentsBox(layer.bottom, layer.llx, layer.lly, layer.urx, layer.ury, layer.bw);
+						layer.marked := FALSE
+					END
+				END
+			(*ELSIF msg IS ConsumeMsg THEN
+				WITH msg: ConsumeMsg DO
+					IF layer = msg.fig.active THEN
+						HandleContainer(layer, msg);
+						IF msg.recv = NIL THEN
+							cur := msg.bottom; WHILE cur # msg.top.up DO cur.marked := TRUE; cur := cur.up END;
+							cm.id := delete; msg.fig.handle(msg.fig, cm);
+							AddConsumeAction(msg.fig, layer.top, msg.bottom, msg.top, NIL, layer);
+							msg.recv := layer
+						END
+					END
+				END*)
+			ELSIF msg IS RenderMsg THEN
+				WITH msg: RenderMsg DO
+					IF (msg.id IN {active, marksonly, marked}) & layer.display OR (msg.id = passive) & layer.print THEN 
+						ToComponents(layer.bottom, msg)
+					END
+				END
+			ELSIF msg IS LocateMsg THEN
+				WITH msg: LocateMsg DO
+					IF (msg.id = project) & layer.align OR (msg.id IN {inside, overlap}) & (layer = msg.fig.active) THEN
+						ToComponents(layer.bottom, msg)
+					END
+				END
+			ELSE
+				HandleContainer(layer, msg)
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			LayerAttr(layer, msg(Objects.AttrMsg))
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # layer.stamp THEN
+					NEW(copy); layer.dlink := copy; layer.stamp := msg.stamp;
+					CopyLayer(msg, layer, copy);
+				END;
+				msg.obj := layer.dlink
+			END
+		ELSIF msg IS Objects.FindMsg THEN
+			WITH msg: Objects.FindMsg DO
+				IF msg.name = layer.name THEN msg.obj := layer END
+			END
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				HandleContainer(layer, msg);
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 2);
+					Files.WriteString(msg.R, layer.name);
+					Files.WriteBool(msg.R, layer.display); Files.WriteBool(msg.R, layer.print);
+					Files.WriteBool(msg.R, layer.align)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					IF ver IN {1, 2} THEN
+						Files.ReadString(msg.R, layer.name);
+						Files.ReadBool(msg.R, layer.display); Files.ReadBool(msg.R, layer.print);
+						Files.ReadBool(msg.R, layer.align);
+						IF ver = 1 THEN Files.ReadBool(msg.R, dummy) END
+					END
+				END
+			END
+		ELSE
+			HandleContainer(layer, msg)
+		END
+	END HandleLayer;
+	
+	(** initialize layer shape **)
+	PROCEDURE InitLayer* (layer: Layer; name: ARRAY OF CHAR; display, print, align: BOOLEAN);
+	BEGIN
+		InitContainer(layer, HandleLayer, NIL, NIL);
+		COPY(name, layer.name); layer.display := display; layer.print := print; layer.align := align
+	END InitLayer;
+	
+	(** layer generator **)
+	PROCEDURE NewLayer*;
+		VAR layer: Layer;
+	BEGIN
+		NEW(layer); InitLayer(layer, "???", FALSE, FALSE, FALSE);
+		Objects.NewObj := layer
+	END NewLayer;
+	
+	PROCEDURE ConsumeLayer (fig: Figure; act: Action);
+		VAR ca: ControlAction; layer: Layer;
+	BEGIN
+		ca := act(ControlAction); layer := ca.bottom(Layer);
+		layer.down := ca.down; layer.up := ca.up;
+		IF ca.down # NIL THEN ca.down.up := layer ELSE fig.bottom := layer END;
+		IF ca.up # NIL THEN ca.up.down := layer ELSE fig.top := layer END;
+		layer.fig := fig; layer.marked := TRUE; fig.active := layer;
+		UpdateShape(fig, layer)
+	END ConsumeLayer;
+	
+	PROCEDURE RemoveLayer (fig: Figure; act: Action);
+		VAR ca: ControlAction; layer: Layer;
+	BEGIN
+		ca := act(ControlAction); layer := ca.bottom(Layer);
+		layer.down := NIL; layer.up := NIL;
+		IF ca.down # NIL THEN ca.down.up := ca.up ELSE fig.bottom := ca.up END;
+		IF ca.up # NIL THEN ca.up.down := ca.down ELSE fig.top := ca.down END;
+		fig.active := ca.top(Layer); layer.fig := NIL;
+		UpdateShape(fig, layer)
+	END RemoveLayer;
+	
+	(** add a new top layer and activate it **)
+	PROCEDURE AddLayer* (fig: Figure; layer: Layer);
+		VAR ca: ControlAction;
+	BEGIN
+		BeginCommand(fig);
+		NEW(ca); ca.do := ConsumeLayer; ca.undo := RemoveLayer;
+		ca.bottom := layer; ca.top := fig.active; ca.down := fig.top; ca.up := NIL; AddAction(fig, ca);
+		EndCommand(fig)
+	END AddLayer;
+	
+	(** delete active layer **)
+	PROCEDURE DeleteLayer* (fig: Figure);
+		VAR ca: ControlAction;
+	BEGIN
+		IF (fig.active.up # NIL) OR (fig.active.down # NIL) THEN
+			BeginCommand(fig);
+			NEW(ca); ca.do := RemoveLayer; ca.undo := ConsumeLayer;
+			ca.bottom := fig.active; ca.down := fig.active.down; ca.up := fig.active.up;
+			IF ca.up # NIL THEN ca.top := ca.up ELSE ca.top := ca.down END;
+			AddAction(fig, ca);
+			EndCommand(fig)
+		END
+	END DeleteLayer;
+	
+	(** move active layer up **)
+	PROCEDURE MoveLayerUp* (fig: Figure);
+		VAR ca: ControlAction;
+	BEGIN
+		IF fig.active.up # NIL THEN
+			BeginCommand(fig);
+			NEW(ca); ca.do := RemoveLayer; ca.undo := ConsumeLayer;
+			ca.bottom := fig.active; ca.down := fig.active.down; ca.up := fig.active.up;
+			IF ca.up # NIL THEN ca.top := ca.up ELSE ca.top := ca.down END;
+			AddAction(fig, ca);
+			NEW(ca); ca.do := ConsumeLayer; ca.undo := RemoveLayer;
+			ca.bottom := fig.active; ca.down := fig.active.up; ca.up := ca.down.up;
+			IF ca.up # NIL THEN ca.top := ca.up ELSE ca.top := ca.down END;
+			AddAction(fig, ca);
+			EndCommand(fig)
+		END
+	END MoveLayerUp;
+	
+	(** move active layer down **)
+	PROCEDURE MoveLayerDown* (fig: Figure);
+		VAR ca: ControlAction;
+	BEGIN
+		IF fig.active.down # NIL THEN
+			BeginCommand(fig);
+			NEW(ca); ca.do := RemoveLayer; ca.undo := ConsumeLayer;
+			ca.bottom := fig.active; ca.down := fig.active.down; ca.up := fig.active.up;
+			IF ca.up # NIL THEN ca.top := ca.up ELSE ca.top := ca.down END;
+			AddAction(fig, ca);
+			NEW(ca); ca.do := ConsumeLayer; ca.undo := RemoveLayer;
+			ca.bottom := fig.active; ca.up := fig.active.down; ca.down := ca.up.down;
+			IF ca.up # NIL THEN ca.top := ca.up ELSE ca.top := ca.down END;
+			AddAction(fig, ca);
+			EndCommand(fig)
+		END
+	END MoveLayerDown;
+	
+	
+	(**--- Figures ---**)
+	
+	(** figure handler **)
+	PROCEDURE FigureAttr (fig: Figure; VAR msg: Objects.AttrMsg);
+	BEGIN
+		IF msg.id = Objects.enum THEN
+			msg.Enum("UndoLimit")
+		ELSIF msg.id = Objects.get THEN
+			IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "Leonardo.NewFigure"; msg.res := 0
+			ELSIF msg.name = "UndoLimit" THEN msg.class := Objects.Int; msg.i := fig.maxCmds; msg.res := 0
+			END
+		ELSIF msg.id = Objects.set THEN
+			IF msg.name = "UndoLimit" THEN
+				IF msg.class = Objects.String THEN
+					Strings.StrToInt(msg.s, msg.i);
+					IF msg.i > 0 THEN msg.class := Objects.Int END
+				END;
+				IF (msg.class = Objects.Int) & (msg.i >= 0) THEN
+					fig.maxCmds := SHORT(msg.i); msg.res := 0;
+					IF fig.cmdLevel = 0 THEN	(* trim number of undoable commands *)
+						WHILE fig.nofCmds > fig.maxCmds DO
+							fig.firstCmd := fig.firstCmd.next; DEC(fig.nofCmds)
+						END;
+						fig.firstCmd.prev := NIL
+					END
+				END
+			END
+		END
+	END FigureAttr;
+	
+	PROCEDURE FigureLinks (fig: Figure; VAR msg: Objects.LinkMsg);
+		VAR obj: Objects.Object; b, t: Shape;
+	BEGIN
+		IF msg.id = Objects.enum THEN
+			msg.Enum("Bottom"); msg.Enum("Top"); msg.Enum("Active")
+		ELSIF msg.id = Objects.get THEN
+			IF msg.name = "Bottom" THEN msg.obj := fig.bottom; msg.res := 0
+			ELSIF msg.name = "Top" THEN msg.obj := fig.top; msg.res := 0
+			ELSIF msg.name = "Active" THEN msg.obj := fig.active; msg.res := 0
+			END
+		ELSIF msg.id = Objects.set THEN
+			IF msg.name = "Bottom" THEN
+				obj := msg.obj;
+				IF (obj # NIL) & (obj IS Layer) THEN
+					b := obj(Shape); t := b;
+					WHILE (t.up # NIL) & (t.up IS Layer) DO t := t.up END;
+					IF (b.down = NIL) & (t.up = NIL) THEN
+						fig.bottom := b; fig.top := t; fig.active := t(Layer); msg.res := 0
+					END
+				END
+			ELSIF msg.name = "Top" THEN
+				obj := msg.obj;
+				IF (obj # NIL) & (obj IS Layer) THEN
+					t := obj(Shape); b := t;
+					WHILE (b.down # NIL) & (b.down IS Layer) DO b := b.down END;
+					IF (b.down = NIL) & (t.up = NIL) THEN
+						fig.bottom := b; fig.top := t; fig.active := t(Layer); msg.res := 0
+					END
+				END
+			ELSIF msg.name = "Active" THEN
+				b := fig.bottom;
+				WHILE b # NIL DO
+					IF b = msg.obj THEN
+						fig.active := b(Layer); msg.res := 0
+					END;
+					b := b.up
+				END
+			END
+		END
+	END FigureLinks;
+	
+	PROCEDURE CopyFigure* (VAR msg: Objects.CopyMsg; from, to: Figure);
+		VAR cur: Shape;
+	BEGIN
+		to.handle := from.handle;
+		CopyComponents(msg, from.bottom, to.bottom, to.top);
+		cur := to.bottom; WHILE cur # NIL DO cur(Layer).fig := to; cur := cur.up END;
+		to.active := from.active.dlink(Layer);
+		to.seltime := MIN(LONGINT);
+		to.lockLevel := 0; NEW(to.damage); GfxRegions.Init(to.damage, GfxRegions.Winding);
+		to.cmdLevel := 0; to.maxCmds := from.maxCmds; to.nofCmds := 0;
+		NEW(to.undoCmd); to.firstCmd := to.undoCmd; to.curCmd := NIL
+	END CopyFigure;
+	
+	PROCEDURE HandleFigure* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR fig, copy: Figure; bm: Objects.BindMsg; len, ver: LONGINT; id: CHAR; lib: Objects.Library; s: Shape;
+	BEGIN
+		fig := obj(Figure);
+		IF msg IS ShapeMsg THEN
+			WITH msg: ShapeMsg DO
+				msg.fig := fig;
+				IF msg IS LocalizedMsg THEN
+					WITH msg: LocalizedMsg DO
+						msg.lgm := GfxMatrix.Identity
 					END
 				END;
-				obj := next
-			END;
-			Figures.EndCommand(fig);
-			Figures.EnableUpdate(fig)
-		END
-	END Ungroup;
-	
-	PROCEDURE MoveSelection (id: INTEGER);
-		VAR fig: Figures.Figure; pm: Figures.PriorityMsg;
-	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.DisableUpdate(fig);
-			Figures.BeginCommand(fig);
-			Objects.Stamp(pm); pm.fig := fig; pm.id := id;
-			fig.handle(fig, pm);
-			Figures.EndCommand(fig);
-			Figures.EnableUpdate(fig)
-		END
-	END MoveSelection;
-	
-	(** move selected shapes up **)
-	PROCEDURE MoveUp*;
-	BEGIN
-		MoveSelection(Figures.Up)
-	END MoveUp;
-	
-	(** move selected shapes down **)
-	PROCEDURE MoveDown*;
-	BEGIN
-		MoveSelection(Figures.Down)
-	END MoveDown;
-	
-	(** move selected shapes to the top **)
-	PROCEDURE MoveToTop*;
-	BEGIN
-		MoveSelection(Figures.Top)
-	END MoveToTop;
-	
-	(** move selected shapes to the bottom **)
-	PROCEDURE MoveToBottom*;
-	BEGIN
-		MoveSelection(Figures.Bottom)
-	END MoveToBottom;
-	
-	(** reverse priority of selection **)
-	PROCEDURE Reverse*;
-	BEGIN
-		MoveSelection(Figures.Reverse)
-	END Reverse;
-	
-	(** rearrange selected shapes **)
-	PROCEDURE Arrange*;
-		CONST
-			x = 0; y = 1;
-			min = 0; max = 1; mid = 2;
-			hResizeMax = 1; hResizeMin = 2;
-			vResizeMax = 1; vResizeMin = 2;
-			hAlignLeft = 1; hAlignRight = 2; hAlignCenter = 3;
-			vAlignBottom = 1; vAlignTop = 2; vAlignCenter = 3;
-			hDistribLeft = 4; hDistribRight = 5; hDistribCenter = 6; hDistribSpace = 7;
-			vDistribBottom = 4; vDistribTop = 5; vDistribCenter = 6; vDistribSpace = 7;
-		
-		TYPE
-			Reference = POINTER TO RECORD
-				shape: Figures.Shape;
-				next: Reference;
-				c, d: ARRAY 2, 3 OF REAL;
-			END;
-		
-		VAR
-			fig: Figures.Figure; sel: Figures.Shape; first, last, ref: Reference; bw: REAL; obj: Objects.Object;
-			n: LONGINT; mat: GfxMatrix.Matrix;
-		
-		PROCEDURE findMax (xy, lo, hi: LONGINT): REAL;
-			VAR ref: Reference; max, m: REAL;
-		BEGIN
-			ref := first; max := ref.c[xy, hi] - ref.c[xy, lo]; ref := ref.next;
-			WHILE ref # NIL DO
-				m := ref.c[xy, hi] - ref.c[xy, lo];
-				IF m > max THEN max := m END;
-				ref := ref.next
-			END;
-			RETURN max
-		END findMax;
-		
-		PROCEDURE setDim (xy: LONGINT; dim: REAL);
-			VAR ref: Reference; d: REAL;
-		BEGIN
-			ref := first;
-			WHILE ref # NIL DO
-				d := 0.5*(dim - ref.c[xy, max] + ref.c[xy, min]);
-				ref.d[xy, min] := -d; ref.d[xy, max] := d;
-				ref := ref.next
+				ToComponents(fig.bottom, msg)
 			END
-		END setDim;
-		
-		PROCEDURE align (xy, m: LONGINT; step: REAL);
-			VAR ref: Reference; to, d: REAL;
-		BEGIN
-			ref := first; to := ref.c[xy, m] + ref.d[xy, m]; ref := ref.next;
-			WHILE ref # NIL DO
-				to := to + step;
-				d := to - ref.c[xy, m] - ref.d[xy, m];
-				ref.d[xy, min] := ref.d[xy, min] + d;
-				ref.d[xy, max] := ref.d[xy, max] + d;
-				ref := ref.next
+		ELSIF msg IS BroadcastMsg THEN
+			ToComponents(fig.bottom, msg);
+			Validate(fig)
+		ELSIF msg IS Objects.AttrMsg THEN
+			FigureAttr(fig, msg(Objects.AttrMsg))
+		ELSIF msg IS Objects.LinkMsg THEN
+			FigureLinks(fig, msg(Objects.LinkMsg))
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # fig.stamp THEN
+					NEW(copy); fig.dlink := copy; fig.stamp := msg.stamp;
+					CopyFigure(msg, fig, copy)
+				END;
+				msg.obj := fig.dlink
 			END
-		END align;
-		
-		PROCEDURE sort (xy, m: LONGINT);
-			VAR sent, cand, ref: Reference; max, t: REAL;
-		BEGIN
-			NEW(sent); sent.next := first; first := NIL;
-			WHILE sent.next # NIL DO
-				cand := sent; max := cand.next.c[xy, m] + cand.next.d[xy, m];
-				ref := cand.next;
-				WHILE ref.next # NIL DO
-					t := ref.next.c[xy, m] + ref.next.d[xy, m];
-					IF t > max THEN cand := ref; max := t END;
-					ref := ref.next
-				END;
-				ref := cand.next; cand.next := ref.next;
-				ref.next := first; first := ref
-			END;
-			last := first;
-			WHILE ref.next # NIL DO last := last.next END
-		END sort;
-		
-		PROCEDURE distribute (xy, m: LONGINT);
-			VAR step: REAL;
-		BEGIN
-			sort(xy, m);
-			step := ((last.c[xy, m] + last.d[xy, m]) - (first.c[xy, m] + first.d[xy, m]))/(n-1);
-			align(xy, m, step)
-		END distribute;
-		
-		PROCEDURE distribSpace (xy: LONGINT);
-			VAR ref: Reference; sum, step, to, d: REAL;
-		BEGIN
-			sort(xy, mid);
-			ref := first; sum := 0;
-			WHILE ref # NIL DO
-				sum := sum + (ref.c[xy, max] + ref.d[xy, max]) - (ref.c[xy, min] + ref.d[xy, min]);
-				ref := ref.next
-			END;
-			step := ((last.c[xy, max] + last.d[xy, max]) - (first.c[xy, min] + first.d[xy, min]) - sum)/(n-1);
-			ref := first; to := ref.c[xy, max] + ref.d[xy, max]; ref := ref.next;
-			WHILE ref # NIL DO
-				d := to + step - ref.c[xy, min] - ref.d[xy, min];
-				ref.d[xy, min] := ref.d[xy, min] + d;
-				ref.d[xy, max] := ref.d[xy, max] + d;
-				to := ref.c[xy, max] + ref.d[xy, max];
-				ref := ref.next
-			END
-		END distribSpace;
-		
-	BEGIN
-		FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF (sel # NIL) & (sel.slink # NIL) THEN
-				NEW(first); first.shape := sel;
-				Figures.GetShapeBox(first.shape, first.c[x, min], first.c[y, min], first.c[x, max], first.c[y, max], bw);
-				first.c[x, mid] := 0.5*(first.c[x, min] + first.c[x, max]); first.c[y, mid] := 0.5*(first.c[y, min] + first.c[y, max]);
-				first.d[x, min] := 0; first.d[y, min] := 0; first.d[x, max] := 0; first.d[y, max] := 0; first.d[x, mid] := 0; first.d[y, mid] := 0;
-				obj := sel.slink; n := 1; last := first;
-				WHILE obj # NIL DO
-					INC(n);
-					NEW(ref); ref.next := first; first := ref; ref.shape := obj(Figures.Shape);
-					Figures.GetShapeBox(ref.shape, ref.c[x, min], ref.c[y, min], ref.c[x, max], ref.c[y, max], bw);
-					ref.c[x, mid] := 0.5*(ref.c[x, min] + ref.c[x, max]); ref.c[y, mid] := 0.5*(ref.c[y, min] + ref.c[y, max]);
-					ref.d[x, min] := 0; ref.d[y, min] := 0; ref.d[x, max] := 0; ref.d[y, max] := 0; ref.d[x, mid] := 0; ref.d[y, mid] := 0;
-					obj := obj.slink
-				END;
-				IF HResize.val = hResizeMax THEN
-					setDim(x, findMax(x, min, max))
-				ELSIF HResize.val = hResizeMin THEN
-					setDim(x, -findMax(x, max, min))
-				END;
-				IF VResize.val = vResizeMax THEN
-					setDim(y, findMax(y, min, max))
-				ELSIF VResize.val = vResizeMin THEN
-					setDim(y, -findMax(y, max, min))
-				END;
-				CASE HAlign.val OF
-				| hAlignLeft: align(x, min, 0)
-				| hAlignRight: align(x, max, 0)
-				| hAlignCenter: align(x, mid, 0)
-				| hDistribLeft: distribute(x, min)
-				| hDistribRight: distribute(x, max)
-				| hDistribCenter: distribute(x, mid)
-				| hDistribSpace: distribSpace(x)
-				ELSE
-				END;
-				CASE VAlign.val OF
-				| vAlignBottom: align(y, min, 0)
-				| vAlignTop: align(y, max, 0)
-				| vAlignCenter: align(y, mid, 0)
-				| vDistribBottom: distribute(y, min)
-				| vDistribTop: distribute(y, max)
-				| vDistribCenter: distribute(y, mid)
-				| vDistribSpace: distribSpace(y)
-				ELSE
-				END;
-				Figures.DisableUpdate(fig);
-				Figures.BeginCommand(fig);
-				ref := first;
-				WHILE ref # NIL DO
-					IF (ref.d[x, min] # 0) OR (ref.d[x, max] # 0) OR (ref.d[y, min] # 0) OR (ref.d[y, max] # 0) THEN
-						GfxMatrix.Get3PointTransform(
-							ref.c[x, min], ref.c[y, min], ref.c[x, min] + ref.d[x, min], ref.c[y, min] + ref.d[y, min],
-							ref.c[x, max], ref.c[y, min], ref.c[x, max] + ref.d[x, max], ref.c[y, min] + ref.d[y, min],
-							ref.c[x, min], ref.c[y, max], ref.c[x, min] + ref.d[x, min], ref.c[y, max] + ref.d[y, max],
-							mat
-						);
-						ref.shape.slink := NIL;
-						Figures.Transform(fig, ref.shape, mat)
+		ELSIF msg IS Objects.FindMsg THEN
+			ToComponents(fig.bottom, msg)
+		ELSIF msg IS Objects.BindMsg THEN
+			Gadgets.BindObj(fig, msg(Objects.BindMsg).lib)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					NEW(bm.lib); Objects.OpenLibrary(bm.lib);
+					ToComponents(fig.bottom, bm);
+					Objects.StoreLibrary(bm.lib, Files.Base(msg.R), Files.Pos(msg.R), len);
+					Files.Set(msg.R, Files.Base(msg.R), Files.Pos(msg.R) + len);
+					WriteComponents(msg.R, bm.lib, fig.bottom);
+					Gadgets.WriteRef(msg.R, bm.lib, fig.active);
+					Files.WriteInt(msg.R, fig.maxCmds)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Files.Read(msg.R, id);
+					NEW(lib); Objects.OpenLibrary(lib);
+					Objects.LoadLibrary(lib, Files.Base(msg.R), Files.Pos(msg.R), len);
+					Files.Set(msg.R, Files.Base(msg.R), Files.Pos(msg.R) + len);
+					ReadComponents(msg.R, lib, fig.bottom, fig.top);
+					Gadgets.ReadRef(msg.R, lib, obj);
+					IF (obj # NIL) & (obj IS Layer) THEN fig.active := obj(Layer)
+					ELSE fig.active := fig.top(Layer)
 					END;
-					ref := ref.next
-				END;
-				Figures.EndCommand(fig);
-				Figures.EnableUpdate(fig)
+					s := fig.bottom;
+					WHILE s # NIL DO
+						IF s IS Layer THEN s(Layer).fig := fig END;
+						s := s.up
+					END;
+					Files.ReadInt(msg.R, fig.maxCmds)
+				END
 			END
 		END
-	END Arrange;
+	END HandleFigure;
 	
-	
-	(**--- (Public) Objects ---**)
-	
-	PROCEDURE GetObj (VAR name: ARRAY OF CHAR; VAR obj: Objects.Object);
-		VAR lib: Objects.Library; ref: INTEGER;
+	(** initialize empty figure with default layer "Main" **)
+	PROCEDURE InitFigure* (fig: Figure);
+		VAR layer: Layer;
 	BEGIN
-		lib := Objects.ThisLibrary("Leonardo.Lib");
-		IF lib = NIL THEN
-			obj := NIL
-		ELSE
-			Objects.GetRef(lib.dict, name, ref);
-			IF ref # MIN(INTEGER) THEN
-				lib.GetObj(lib, ref, obj)
+		fig.handle := HandleFigure;
+		NEW(layer); InitLayer(layer, "Main", TRUE, TRUE, TRUE); layer.fig := fig;
+		fig.bottom := layer; fig.top := layer; fig.active := layer;
+		fig.seltime := MIN(LONGINT);
+		fig.lockLevel := 0; NEW(fig.damage); GfxRegions.Init(fig.damage, GfxRegions.Winding);
+		fig.cmdLevel := 0; fig.maxCmds := 200; fig.nofCmds := 0;
+		NEW(fig.undoCmd); fig.firstCmd := fig.undoCmd; fig.curCmd := NIL
+	END InitFigure;
+	
+	(** figure generator **)
+	PROCEDURE NewFigure*;
+		VAR fig: Figure;
+	BEGIN
+		NEW(fig); InitFigure(fig);
+		Objects.NewObj := fig
+	END NewFigure;
+	
+	
+	(**--- Legacy Support ---**)
+	
+	PROCEDURE NewDoc*;
+	BEGIN
+		Objects.NewObj := Gadgets.CreateObject("LeoDocs.New")
+	END NewDoc;
+	
+	PROCEDURE HandleRuler (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR frame: Gadgets.Frame; ver: LONGINT;
+	BEGIN
+		frame := obj(Gadgets.Frame);
+		IF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.load THEN
+					Gadgets.framehandle(frame, msg);
+					Files.ReadNum(msg.R, ver);
+					ASSERT(ver = 1, 110);
+					Gadgets.ReadRef(msg.R, frame.lib, obj);
+					IF (obj = NIL) OR ~(obj IS Gadgets.Frame) THEN
+						obj := Gadgets.CreateObject("LeoFrames.NewFrame")
+					END;
+					IF (obj # NIL) & (obj IS Gadgets.Frame) THEN
+						frame.dsc := obj(Gadgets.Frame)
+					END
+				ELSIF frame.dsc # NIL THEN
+					frame.dsc.handle(frame.dsc, msg)
+				END
 			END
+		ELSIF msg IS Objects.BindMsg THEN
+			Gadgets.BindObj(frame, msg(Objects.BindMsg).lib)
+		ELSIF frame.dsc # NIL THEN
+			frame.dsc.handle(frame.dsc, msg)
 		END
-	END GetObj;
+	END HandleRuler;
 	
-	PROCEDURE GetPublicString* (name: ARRAY OF CHAR; VAR str: BasicGadgets.String);
-		VAR obj: Objects.Object;
+	PROCEDURE NewRuler*;
+		VAR frame: Gadgets.Frame;
 	BEGIN
-		GetObj(name, obj);
-		IF (obj # NIL) & (obj IS BasicGadgets.String) THEN
-			str := obj(BasicGadgets.String)
-		ELSE
-			NEW(str)
-		END
-	END GetPublicString;
-	
-	PROCEDURE GetPublicBool* (name: ARRAY OF CHAR; VAR bool: BasicGadgets.Boolean);
-		VAR obj: Objects.Object;
-	BEGIN
-		GetObj(name, obj);
-		IF (obj # NIL) & (obj IS BasicGadgets.Boolean) THEN
-			bool := obj(BasicGadgets.Boolean)
-		ELSE
-			NEW(bool)
-		END
-	END GetPublicBool;
-	
-	PROCEDURE GetPublicInt* (name: ARRAY OF CHAR; VAR int: BasicGadgets.Integer);
-		VAR obj: Objects.Object;
-	BEGIN
-		GetObj(name, obj);
-		IF (obj # NIL) & (obj IS BasicGadgets.Integer) THEN
-			int := obj(BasicGadgets.Integer)
-		ELSE
-			NEW(int)
-		END
-	END GetPublicInt;
-	
-	PROCEDURE SetStringValue* (obj: Objects.Object; val: ARRAY OF CHAR);
-		VAR old: ARRAY 64 OF CHAR;
-	BEGIN
-		Attributes.GetString(obj, "Value", old);
-		IF val # old THEN
-			Attributes.SetString(obj, "Value", val);
-			Gadgets.Update(obj)
-		END
-	END SetStringValue;
-	
-	PROCEDURE SetIntValue* (obj: Objects.Object; val: LONGINT);
-		VAR old: LONGINT;
-	BEGIN
-		Attributes.GetInt(obj, "Value", old);
-		IF val # old THEN
-			Attributes.SetInt(obj, "Value", val);
-			Gadgets.Update(obj)
-		END
-	END SetIntValue;
+		NEW(frame); frame.handle := HandleRuler;
+		Objects.NewObj := frame
+	END NewRuler;
 	
 
 BEGIN
 	Texts.OpenWriter(W);
-	Texts.WriteString(W, "Leonardo 1.30/eos 21.4.99"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf);
-	RulerFont := Fonts.This("Courier10.Scn.Fnt");
-	GetPublicInt("HResize", HResize);
-	GetPublicInt("VResize", VResize);
-	GetPublicInt("HAlign", HAlign);
-	GetPublicInt("VAlign", VAlign)
+	Texts.WriteString(W, "Leonardo 2.01/eos 22.06.2000"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
 END Leonardo.

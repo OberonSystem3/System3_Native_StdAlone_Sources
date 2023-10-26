@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetBase;	(** non-portable *)	(* 12.09.96 mg *)
 
@@ -22,7 +10,8 @@ CONST
 
 	MaxDevices* = 2; MaxProtocols = 4; MaxTimers = 2;
 
-	AdrLen* = 6;
+	MacAdrLen* = 6;	(* must be 6 for NetIP.ArpDesc *)
+	
 	MaxDataLen* = 1514;
 
 	(* broadcast capability *)
@@ -30,9 +19,11 @@ CONST
 	
 	Trace = FALSE;
 	
-	DebugQueues = TRUE;	(* warning: can influence performance *)
+	DebugQueues = FALSE;	(* warning: can influence performance *)
 	
 TYPE
+	MacAdr* = ARRAY MacAdrLen OF SYSTEM.BYTE;
+
 	Item* = POINTER TO ItemDesc;	(** basic network data item *)
 
 	ItemDesc* = RECORD
@@ -51,7 +42,7 @@ TYPE
 	DeviceDesc* = RECORD
 		typ*, state*, num*: INTEGER;	(* broadcast/nobroadcast, close/open, index *)
 		sndCnt*, recCnt*: LONGINT;	(* send/receive counters *)
-		hostAdr*, castAdr*: ARRAY AdrLen OF SYSTEM.BYTE;
+		hostAdr*, castAdr*: MacAdr;
 		Receive*: PROCEDURE (dev: Device; VAR prno: INTEGER; VAR src: ARRAY OF SYSTEM.BYTE; VAR item: Item);
 		Send*: PROCEDURE (dev: Device; prno: INTEGER; VAR dest: ARRAY OF SYSTEM.BYTE; item: Item);
 		Available*: PROCEDURE (dev: Device): BOOLEAN
@@ -67,7 +58,7 @@ TYPE
 	END;
 
 VAR
-	anyadr*: ARRAY AdrLen OF SYSTEM.BYTE;
+	anyadr*: MacAdr;
 
 	device: ARRAY MaxDevices OF Device;
 	protocols: ARRAY MaxProtocols OF Entry;
@@ -75,18 +66,20 @@ VAR
 	nofProtocols, nofDevices, nofTasks: SHORTINT;
 
 	freeList: Queue;
+	
+	Nnew, NnewFree, Nrecycle: LONGINT;
 
-PROCEDURE CheckSum* (VAR data: ARRAY OF SYSTEM.BYTE; len: INTEGER; base: LONGINT): LONGINT;
+PROCEDURE CheckSum* (VAR data: ARRAY OF SYSTEM.BYTE; len, base: LONGINT): LONGINT;
 CODE {SYSTEM.i386}
 	MOV EAX, base[EBP]
 	MOV EBX, data[EBP]
-	MOV CX, len[EBP]
-	SAR CX, 1
+	MOV ECX, len[EBP]
+	SAR ECX, 1
 csloop:
 	MOVZX EDX, WORD 0[EBX]
 	ADD EAX, EDX
 	ADD EBX, 2
-	DEC CX
+	DEC ECX
 	JNZ csloop
 	MOV EBX, EAX
 	SAR EBX, 16
@@ -99,17 +92,17 @@ csloop:
 	AND EAX, 0FFFFH
 END CheckSum;
 
-PROCEDURE ByteSum* (VAR data: ARRAY OF SYSTEM.BYTE; len: INTEGER): LONGINT;
+PROCEDURE ByteSum* (VAR data: ARRAY OF SYSTEM.BYTE; len: LONGINT): LONGINT;
 CODE {SYSTEM.i386}
 	XOR EAX, EAX
 	MOV EBX, data[EBP]
-	MOV CX, len[EBP]
-	SAR CX, 1
+	MOV ECX, len[EBP]
+	SAR ECX, 1
 sloop:
 	MOVZX EDX, WORD 0[EBX]
 	ADD EAX, EDX
 	ADD EBX, 2
-	DEC CX
+	DEC ECX
 	JNZ sloop
 END ByteSum;
 
@@ -133,59 +126,6 @@ VAR
 BEGIN b := l[3]; l[3] := l[0]; l[0] := b; b := l[2]; l[2] := l[1]; l[1] := b
 END HostLToNet;
 
-PROCEDURE Equal* (VAR a, b: ARRAY OF SYSTEM.BYTE; len: INTEGER): BOOLEAN;
-VAR i: LONGINT;
-BEGIN
-	i := 0; WHILE (i < len) & (a[i] = b[i]) DO INC(i) END;
-	RETURN i = len
-END Equal;
-
-PROCEDURE Copy* (VAR src, dst: ARRAY OF SYSTEM.BYTE; len: INTEGER);
-BEGIN SYSTEM.MOVE(SYSTEM.ADR(src[0]), SYSTEM.ADR(dst[0]), len)
-END Copy;
-
-(* FastCopy - Copy size bytes from source to dest.  (No overlap allowed) *)
-
-PROCEDURE FastCopy*(source, dest, size: LONGINT);
-CODE {SYSTEM.i386}
-	MOV ESI, source[EBP]
-	MOV EDI, dest[EBP]
-	MOV ECX, size[EBP]
-	CLD
-	CMP ECX, 8
-	JB bytemove
-	XOR EAX, EAX
-	SHRD EAX, ESI, 2
-	JZ copyd
-	TEST EDI, 3
-	JZ copyd
-	SHRD EAX, EDI, 2
-	SHR EAX, 28
-	CMP AL, 10
-	JZ mov2
-	CMP AL, 5
-	JZ mov3
-	NOT AL
-	AND AL, 5
-	JNZ copyd
-	MOVSB
-	DEC ECX
-	JMP copyd
-mov3:
-	MOVSB
-	DEC ECX
-mov2:
-	MOVSW
-	SUB ECX, 2
-copyd:
-	SHRD EAX, ECX, 2
-	SHR ECX, 2
-	REP MOVSD
-	SHLD ECX, EAX, 2
-bytemove:
-	REP MOVSB
-END FastCopy;
-
 PROCEDURE ^ GetItem* (VAR Q: Queue; VAR item: Item);
 
 (** NewItem - Allocate a new item.  item.ofs is set to the maximum allowable offset.
@@ -193,8 +133,9 @@ item.len is set to 0. *)
 
 PROCEDURE NewItem* (VAR item: Item);
 BEGIN
+	INC(Nnew);
 	IF freeList.len = 0 THEN NEW(item)
-	ELSE GetItem(freeList, item)
+	ELSE INC(NnewFree); GetItem(freeList, item)
 	END;
 	item.padding := 0X;	(* temporary *)
 	item.ofs := MaxDataLen; item.len := 0
@@ -232,6 +173,7 @@ END PutItem;
 
 PROCEDURE RecycleItem* (item: Item);
 BEGIN
+	INC(Nrecycle);
 	PutItem(freeList, item)
 END RecycleItem;
 
@@ -262,7 +204,7 @@ END InstallDevice;
 (** Poll - Poll all installed devices for packets and deliver them upstream. *)
 
 PROCEDURE Poll*;
-VAR item: Item;  src: ARRAY AdrLen OF SYSTEM.BYTE;  prno: INTEGER;  i, j: SHORTINT;
+VAR item: Item;  src: MacAdr;  prno: INTEGER;  i, j: SHORTINT;
 BEGIN
 	FOR i := 0 TO nofDevices-1 DO
 		IF device[i].state = open THEN
@@ -295,7 +237,7 @@ VAR i: INTEGER;
 BEGIN
 	i := 0; WHILE (i # nofProtocols) & (protocols[i].prno # prno) DO INC(i) END;
 	IF i = nofProtocols THEN
-(*Kernel.WriteString("InstallProtocol ");  Kernel.WriteHex(prno, 8);  Kernel.WriteLn;*)
+		IF Trace THEN Kernel.WriteString("InstallProtocol ");  Kernel.WriteHex(prno, 8);  Kernel.WriteLn END;
 		protocols[nofProtocols].prno := prno; protocols[nofProtocols].proc := P;
 		INC(nofProtocols)
 	END
@@ -328,7 +270,7 @@ BEGIN
 END Stop;
 
 BEGIN
-	nofDevices := 0; nofProtocols := 0; nofTasks := 0;
 	anyadr[0] := 0X; anyadr[1] := 0X; anyadr[2] := 0X;
-	anyadr[3] := 0X; anyadr[4] := 0X; anyadr[5] := 0X
+	anyadr[3] := 0X; anyadr[4] := 0X; anyadr[5] := 0X;
+	Stop
 END NetBase.

@@ -1,23 +1,11 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE FPA;	(** non-portable *)	(* RC 25.2.92 *)
 (* i87 Floating-Point Accelerator Emulator originally for MIPS R2010 *)
 (* all routines deliver and accept only normalized numbers or +0        *)
 
-(* Authors: Edgar Schwarz (es)                              *)
+(* Edgar Schwarz (es)                                            *)
 (* 19.11.1997 (es) update for PC Native 2.2 CD    *)
 (* J. Sedlacek 30.8.97 update for version 2.2         *)
 (* pjm 25.03.96 - ported to version 2.06               *)
@@ -61,7 +49,7 @@ TYPE
 VAR
 	FGR : ARRAY 16 OF SET; (* 8 x 8 Bytes Floating Point Stack *)
 	xch : ARRAY 2 OF SET;
-	equal, less : BOOLEAN;
+	equal, less, recursive : BOOLEAN;
 	adr: LONGINT;
 	SP, length, modReg, opfield, rm, i: INTEGER;
 	OP1, OP2, OP3: CHAR;
@@ -555,12 +543,14 @@ end:	MOV R3, EDX
 	END GetLength;
 
 PROCEDURE *Interpret;
-CONST
-	SpRel = 24X; (* stackpointer relative adressing: 00|100|100 *)
+(*CONST
+	SpRel = 24X; (* stackpointer relative adressing: 00|100|100 *)*)
 VAR 
 	ebp, cs: LONGINT;
 BEGIN	(* interrupts are off *)
-	(* get relevant registers of caller *) 
+	ASSERT(~recursive); recursive := TRUE;
+	S.STI();
+	(* get relevant registers of caller *)
 	S.GETREG(5, ebp);
 	S.GET(ebp+36, uEAX);  S.GET(ebp+32, uECX);  S.GET(ebp+28, uEDX);
 	S.GET(ebp+24, uEBX);  S.GET(ebp+16, uEBP);  S.GET(ebp+12, uESI);
@@ -750,7 +740,8 @@ BEGIN	(* interrupts are off *)
 	S.PUT(ebp+24, uEBX);  S.PUT(ebp+16, uEBP);  S.PUT(ebp+12, uESI);
 	S.PUT(ebp+8, uEDI);
 *)
-	S.PUT(ebp+48, EIP + length)
+	S.PUT(ebp+48, EIP + length);
+	recursive := FALSE
 END Interpret;
 	
 PROCEDURE Reset*;
@@ -775,10 +766,13 @@ BEGIN
 END InitCode;
 
 BEGIN
+	recursive := FALSE;
 	InitCode;
 	SP := 0; (*debug * opTsI := 0; *)
-	Kernel.RemoveIP(NIL, 7);	(* uninstall default handler in Kernel *)
-	Kernel.InstallIP(Interpret, 7)	(* install our handler *)
+	IF ~Kernel.copro THEN
+		Kernel.RemoveIP(NIL, 7);	(* uninstall default handler in Kernel *)
+		Kernel.InstallIP(Interpret, 7)	(* install our handler *)
+	END
 END FPA.
 
 Compiler.Compile *\xp

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Documents;	(** portable *) (** jm 18.1.95 *)
 
@@ -50,7 +38,7 @@ TYPE
 		name*: ARRAY 128 OF CHAR;	(** Document name. *)
 		Load*: PROCEDURE (D: Document);	(** Load document contents from disk. *)
 		Store*: PROCEDURE (D: Document);	(** Store document contents to disk. *)
-		time: LONGINT;
+		time: LONGINT
 	END;
 	
 	(** Find out what document is located at X, Y on the display. *)
@@ -92,7 +80,7 @@ BEGIN
 	Links.LoadLinks(R, lib, link)
 END LoadAttachments;
 
-PROCEDURE StoreAttachments*(VAR R: Files.Rider; attr: Attributes.Attr; VAR link: Links.Link);
+PROCEDURE StoreAttachments*(VAR R: Files.Rider; attr: Attributes.Attr; link: Links.Link);
 VAR r: Files.Rider; F: Files.File; patch, len: LONGINT; lib: Objects.Library; M: Objects.BindMsg;
 BEGIN
 	F := Files.Base(R);
@@ -184,7 +172,7 @@ END Cap;
 
 (** Open the give document with name name. NIL is returned on failure. Unknown document types are opened as text documents. *)
 PROCEDURE Open*(name: ARRAY OF CHAR): Document;
-VAR i, j, colonpos: INTEGER; ext: ARRAY 64 OF CHAR; D: Document;
+VAR i, j, colonpos, dotpos: INTEGER; ext: ARRAY 64 OF CHAR; D: Document;
 	loaderror: BOOLEAN;
 BEGIN
 	COPY(name, errMsg); Strings.AppendCh(errMsg, " ");
@@ -198,6 +186,7 @@ BEGIN
 			END;
 			INC(i)
 		END;
+		dotpos := j;
 		IF colonpos > 1 THEN (* jm *)
 			i := 0; j := 0;
 			WHILE i < colonpos DO
@@ -210,14 +199,8 @@ BEGIN
 				colonpos := -1	(* ignore colon and try with extension *)
 			END
 		END;
-(*
-			IF i = reg THEN (* unknown type *)
-				Strings.Append(errMsg, ext); Strings.Append(errMsg, " unknown document service");
-				RETURN NIL
-			END
-		ELSIF j >= 0 THEN
-*)
 		IF colonpos <= 1 THEN
+			j := dotpos;
 			IF (j >= 0) THEN
 				i := 0; INC(j); WHILE (name[j] # 0X) & (i # 31) DO ext[i] := Cap(name[j]); INC(i); INC(j) END; (* copy extension *)
 				ext[i] := 0X; i := 0;
@@ -464,7 +447,7 @@ BEGIN
 		main := F.dsc(Gadgets.Frame);
 		IF Gadgets.selected IN main.state THEN
 			S.F := main; S.res := -1; S.x := 0; S.y := 0;
-			S.id := Display.reset; F.time := 0;
+			S.id := Display.reset; F.time := -1;
 			ToMain(F, 0, 0, S);
 			Gadgets.Update(main)
 		END
@@ -567,7 +550,7 @@ BEGIN
 								N.id := Oberon.neutralize; N.F := NIL; N.res := -1; ToMain(F, M.x, M.y, N)
 							ELSIF M.id = Display.reset THEN
 							ELSIF M.id = Display.get THEN
-								IF (F.time > M.time) & (Gadgets.selected IN F.dsc(Gadgets.Frame).state) THEN
+								IF (((M.time-F.time) < 0) OR (M.time = -1)) & (Gadgets.selected IN F.dsc(Gadgets.Frame).state) THEN
 									M.time := F.time; M.sel := F; M.obj := F.dsc
 								END
 							END;
@@ -779,7 +762,7 @@ All documents are provided with a standard header on disk so that they can be re
 The document header is followed by the byte stream content of the document. DocumentGeneratorProcedure is called by Documents.Open to create an empty instance of the document gadget, which is then filled by a call to the Load method (as described above). To provide compatibility with the non-Oberon world that does not use such an identification header, an internal table of the Documents module pairs file extensions with document generator procedures. Should no document header be present, the file extension is used to file the (hopefully) correct document generator. The Load method of this document must then load the headerless file. It is allowed (but not recommended) to store a document without a header, should the extension table be set up correctly. The extension table can be extended by adding an entry to the Documents section of the Oberon registry. Eeach entry is a "Extension=Generator" pair.
 
 3. Menus
-Each document requires a menu bar with commands associated with the document type when opened with Desktops.OpenDoc. This menubar is gathered from the links "SystemMenu", "UserMenu" and "DeskMenu" provided by the document when the Desktops.OpenDoc command is executed. The menu can be constructed with the procedure Dekstops.NewMenu or can be taken from a public library. The string given as parameter to procedure NewMenu must contain a sequence of Oberon commands. By immediately following a menu command with a word in square brackets, that word will be used as the menu bar button caption. A typical menu string might look as follows:
+Each document requires a menu bar with commands associated with the document type when opened with Desktops.OpenDoc. This menubar is gathered from the links "SystemMenu", "UserMenu" and "DeskMenu" provided by the document when the Desktops.OpenDoc command is executed. The menu can be constructed with the procedure Desktops.NewMenu or can be taken from a public library. The string given as parameter to procedure NewMenu must contain a sequence of Oberon commands. By immediately following a menu command with a word in square brackets, that word will be used as the menu bar button caption. A typical menu string might look as follows:
 
 	"MyDoc.Search[Search] MyDoc.Save[Store]"
 	

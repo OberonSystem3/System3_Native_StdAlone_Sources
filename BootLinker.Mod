@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE BootLinker;	(** non-portable *)	(** JdV / dVdW / pjm / prk *)
 
@@ -149,6 +137,8 @@ TYPE
 		module: Module;
 	END;
 	
+	Bytes = POINTER TO ARRAY OF CHAR;
+
 	ModuleDesc = RECORD
 		(* Normal Module Data *)
 		link: Module;
@@ -162,8 +152,7 @@ TYPE
 		ptrTab: POINTER TO ARRAY OF LONGINT;
 		tdescs: POINTER TO ARRAY OF Type;
 		imports: POINTER TO ARRAY OF	Module;
-		data, code: POINTER TO ARRAY OF CHAR;
-		refs: POINTER TO ARRAY OF CHAR;
+		data, code, refs: Bytes;
 		publics, privates: LONGINT;
 		nofimp: LONGINT; import: ArrayPtr;
 		nofstrc: LONGINT; struct: ArrayPtr;
@@ -1109,6 +1098,55 @@ PROCEDURE LoadModule (VAR R: Files.Rider; m: Module; VAR base: LONGINT);
 		Expect (08CX); Files.ReadBytes (R, m.refs^, m.refSize);
 	END ReadRef;
 	
+	PROCEDURE GetNum(refs: Bytes;  VAR i, num: LONGINT);
+	VAR n, s: LONGINT;  x: CHAR;
+	BEGIN
+		s := 0;  n := 0;  x := refs[i];  INC(i);
+		WHILE ORD(x) >= 128 DO
+			INC(n, ASH(ORD(x) - 128, s));  INC(s, 7);  x := refs[i];  INC(i)
+		END;
+		num := n + ASH(ORD(x) MOD 64 - ORD(x) DIV 64 * 64, s)
+	END GetNum;
+
+	PROCEDURE FindAdr (VAR mod: Module; VAR pat: Name; type: LONGINT): LONGINT;	(* cf. System.FindProc *)
+	VAR i, j, m, t, ofs: LONGINT; ch: CHAR; found: BOOLEAN;
+	BEGIN
+		i := 0; m := mod.refSize;
+		ch := mod.refs[i];  INC(i);
+		WHILE (i < m) & ((ch = 0F8X) OR (ch = 0F9X)) DO	(* proc *)
+			GetNum(mod.refs, i, ofs);	(* pofs *)
+			IF ch = 0F9X THEN
+				GetNum(mod.refs, i, t);	(* nofPars *)
+				INC(i, 3)	(* RetType, procLev, slFlag *)
+			END;
+			found := TRUE; j := 0;
+			REPEAT ch := mod.refs[i]; found := found & (ch = pat[j]); INC(j); INC(i) UNTIL ch = 0X;	(* pname *)
+			IF found & (type = Proc) THEN
+				LogStr("FindAdr Proc "); LogStr(mod.name); LogStr("."); LogStr(pat);  LogStr("="); LogInt(ofs); LogLn;
+				RETURN ofs
+			END;
+			IF i < m THEN
+				ch := mod.refs[i]; INC(i);	(* 1X | 3X | 0F8X | 0F9X *)
+				WHILE (i < m) & (ch >= 1X) & (ch <= 3X) DO	(* var *)
+					ch := mod.refs[i]; INC(i);	(* type *)
+					IF (ch >= 81X) OR (ch = 16X) OR (ch = 1DX) THEN
+						GetNum(mod.refs, i, t)	(* dim/tdadr *)
+					END;
+					GetNum(mod.refs, i, ofs);	(* vofs *)
+					found := TRUE; j := 0;
+					REPEAT ch := mod.refs[i]; found := found & (ch = pat[j]); INC(j); INC(i) UNTIL ch = 0X;	(* vname *)
+					IF found & (type = Var) THEN
+						LogStr("FindAdr Var "); LogStr(mod.name); LogStr("."); LogStr(pat);  LogStr("="); LogInt(ofs); LogLn;
+						RETURN ofs
+					END;
+					IF i < m THEN ch := mod.refs[i]; INC(i) END	(* 1X | 3X | 0F8X | 0F9X *)
+				END
+			END
+		END;
+		HALT(99)	(* name not found *)
+	END FindAdr;
+	
+(*
 	PROCEDURE FindAdr (VAR m: Module; VAR pat: Name; type: LONGINT): LONGINT;
 		VAR pos, x, y: LONGINT; n: LONGINT;
 		
@@ -1156,6 +1194,7 @@ PROCEDURE LoadModule (VAR R: Files.Rider; m: Module; VAR base: LONGINT);
 			RETURN x
 		END
 	END FindAdr;
+*)
 	
 	PROCEDURE AssignExportSizes (VAR exp: ExportDesc; m: Module);
 		VAR size, i: LONGINT;

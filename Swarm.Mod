@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 (* Swarm, Version 1.0 / BES October 96
 
@@ -51,7 +39,7 @@ MODULE Swarm;  (** BES, Oct 16 96 - Oct 25 96 *)
 	(** Adapted from xswarm by Jeff Butterworth. (butterwo@ncsc.org) *)
 
 	IMPORT
-		Display, Display3, Effects, Files, Gadgets, Input, Modules, Oberon, Objects, Printer, Printer3, RandomNumbers, Texts;
+		(*NetBase,*) Display, Display3, Effects, Files, Gadgets, Input, Modules, Oberon, Objects, Printer, Printer3, RandomNumbers, Texts;
 
 	CONST
 		Version = 100;  (* version number for swarm gadget *)
@@ -148,7 +136,6 @@ MODULE Swarm;  (** BES, Oct 16 96 - Oct 25 96 *)
 	END InitSwarm;
 
 	PROCEDURE ResizeSwarm (s: Swarm; size: INTEGER);
-		VAR i, startv: INTEGER;
 	BEGIN  (* resizing the swarm forces a redraw *)
 		IF size > s.size THEN
 			s.size := size; NEW(s.bees, s.size);
@@ -343,7 +330,7 @@ MODULE Swarm;  (** BES, Oct 16 96 - Oct 25 96 *)
 	END Copy;
 
 	PROCEDURE Handle (F: Objects.Object; VAR M: Objects.ObjMsg);
-		VAR x, y, w, h, tag: INTEGER; s1: Swarm; Q: Display3.Mask; keysum: SET; inside: BOOLEAN; O: Display3.OverlapMsg; S: SwarmMsg;
+		VAR x, y, w, h, tag: INTEGER; s1: Swarm; Q: Display3.Mask; keysum: SET; O: Display3.OverlapMsg;
 		
 		PROCEDURE Selected (): BOOLEAN;
 			(* return if object or any of its parents is selected, maybe we're overdoing things a bit here but it's well worth the trouble... *)
@@ -586,8 +573,17 @@ MODULE Swarm;  (** BES, Oct 16 96 - Oct 25 96 *)
 		RETURN FALSE
 	END FadeAway;
 
+    PROCEDURE RestoreDisplay;
+    VAR dcm: Display.ControlMsg;  cm: Oberon.ControlMsg;
+    BEGIN
+    	cm.F := NIL;  cm.id := Oberon.neutralize;  Display.Broadcast(cm);
+    	Oberon.FadeCursor(Oberon.Mouse);  Oberon.FadeCursor(Oberon.Pointer);
+    	dcm.F := NIL;  dcm.id := Display.suspend;  Display.Broadcast(dcm);
+    	dcm.F := NIL;  dcm.id := Display.restore;  Display.Broadcast(dcm)
+    END RestoreDisplay;
+    
 	PROCEDURE SwarmOut (speed, size, border, mincol, maxcol, bacc, bvel, wacc, wvel: INTEGER);
-		VAR s: Swarm; m: Display3.Mask; minx, miny, maxx, maxy, x, y: INTEGER; keys: SET; msg: Display.ControlMsg; tdiff, timeout: LONGINT;
+		VAR s: Swarm; m: Display3.Mask; minx, miny, maxx, maxy, x, y: INTEGER; keys: SET; tdiff, timeout: LONGINT;
 	BEGIN
 		Oberon.RemoveMarks(0, 0, Display.Width, Display.Height);
 		IF FadeAway() THEN
@@ -599,11 +595,11 @@ MODULE Swarm;  (** BES, Oct 16 96 - Oct 25 96 *)
 			REPEAT
 				AgeSwarm(s, m, 0, 0);
 				timeout := Input.Time()+tdiff;
-				REPEAT UNTIL Input.Time() > timeout;
+				REPEAT (*NetBase.Poll*) UNTIL Input.Time() > timeout;
 				Input.Mouse(keys, x, y)
 			UNTIL (Input.Available() > 0) OR (keys # {}) OR (x < minx) OR (x > maxx) OR (y < miny) OR (y > maxy)
 		END;
-		msg.id := Display.restore; Display.Broadcast(msg)
+		RestoreDisplay
 	END SwarmOut;
 
 	(*L Swarm.Screensaver *)

@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE SLIP;	(** non-portable *)	(* 16.08.96 mg/dm *)
 
@@ -59,6 +47,13 @@ TYPE
 VAR
 	default: Device;
 	
+PROCEDURE Equal (VAR a, b: ARRAY OF SYSTEM.BYTE; len: LONGINT): BOOLEAN;
+VAR i: LONGINT;
+BEGIN
+	i := 0; WHILE (i < len) & (a[i] = b[i]) DO INC(i) END;
+	RETURN i = len
+END Equal;
+
 PROCEDURE Decode(VAR a: ARRAY OF SYSTEM.BYTE; VAR index: INTEGER; VAR n: LONGINT);
 VAR s1, s2: SHORTINT;
 BEGIN
@@ -160,8 +155,9 @@ BEGIN
 		temp1 := item.len - index; tothlen := dev.recvslots[ind].hlen;
 		csiph.len := tothlen + temp1; NetBase.HostToNet(csiph.len);
 		IF temp1 < 0 THEN dev.err := TRUE; RETURN END;
-		NetBase.NewItem(new); NetBase.Copy(dev.recvslots[ind].hdr,new.data[0],tothlen); 
-		NetBase.Copy(item.data[index],new.data[tothlen],temp1);
+		NetBase.NewItem(new);
+		SYSTEM.MOVE(SYSTEM.ADR(dev.recvslots[ind].hdr), SYSTEM.ADR(new.data[0]), tothlen); 
+		SYSTEM.MOVE(SYSTEM.ADR(item.data[index]), SYSTEM.ADR(new.data[tothlen]), temp1);
 		NetBase.RecycleItem(item);
 		new.len := tothlen + temp1; item := new;
 		(* redevute IP Header Chksum *)
@@ -183,7 +179,7 @@ BEGIN
 		IF SHORT(NetBase.CheckSum(iph^,iphlen,0)) = temp1 THEN
 			iph.checksum := temp1;
 			dev.err := FALSE; dev.recvslots[ind].hlen := iphlen + (tcphlen * 4);
-			NetBase.Copy(item.data[0], dev.recvslots[ind].hdr, iphlen + (tcphlen * 4));
+			SYSTEM.MOVE(SYSTEM.ADR(item.data[0]), SYSTEM.ADR(dev.recvslots[ind].hdr), iphlen + (tcphlen * 4));
 			csiph := SYSTEM.VAL(NetIP.IPHeader, SYSTEM.ADR(dev.recvslots[ind].hdr));
 		ELSE dev.err := TRUE;
 		END
@@ -231,8 +227,9 @@ VAR
 BEGIN
 	csiph := SYSTEM.VAL(NetIP.IPHeader,SYSTEM.ADR(cs.hdr));
 	cstcph := SYSTEM.VAL(NetTCP.Header,SYSTEM.ADR(cs.hdr[NetIP.HdrLen(csiph)]));
-	RETURN (NetBase.Equal(iph.src, csiph.src, NetIP.AdrLen) & NetBase.Equal(iph.dst, csiph.dst, NetIP.AdrLen) &
-					NetBase.Equal(tcph.src, cstcph.src, 2) & NetBase.Equal(tcph.dst, cstcph.dst, 2))
+	RETURN (SYSTEM.VAL(LONGINT, iph.src) = SYSTEM.VAL(LONGINT, csiph.src)) & 
+			(SYSTEM.VAL(LONGINT, iph.dst) = SYSTEM.VAL(LONGINT, csiph.dst)) &
+			Equal(tcph.src, cstcph.src, 2) & Equal(tcph.dst, cstcph.dst, 2)
 END TestEqual;
 
 PROCEDURE GetSlot(root: SlotList; id: SHORTINT): SlotList;
@@ -268,7 +265,7 @@ BEGIN
 	iph := SYSTEM.VAL(NetIP.IPHeader, SYSTEM.ADR(item.data[item.ofs])); iphlen := NetIP.HdrLen(iph);
 	tcph := SYSTEM.VAL(NetTCP.Header,SYSTEM.ADR(item.data[item.ofs+iphlen]));
 	tcphlen := SYSTEM.LSH(tcph.offs,-4);
-	NetBase.Copy(item.data[item.ofs],dev.xmitslots[id].hdr,iphlen + (tcphlen * 4));
+	SYSTEM.MOVE(SYSTEM.ADR(item.data[item.ofs]), SYSTEM.ADR(dev.xmitslots[id].hdr), iphlen + (tcphlen * 4));
 	dev.lastxmit := id; iph.protocol := id;
 	PutSlot(dev.slist, GetSlot(dev.slist,id));
 END SendUncompressed;
@@ -331,8 +328,8 @@ BEGIN (* test if TCP packet is compressible -> it's not a fragment and ACK = 1 a
 	IF (iph.verlen # csiph.verlen) OR (iph.tos # csiph.tos) OR
 		((SYSTEM.VAL(SET,frag) * {14}) # (SYSTEM.VAL(SET,csfrag) * {14})) OR
 		(iph.ttl # csiph.ttl) OR (tcphlen # SYSTEM.LSH(cstcph.offs,-4)) OR
-		((iphlen DIV 4 > 5) & ~NetBase.Equal(d1^, d2^, (iphlen DIV 4 - 5) * 4)) OR
-		((tcphlen > 5) & ~NetBase.Equal(tcph.data, cstcph.data, (tcphlen - 5) * 4)) THEN
+		((iphlen DIV 4 > 5) & ~Equal(d1^, d2^, (iphlen DIV 4 - 5) * 4)) OR
+		((tcphlen > 5) & ~Equal(tcph.data, cstcph.data, (tcphlen - 5) * 4)) THEN
 			SendUncompressed(dev, ind, item); RETURN(TYPEUNCOMPRESSEDTCP)
 	END;
 	changes := {}; index := 0;
@@ -385,7 +382,7 @@ BEGIN (* test if TCP packet is compressible -> it's not a fragment and ACK = 1 a
 
 	(* update the slot with this packet's headers *)
 	temp1 := tcph.chksum; NetBase.NetToHost(temp1); tothlen := iphlen + (tcphlen * 4);
-	NetBase.Copy(item.data[item.ofs], dev.xmitslots[ind].hdr, tothlen);
+	SYSTEM.MOVE(SYSTEM.ADR(item.data[item.ofs]), SYSTEM.ADR(dev.xmitslots[ind].hdr), tothlen);
 	NetBase.NewItem(new); 
 	DEC(new.ofs, 4 + index + item.len - tothlen);	(* enough space for all *)
 	newindex := new.ofs;  newindex0 := newindex;
@@ -398,8 +395,9 @@ BEGIN (* test if TCP packet is compressible -> it's not a fragment and ACK = 1 a
 	END;
 	new.data[newindex] := SHORT(SYSTEM.LSH(temp1,-8)); INC(newindex);		(* Write TCP Checksum *)
 	new.data[newindex] := SHORT(temp1); INC(newindex);
-	NetBase.Copy(newseq[0],new.data[newindex],index); INC(newindex,index);
-	NetBase.Copy(item.data[tothlen], new.data[newindex], item.len - tothlen);
+	SYSTEM.MOVE(SYSTEM.ADR(newseq[0]), SYSTEM.ADR(new.data[newindex]), index);
+	INC(newindex,index);
+	SYSTEM.MOVE(SYSTEM.ADR(item.data[tothlen]), SYSTEM.ADR(new.data[newindex]), item.len - tothlen);
 	NetBase.RecycleItem(item);
 	new.len := newindex-newindex0; item := new;
 	RETURN(TYPECOMPRESSEDTCP)

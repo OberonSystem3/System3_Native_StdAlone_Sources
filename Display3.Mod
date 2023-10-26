@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Display3;	(** portable *)	(** jm 17.1.95 / tk 7.12.95*)
 
@@ -682,36 +670,36 @@ END ReplConst;
 
 (** Is this rectangle completely visible? The clipping port is taken into acount. **)
 PROCEDURE Visible*(M: Mask; X, Y, W, H : INTEGER) : BOOLEAN;
-VAR x, y, X0, hleft, wleft, nh, nw: INTEGER; vis: BOOLEAN; s: ScanLine; r: Run;
+VAR x, y, X0, hleft, wleft, nh, nw: INTEGER; s: ScanLine; r: Run;
 BEGIN
-	IF M = NIL THEN RETURN TRUE;
+	IF M = NIL THEN RETURN TRUE
 	ELSIF (X < M.X) OR (Y < M.Y) OR  (X + W > M.X + M.W) OR (Y + H >  M.Y + M.H ) THEN RETURN FALSE
 	ELSIF M.simple THEN x := M.x; y := M.y;
 		RETURN (X >= M.sX + x) & (Y >= M.sY + y) & (X + W <= M.sX + M.sW + x) & (Y + H <=  M.sY + M.sH + y)
-	ELSE x := M.x; y := M.y;
+	ELSE
 		(* jm mod *)
-		vis := TRUE;
+		DEC(X, M.x); DEC(Y, M.y);  (* eos: shift rectangle into local mask coords *)
 		s := M.scanline;
-		WHILE s.top + y < Y DO s := s.next; END;
+		WHILE s.top < Y DO s := s.next END;
 		hleft := H;
 		X0 := X;
-		WHILE vis & (hleft > 0) DO
-			nh := Min(s.top + y - Y + 1, hleft);
+		WHILE hleft > 0 DO
+			nh := Min(s.top - Y + 1, hleft);
 			r := s.run;
-			WHILE r.right + x < X DO r := r.next END;
+			WHILE r.right < X DO r := r.next END;
 			wleft := W;
-			WHILE vis & (wleft > 0) DO
-				nw := r.right + x - X + 1; 
+			WHILE wleft > 0 DO
+				IF r.value = 0 THEN RETURN FALSE END; (*gs*)
+				nw := r.right - X + 1; 
 				IF wleft < nw THEN nw := wleft END;
-				IF r.value = 0 THEN vis := FALSE END;
 				INC(X, nw); DEC(wleft, nw);
-				r := r.next;
+				r := r.next
 			END;
 			INC(Y, nh); DEC(hleft, nh);
-			s := s.next; X := X0;
+			s := s.next; X := X0
 		END;
-		RETURN vis;
-	END;
+		RETURN TRUE
+	END
 END Visible;
 
 (** Display.Dot through a clipping mask. *)
@@ -1327,7 +1315,7 @@ BEGIN drawingPolygon := FALSE; selectpat := Display.grey1;
 		upC := 13;
 		downC := 12;
 		groupC := 13;
-		IF Display.TrueColor(0) THEN invertC := Display.FG ELSE invertC := 3 END;
+		IF Display.TrueColor(0) THEN invertC := white ELSE invertC := 3 END;
 		textC := Display.FG;
 		textbackC := 14;
 		Init

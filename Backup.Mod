@@ -1,31 +1,18 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Backup;	(** portable, except where noted *) (*JG 20.5.94/pm 16.6.94*)
 
-	IMPORT Diskette, Diskette0, Oberon, Texts, TextFrames;
+	IMPORT Diskette, Diskettes, Oberon, Texts, TextFrames;
 
 	VAR W: Texts.Writer; diroption: CHAR;
 
-	PROCEDURE MotorOff(me: Oberon.Task);
-	BEGIN
-		Diskette0.StopMotor(Diskette.drive);
-		Oberon.Remove(me)
-	END MotorOff;
-	
 	PROCEDURE Format*;	(** non-portable *)
+	BEGIN
+      Texts.WriteString(W, "Backup.Format not implemented in this version."); Texts.WriteLn(W);
+      Texts.WriteString(W, "Please use preformatted PC diskettes."); Texts.WriteLn(W);
+     Texts.Append(Oberon.Log, W.buf)
+(*
       VAR R: Texts.Reader; ch: CHAR; t: Oberon.Task;
 	BEGIN
       Texts.WriteString(W, "Backup.Format ");
@@ -37,6 +24,7 @@ MODULE Backup;	(** portable, except where noted *) (*JG 20.5.94/pm 16.6.94*)
       Diskette0.FormatDisk(Diskette.drive, ch);
       Diskette.InitOberonVol("OBERON");
       Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+*)
 	END Format;
 
 	PROCEDURE InitOberon*;
@@ -209,10 +197,9 @@ MODULE Backup;	(** portable, except where noted *) (*JG 20.5.94/pm 16.6.94*)
 	PROCEDURE DeleteFiles*;
 		VAR par: Oberon.ParList; T: Texts.Text; S: Texts.Scanner;
           beg, end, time: LONGINT; freeEntries, freeSpace: INTEGER;
-          b: ARRAY 512 OF CHAR;
 	BEGIN
 		Diskette.OpenVol(freeEntries, freeSpace);
-		Diskette.GetSectors(0, 1, b, 0);  Diskette.PutSectors(0, 1, b, 0);	(* writable? *)
+		(*Diskette.GetSectors(0, 1, b, 0);  Diskette.PutSectors(0, 1, b, 0);*)	(* writable? *)
 		par := Oberon.Par;
 		Texts.OpenScanner(S, par.text, par.pos); Texts.Scan(S);
 		WHILE S.class IN {Texts.Name, Texts.String} DO DeleteFile(S.s); Texts.Scan(S) END;
@@ -232,8 +219,7 @@ MODULE Backup;	(** portable, except where noted *) (*JG 20.5.94/pm 16.6.94*)
     BEGIN Diskette.drive := 1
     END SetDriveB;
 
-BEGIN Texts.OpenWriter(W)
+BEGIN Texts.OpenWriter(W); Diskettes.Install
 END Backup.
 
-
-
+System.Free Backup Diskette ~

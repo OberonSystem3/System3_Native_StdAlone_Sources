@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE NoteBooks;	(** portable *)
+MODULE NoteBooks; (** portable *)
 (* NoteBook Gadgets, jm 5.5.94
 
 The NoteBook gadgets are intended as an example of a more complicated container gadget. It is derived from
@@ -156,7 +144,7 @@ BEGIN
 	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint) END
 END Restore;
 
-PROCEDURE HandlePageMsg(F: NoteBook; x, y, w, h: INTEGER; VAR M: PageMsg);
+PROCEDURE HandlePageMsg(F: NoteBook; x, y: INTEGER; VAR M: PageMsg);
 VAR C: Display.ControlMsg; A: Display.ModifyMsg; f: Display.Frame;
 	N: Oberon.ControlMsg; S: Display.SelectMsg;
 BEGIN
@@ -325,7 +313,7 @@ BEGIN
 	END
 END Neutralize;
 
-PROCEDURE ConsumeMsg(F: NoteBook; x, y, w, h: INTEGER; VAR M: Display.ConsumeMsg);
+PROCEDURE ConsumeMsg(F: NoteBook; VAR M: Display.ConsumeMsg);
 VAR C: Display.ControlMsg; ok: BOOLEAN; obj: Objects.Object; G, lastobj: Gadgets.Frame;
 BEGIN
 	ok := TRUE; obj := M.obj;
@@ -431,7 +419,7 @@ BEGIN
 						END
 					ELSIF M IS Display.ConsumeMsg THEN
 						WITH M: Display.ConsumeMsg DO
-							IF (M.id = Display.drop) & (M.F = F) & ~(Gadgets.lockedcontents IN F.state) THEN ConsumeMsg(F, x, y, w, h, M)
+							IF (M.id = Display.drop) & (M.F = F) & ~(Gadgets.lockedcontents IN F.state) THEN ConsumeMsg(F, M)
 							ELSE ToMain(F, x, y, M) (* child may want to consume *)
 							END
 						END
@@ -463,7 +451,7 @@ BEGIN
 						END
 					ELSIF M IS PageMsg THEN
 						WITH M: PageMsg DO
-							IF M.F = F THEN HandlePageMsg(F, x, y, w, h, M)
+							IF M.F = F THEN HandlePageMsg(F, x, y, M)
 							ELSE ToMain(F, x, y, M)
 							END
 						END

@@ -1,21 +1,20 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE RX;	(** portable *)	(* Andreas Margelisch, 1990 *)
 
-IMPORT RXA, Oberon, Objects, Out, TextGadgets0, Texts, Display;
+(*
+Work on texts using regular expressions.
+$Log$
+$   3, Edgar@EdgarSchwarz.de, 01.12.00 22:48:47
+Without ArgTools, no renaming to simplify parameter parsing
+$   2, Edgar@EdgarSchwarz.de, 26.11.00 20:48:37
+ReplaceAll can use filenames as parameter and redirect output.
+$   1, Edgar@EdgarSchwarz.de, 26.11.00 08:30:01
+21.11.00 prk - Removed TextGadgets0 import.
+*)
+
+IMPORT RXA, Oberon, Objects, Texts, Display, Files;
 
 CONST 
 	blank = 32; (* blank *)
@@ -41,14 +40,29 @@ VAR
 	replstr : ARRAY(nofrepl+1) OF CHAR;
 	ch : CHAR;
 
-PROCEDURE Focus():TextGadgets0.Frame;
-	VAR CM: Oberon.CaretMsg;
+PROCEDURE GetCaret(VAR f: Display.Frame;  VAR t: Texts.Text; VAR pos: LONGINT);
+VAR M: Oberon.CaretMsg;
 BEGIN
-	CM.id := Oberon.get; Display.Broadcast(CM);
-	IF (CM.car # NIL) & (CM.car IS TextGadgets0.Frame) THEN RETURN CM.car(TextGadgets0.Frame)
-	ELSE RETURN NIL
-	END;
-END Focus;
+	M.id := Oberon.get; M.text := NIL;
+	Display.Broadcast(M);
+	f := M.car; t := M.text; pos := M.pos
+END GetCaret;
+
+PROCEDURE SetSelection(f: Display.Frame; t: Texts.Text; beg, end: LONGINT);
+VAR SM: Oberon.SelectMsg;  CM: Oberon.CaretMsg;
+BEGIN
+	SM.id := Oberon.set; SM.sel := f; SM.text := t; SM.beg := beg; SM.end := end; SM.time := -1;
+	Display.Broadcast(SM);
+	CM.id := Oberon.set; CM.text := t; CM.car := f; CM.pos := end;
+	Display.Broadcast(CM);
+END SetSelection;
+
+PROCEDURE RemoveSelection(f: Display.Frame; t: Texts.Text);
+VAR SM: Oberon.SelectMsg;  CM: Oberon.CaretMsg;
+BEGIN
+	SM.id := Oberon.reset; SM.sel := f; SM.text := t; Display.Broadcast(SM);
+	CM.id := Oberon.reset; CM.text := t; CM.car := f; Display.Broadcast(CM);
+END RemoveSelection;
 
 PROCEDURE MyCAP( ch : CHAR ) : CHAR;
 BEGIN IF ("a" <= ch ) & ( ch <= "z" ) THEN RETURN CAP( ch ) ELSE RETURN ch END;
@@ -309,20 +323,19 @@ END SearchPattern;
 
 PROCEDURE Search*;
 	VAR 
-		frame : TextGadgets0.Frame;
+		frame: Display.Frame;
+		text: Texts.Text;
 		textpos : LONGINT;
 BEGIN
 	errorvar := noerror;
-	frame := Focus();
+	GetCaret(frame, text, textpos);
 	IF frame # NIL THEN
-		textpos := frame.carpos.pos;
-		SearchPattern( frame.text, textpos );
-		IF ( ~sreplaced ) & ( frame.text = stext ) THEN
+		SearchPattern( text, textpos );
+		IF ( ~sreplaced ) & ( text = stext ) THEN
 			Oberon.Defocus;
-			TextGadgets0.Locate(frame, stextpos + send);
-			TextGadgets0.SetSelection(frame, stextpos + sbeg, stextpos + send);
+			SetSelection(frame, text, stextpos + sbeg, stextpos + send);
 		ELSE 
-			TextGadgets0.RemoveSelection(frame); TextGadgets0.RemoveCaret(frame)
+			RemoveSelection(frame, text)
 		END
 	END; 
 END Search;
@@ -330,28 +343,28 @@ END Search;
 PROCEDURE Replace*;
 	VAR 
 		error, pos, i : INTEGER;
-		frame : TextGadgets0.Frame;
+		frame: Display.Frame;
+		text: Texts.Text;
 		textpos : LONGINT;
 BEGIN
 	IF ( ~sreplaced ) & replset THEN
-		frame := Focus();
+		GetCaret(frame, text, textpos);
 		IF frame # NIL THEN
-			IF  frame.carpos.pos = stextpos + send THEN
+			IF  textpos = stextpos + send THEN
 				RXA.Replace( sdfa, sline, replstr, sbeg, send, error, pos );
 				sreplaced := error = RXA.noerror;
 				IF sreplaced THEN
 					Oberon.Defocus;
-					Out.String("delete "); Out.Int(slinelen, 5); Out.String(" characters"); Out.Ln;
-					Texts.Delete( frame.text, stextpos,  stextpos + slinelen);
+					(*Out.String("delete "); Out.Int(slinelen, 5); Out.String(" characters"); Out.Ln;*)
+					Texts.Delete( text, stextpos,  stextpos + slinelen);
 					i := 0; WHILE( i < LEN( sline ) ) & ( sline[i] # 0X ) DO Texts.Write( w, sline[i] ); INC(i) END; 
-					Texts.Insert( frame.text, stextpos, w.buf );
+					Texts.Insert( text, stextpos, w.buf );
 					textpos := stextpos + pos;
-					SearchPattern( frame.text, textpos );
-					IF ~sreplaced & (frame.text = stext) THEN
-						TextGadgets0.Locate(frame, stextpos + send);
-						TextGadgets0.SetSelection(frame, stextpos + sbeg, stextpos + send); 
+					SearchPattern( text, textpos );
+					IF ~sreplaced & (text = stext) THEN
+						SetSelection(frame, (*frame.*)text, stextpos + sbeg, stextpos + send);
 					ELSE
-						TextGadgets0.RemoveSelection(frame); TextGadgets0.RemoveCaret(frame)
+						RemoveSelection(frame, (*frame.*)text)
 					END;
 				ELSE
 					RXAErrorHandler( error, pos );
@@ -361,26 +374,93 @@ BEGIN
 	END; 
 END Replace;
 
+(* Save a text to a file. *)
+PROCEDURE storeToFile(t: Texts.Text; name: ARRAY OF CHAR);
+VAR
+	f: Files.File; R: Files.Rider; len: LONGINT;
+BEGIN
+	f := Files.New(name); 
+	Files.Set(R, f, 0); 
+	Texts.Store(t, f, Files.Pos(R), len); 
+	Files.Register(f);
+END storeToFile;
+
+(* Get text and optional name: * ,  ^ , 1{<filename>} ~ *)
+PROCEDURE textName(VAR text: Texts.Text; VAR name: ARRAY OF CHAR;
+									VAR first, last: BOOLEAN; VAR S: Texts.Scanner): BOOLEAN;
+VAR beg, end, time: LONGINT;
+
+PROCEDURE openText(VAR textName: ARRAY OF CHAR): BOOLEAN;
+BEGIN
+	Texts.WriteString(w, textName); Texts.WriteLn(w); Texts.Append(Oberon.Log, w.buf);
+	NEW(text); Texts.Open(text, textName); COPY(textName, name);
+	IF text.len = 0 THEN
+		text := NIL; RETURN FALSE;
+	ELSE
+		RETURN TRUE;
+	END;
+END openText;
+
+BEGIN
+	IF last THEN
+		RETURN FALSE;
+	ELSE
+		IF first THEN
+			Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);  Texts.Scan(S);
+			IF (S.class = Texts.Char) & (S.c = "*") THEN
+				(*        marked text           *)
+				text := Oberon.MarkedText();
+				IF text # NIL THEN
+					name[0] := 0X; last := TRUE; RETURN TRUE;
+				ELSE RETURN FALSE; END
+			ELSIF (S.class = Texts.Char) & (S.c = "^") THEN
+			    (*             filename selected               *)
+				Oberon.GetSelection(text, beg, end, time);
+				IF time >= 0 THEN 
+					Texts.OpenScanner(S, text, beg); Texts.Scan(S);
+					IF S.class = Texts.Name THEN
+						last := TRUE; RETURN openText(S.s);
+					ELSE RETURN FALSE; END;
+				ELSE RETURN FALSE; END
+			ELSE (* list of filenames *)
+				Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
+				IF S.class = Texts.Name THEN
+					first := FALSE; RETURN openText(S.s);
+				ELSE RETURN FALSE; END;
+			END
+		ELSE (* not first filenames *)
+			Texts.Scan(S);
+			IF S.class = Texts.Name THEN
+				RETURN openText(S.s);
+			ELSE RETURN FALSE; END;
+		END
+	END
+END textName;
+
+(** Replace in marked text or files patterns set by RX.SetSearch and RX.SetReplace.
+* marked text, ^ selected filename, 1{<filename>} ~ list of filenames *)
 PROCEDURE ReplaceAll*;
 	VAR 
-		frame : TextGadgets0.Frame;
+		frame: Display.Frame;
+		text: Texts.Text;
 		textpos : LONGINT;
 		error, pos, i : INTEGER;
+		name: ARRAY 128 OF CHAR;
+		lastArg, firstArg: BOOLEAN;
+		S: Texts.Scanner;
 BEGIN
 	errorvar := noerror;
-	frame := Focus();
-	IF ( frame # NIL ) & replset THEN
-		textpos := frame.carpos.pos;
-		Oberon.Defocus;
+	lastArg := FALSE; firstArg := TRUE;
+	WHILE textName(text, name, firstArg, lastArg, S) DO
 		LOOP
-			SearchPattern( frame.text, textpos );
+			SearchPattern( text, textpos );
 			IF ~sreplaced THEN
 				RXA.Replace( sdfa, sline, replstr, sbeg, send, error, pos );
 				IF error = RXA.noerror THEN
 					sreplaced := TRUE;
-					Texts.Delete( frame.text, stextpos,  stextpos + slinelen );
+					Texts.Delete( text, stextpos,  stextpos + slinelen );
 					i := 0; WHILE( i < LEN( sline ) ) & ( sline[i] # 0X ) DO Texts.Write( w, sline[i] ); INC(i) END; 
-					Texts.Insert( frame.text, stextpos, w.buf );
+					Texts.Insert( text, stextpos, w.buf );
 					textpos := stextpos + pos;
 				ELSE
 					RXAErrorHandler( error, pos );
@@ -389,8 +469,9 @@ BEGIN
 			ELSE
 				EXIT;
 			END; 
-		END
-	END; 
+		END;
+		IF name # "" THEN storeToFile(text, name); END;
+	END
 END ReplaceAll;
 
 BEGIN

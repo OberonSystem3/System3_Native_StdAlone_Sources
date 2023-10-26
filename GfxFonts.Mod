@@ -1,11 +1,14 @@
-MODULE GfxFonts;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxFonts; (** non-portable *)	(* eos   *)
 
 	(**
 		Gfx font engine
 	**)
 	
 	(*
-		8.1.98 - GetInstance now transforms an existing bounding box correctly (eos)
+		8.1.98 - GetInstance now transforms an existing bounding box correctly
 		13.1.98 - bug fix in OpenRaster, font.ymax was not computed correctly for scaled raster fonts in OpenRaster
 		13.1.98 - improved GetStringWidth; uses outline metrics now if images would be taken from outline, too
 		9.2.98 - adapted SplineToBezier to new behaviour of GfxPaths.EnumSpline (no Enter/Exit)
@@ -15,10 +18,17 @@ MODULE GfxFonts;	(** eos   **)
 		16.2.99 - bugfix in InitDefault (m[1, 1] wasn't set), tnx to pjm
 		12.3.99 - bugfix in WFGetWidth (dy = dx)
 		20.4.99 - put point size in separate field instead of merging it with font matrix
+		8.6.99 - don't set niceMaps for large raster fonts if outline exists
+		16.7.99 - try to open raster font before calling extensions
+		25.8.99 - use Images and GfxImages instead of GfxMaps, PictImages instead of GfxPictures
+		28.10.99 - WarpMap doesn't try to create empty images anymore
+		21.02.2000 - introduced registered font families to improve opening foreign font file formats
+		14.03.2000 - improved wildcard handling for registered font families (key without value is command)
+		30.03.2000 - accept "M.P=*" as wildcard
 	*)
 	
 	IMPORT
-		SYSTEM, Files, Math, Display, Fonts, Texts, Oberon, Strings, GfxMatrix, GfxMaps, GfxPictures, GfxPaths,
+		SYSTEM, Files, Math, Display, Fonts, Texts, Oberon, Strings, Images, PictImages, GfxMatrix, GfxImages, GfxPaths,
 		GfxRegions, GfxFonts0;
 		
 	
@@ -46,7 +56,7 @@ MODULE GfxFonts;	(** eos   **)
 		Char = POINTER TO CharDesc;
 		CharDesc = RECORD
 			x, y, dx, dy: REAL;	(* metrics *)
-			map: GfxMaps.Map;	(* pixels *)
+			map: Images.Image;	(* pixels *)
 			used: INTEGER;	(* number of accesses to this character *)
 		END;
 		
@@ -73,7 +83,7 @@ MODULE GfxFonts;	(** eos   **)
 			mat*, wmat: GfxMatrix.Matrix;	(** font matrix **)
 			xmin*, ymin*, xmax*, ymax*: INTEGER;	(** union of character bounding boxes **)
 			rfont*, wfont: Fonts.Font;	(** raster font (if a suitable one exists) **)
-			niceMaps*: BOOLEAN;	(** true if returned maps look better than the filled outlines **)
+			niceMaps*: BOOLEAN;	(** true if returned bitmaps look better than the filled outlines **)
 			outline: Outline;	(* outline, if available *)
 			prev, next: Font;	(* previous and next font in font cache *)
 			char: ARRAY 256 OF Char;	(* cached characters *)
@@ -83,7 +93,7 @@ MODULE GfxFonts;	(** eos   **)
 		MethodDesc* = RECORD
 			derive*: PROCEDURE (font: Font; ptsize: INTEGER; VAR mat: GfxMatrix.Matrix): Font;
 			getwidth*: PROCEDURE (font: Font; ch: CHAR; VAR dx, dy: REAL);
-			getmap*: PROCEDURE (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+			getmap*: PROCEDURE (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 			getoutline*: PROCEDURE (font: Font; ch: CHAR; x, y: REAL; path: GfxPaths.Path);
 		END;
 		
@@ -96,7 +106,7 @@ MODULE GfxFonts;	(** eos   **)
 		END;
 		
 		RegEnumData = RECORD (GfxRegions.EnumData)
-			map: GfxMaps.Map;
+			map: Images.Image;
 			dx, dy: INTEGER;
 		END;
 		
@@ -112,7 +122,7 @@ MODULE GfxFonts;	(** eos   **)
 		
 		(**
 			An extensible mechanism for opening font files in various formats works as follows: the section
-			'FontFormats' in Oberon.Text contains a list of file types associated with command procedures.
+			'FontFormats' in Oberon.Text contains a list of font name prefixes associated with command procedures.
 			When one of these command procedures is called, it should set the global 'OpenProc' variable
 			to a procedure which is able to open a font file if given font name, point size and font matrix
 			and which returns a font structure if successful.
@@ -372,7 +382,7 @@ MODULE GfxFonts;	(** eos   **)
 	END CacheFont;
 	
 	(* put character into cache *)
-	PROCEDURE CacheChar (font: Font; ch: CHAR; x, y, dx, dy: REAL; map: GfxMaps.Map);
+	PROCEDURE CacheChar (font: Font; ch: CHAR; x, y, dx, dy: REAL; map: Images.Image);
 		VAR char: Char; n, m: LONGINT;
 	BEGIN
 		NEW(char); font.char[ORD(ch)] := char;
@@ -513,7 +523,7 @@ MODULE GfxFonts;	(** eos   **)
 					size := (rfile.char[j].w + 7) DIV 8 * rfile.char[j].h;
 					WHILE size > 0 DO
 						Files.Read(r, ch);
-						SYSTEM.PUT(adr, Inv[ORD(ch)]);	(* GfxMaps.A1 expects leftmost pixel in most significant bit! *)
+						SYSTEM.PUT(adr, Inv[ORD(ch)]);	(* Images.A1 expects leftmost pixel in most significant bit! *)
 						INC(adr); DEC(size)
 					END;
 					INC(j)
@@ -538,14 +548,13 @@ MODULE GfxFonts;	(** eos   **)
 		ELSIF scale < 4.5 THEN ppm := SHORT(ENTIER(ptsize * scale * (914400/Display.Unit)/300 + 0.5)); ext := ".Pr3.Fnt"
 		ELSE ppm := SHORT(ENTIER(ptsize * scale * (914400/Display.Unit)/600 + 0.5)); ext := ".Pr6.Fnt"
 		END;
-		fppm := ppm;	(* match is exact if there is one *)
-		Strings.IntToStr(ppm, pstr);
-		COPY(family, name); Strings.Append(name, pstr);
+		COPY(family, name); fppm := ppm;
+		Strings.IntToStr(ppm, pstr); Strings.Append(name, pstr);
 		IF style = "BoldItalic" THEN Strings.AppendCh(name, "j")
 		ELSIF style # "" THEN Strings.AppendCh(name, CHR(ORD(CAP(style[0])) - ORD("A") + ORD("a")))
 		END;
 		Strings.Append(name, ext);
-		rfont := Fonts.This(name);
+		rfont := Fonts.This(name);	(* match is exact if there is one *)
 		IF (rfont # NIL) & (rfont.type # Fonts.font) THEN rfont := NIL END;	(* dismiss substitutes and metrics *)
 		
 		(* check available raster font files *)
@@ -563,7 +572,7 @@ MODULE GfxFonts;	(** eos   **)
 		
 		IF rfont # NIL THEN	(* found matching Oberon raster font *)
 			IF (fppm = ppm) & ~GfxMatrix.Rotated(mat) & (mat[0, 0] > 0) & (mat[1, 1] > 0) & (mat[0, 0] = mat[1, 1]) THEN
-				NEW(font); font.outline := outline; font.rfont := rfont; font.niceMaps := TRUE;
+				NEW(font); font.outline := outline; font.rfont := rfont; font.niceMaps := (outline = NIL) OR (scale < 5);
 				IF outline = NIL THEN font.class := RClass
 				ELSE font.class := ORClass
 				END;
@@ -583,7 +592,7 @@ MODULE GfxFonts;	(** eos   **)
 		
 		ELSIF rfile # NIL THEN	(* installable Printer refused to give us Pr?.Fnt though raster file exists *)
 			IF (fppm = ppm) & ~GfxMatrix.Rotated(mat) & (mat[0, 0] > 0) & (mat[1, 1] > 0) & (mat[0, 0] = mat[1, 1]) THEN
-				NEW(font); font.outline := outline; font.rfile := rfile; font.niceMaps := TRUE;
+				NEW(font); font.outline := outline; font.rfile := rfile; font.niceMaps := (outline = NIL) OR (scale < 5);
 				IF outline = NIL THEN font.class := FClass
 				ELSE font.class := OFClass
 				END;
@@ -619,7 +628,7 @@ MODULE GfxFonts;	(** eos   **)
 		("OberonBold", "Oberon10b")
 	**)
 	PROCEDURE Open* (name: ARRAY OF CHAR; ptsize: INTEGER; mat: GfxMatrix.Matrix): Font;
-		VAR family, style, fname: FontName; font, cand: Font; s: Texts.Scanner; cmd: FontName; res: INTEGER;
+		VAR family, style, fname, cmd, key: FontName; font, cand: Font; s: Texts.Scanner; i, res: INTEGER;
 	BEGIN
 		mat[2, 0] := 0; mat[2, 1] := 0;
 		SplitName(name, family, style);
@@ -647,36 +656,42 @@ MODULE GfxFonts;	(** eos   **)
 			END
 		END;
 		
-		(* try registered font formats *)
-		Oberon.OpenScanner(s, "FontFormats");
-		WHILE s.class IN {Texts.Name, Texts.String} DO
-			COPY(s.s, cmd); Texts.Scan(s);
-			IF (s.class = Texts.Char) & (s.c = "=") THEN
-				Texts.Scan(s); cmd := "";
-				IF s.class = Texts.Name THEN
-					COPY(s.s, cmd); Texts.Scan(s)
-				END
-			END;
-			IF cmd # "" THEN
-				OpenProc := NIL;
-				Oberon.Call(cmd, Oberon.Par, FALSE, res);
-				IF OpenProc # NIL THEN
-					font := OpenProc(family, style, ptsize, mat);
-					IF font # NIL THEN
-						COPY(fname, font.name); font.ptsize := ptsize; font.mat := mat;
-						CacheFont(font);
-						RETURN font
-					END
-				END
-			END
-		END;
-		
 		(* try standard raster/outline fonts *)
 		font := OpenRaster(family, style, ptsize, mat, OpenOutline(family, style));
 		IF font # NIL THEN
 			COPY(fname, font.name); font.ptsize := ptsize; font.mat := mat;
 			CacheFont(font);
 			RETURN font
+		END;
+		
+		(* try registered font formats *)
+		Oberon.OpenScanner(s, "FontFormats");
+		WHILE s.class IN {Texts.Name, Texts.String} DO
+			key[0] := 0X; COPY(s.s, cmd); Texts.Scan(s);
+			IF (s.class = Texts.Char) & (s.c = "=") THEN
+				Texts.Scan(s);
+				IF s.class IN {Texts.Name, Texts.String} THEN
+					IF s.s[0] # 0X THEN COPY(cmd, key); COPY(s.s, cmd) END;
+					Texts.Scan(s)
+				ELSIF (s.class = Texts.Char) & (s.c = "*") THEN
+					Texts.Scan(s)
+				END
+			END;
+			IF cmd # "" THEN
+				i := 0; WHILE (key[i] # 0X) & (CAP(key[i]) = CAP(family[i])) DO INC(i) END;
+				IF key[i] = 0X THEN
+					OpenProc := NIL;
+					Oberon.Call(cmd, Oberon.Par, FALSE, res);
+					IF OpenProc # NIL THEN
+						font := OpenProc(family, style, ptsize, mat);
+						IF font # NIL THEN
+							COPY(fname, font.name); font.ptsize := ptsize; font.mat := mat;
+							CacheFont(font);
+							RETURN font
+						END
+					END
+				END
+			END
 		END;
 		
 		RETURN NIL
@@ -700,8 +715,8 @@ MODULE GfxFonts;	(** eos   **)
 		END
 	END GetWidth;
 	
-	(** return character image map **)
-	PROCEDURE GetMap* (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	(** return character bitmap **)
+	PROCEDURE GetMap* (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR char: Char;
 	BEGIN
 		char := CachedChar(font, ch);
@@ -794,10 +809,10 @@ MODULE GfxFonts;	(** eos   **)
 	
 	(*--- GetMap Methods ---*)
 	
-	PROCEDURE WarpMap (src: GfxMaps.Map; mat: GfxMatrix.Matrix; VAR x, y: REAL; VAR dst: GfxMaps.Map);
+	PROCEDURE WarpMap (src: Images.Image; mat: GfxMatrix.Matrix; VAR x, y: REAL; VAR dst: Images.Image);
 		VAR
-			x0, y0, x1, y1: REAL;
-			omiBug: GfxMaps.Filter;	(* force loading of type descriptor *)
+			x0, y0, x1, y1: REAL; w, h: INTEGER;
+			omiBug: GfxImages.Filter;	(* force loading of type descriptor *)
 	BEGIN
 		GfxMatrix.Apply(mat, x, y, x, y);
 		x0 := 0; y0 := 0; x1 := 0; y1 := 0;
@@ -807,12 +822,17 @@ MODULE GfxFonts;	(** eos   **)
 		IF mat[1, 1] > 0 THEN y1 := y1 + src.height * mat[1, 1] ELSE y0 := y0 + src.height * mat[1, 1] END;
 		mat[2, 0] := -x0; mat[2, 1] := -y0;
 		x := x + x0; y := y + y0;
-		NEW(dst); GfxMaps.Create(dst, SHORT(-ENTIER(-x1) - ENTIER(x0)), SHORT(-ENTIER(-y1) - ENTIER(y0)), GfxMaps.A8);
-		GfxMaps.Transform(src, dst, mat, GfxMaps.LinearFilter)
+		w := SHORT(-ENTIER(-x1) - ENTIER(x0)); h := SHORT(-ENTIER(-y1) - ENTIER(y0));
+		IF w * h # 0 THEN
+			NEW(dst); Images.Create(dst, w, h, Images.A8);
+			GfxImages.Transform(src, dst, mat, GfxImages.LinearFilter)
+		ELSE
+			dst := NIL
+		END
 	END WarpMap;
 	
 	(* ... directly from raster font *)
-	PROCEDURE RGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE RGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR aw, bx, by, w, h: INTEGER; pat: Display.Pattern;
 	BEGIN
 		Fonts.GetChar(font.rfont, ch, aw, bx, by, w, h, pat);
@@ -820,12 +840,12 @@ MODULE GfxFonts;	(** eos   **)
 		IF w * h = 0 THEN
 			map := NIL
 		ELSE
-			NEW(map); GfxPictures.PatternToMap(pat, map)
+			NEW(map); PictImages.PatternToImage(pat, map)
 		END
 	END RGetMap;
 	
 	(* ... by warping raster font *)
-	PROCEDURE WRGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE WRGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR aw, bx, by, w, h: INTEGER; pat: Display.Pattern;
 	BEGIN
 		Fonts.GetChar(font.wfont, ch, aw, bx, by, w, h, pat);
@@ -834,13 +854,13 @@ MODULE GfxFonts;	(** eos   **)
 		IF w * h = 0 THEN
 			map := NIL
 		ELSE
-			NEW(map); GfxPictures.PatternToMap(pat, map);
+			NEW(map); PictImages.PatternToImage(pat, map);
 			WarpMap(map, font.wmat, x, y, map)
 		END
 	END WRGetMap;
 	
 	(* ... from file *)
-	PROCEDURE FGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE FGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR char: RasterChar;
 	BEGIN
 		char := font.rfile.char[ORD(ch)];
@@ -852,13 +872,13 @@ MODULE GfxFonts;	(** eos   **)
 				x := 0; y := 0; map := NIL
 			ELSE
 				x := char.x; y := char.y;
-				NEW(map); GfxMaps.Init(map, char.w, char.h, GfxMaps.A1, (char.w+7) DIV 8, char.adr)
+				NEW(map); Images.Init(map, char.w, char.h, Images.A1, (char.w+7) DIV 8, char.adr)
 			END
 		END
 	END FGetMap;
 	
 	(* ... by warping from file *)
-	PROCEDURE WFGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE WFGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 	BEGIN
 		FGetMap(font, ch, x, y, dx, dy, map);
 		dy := dx * font.wmat[0, 1];
@@ -910,16 +930,16 @@ MODULE GfxFonts;	(** eos   **)
 	END AddElem;
 	
 	PROCEDURE FillRect (llx, lly, urx, ury: INTEGER; VAR data: GfxRegions.EnumData);
-		VAR pix: GfxMaps.Pixel;
+		VAR pix: Images.Pixel;
 	BEGIN
 		WITH data: RegEnumData DO
-			pix[GfxMaps.A] := 0FFX;
-			GfxMaps.Fill(data.map, llx - data.dx, lly - data.dy, urx - data.dx, ury - data.dy, pix, GfxMaps.SrcCopy)
+			pix[Images.a] := 0FFX;
+			Images.Fill(data.map, llx - data.dx, lly - data.dy, urx - data.dx, ury - data.dy, pix, Images.SrcCopy)
 		END
 	END FillRect;
 	
 	(* ... by filling interior of warped outline *)
-	PROCEDURE OGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE OGetMap (font: Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR w: REAL; pathdata: PathEnumData; llx, lly, urx, ury: INTEGER; regdata: RegEnumData;
 	BEGIN
 		w := font.outline.width[ORD(ch)];
@@ -932,7 +952,7 @@ MODULE GfxFonts;	(** eos   **)
 			x := 0; y := 0; map := NIL
 		ELSE
 			llx := TmpRegion.llx; lly := TmpRegion.lly; urx := TmpRegion.urx; ury := TmpRegion.ury;
-			NEW(map); GfxMaps.Create(map, urx - llx, ury - lly, GfxMaps.A1);
+			NEW(map); Images.Create(map, urx - llx, ury - lly, Images.A1);
 			regdata.map := map; regdata.dx := llx; regdata.dy := lly;
 			GfxRegions.Enumerate(TmpRegion, llx, lly, urx, ury, FillRect, regdata);
 			x := llx; y := lly

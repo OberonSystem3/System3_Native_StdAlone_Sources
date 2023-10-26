@@ -1,4 +1,7 @@
-MODULE GfxPaths;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxPaths; (** portable *)	(* eos   *)
 
 	(**
 		Two_dimensional paths consisting of lines, arcs and bezier curves.
@@ -13,6 +16,14 @@ MODULE GfxPaths;	(** eos   **)
 		15.9.98 - minor cleanup: removed position, Save/Restore, GetBBox; simplified scanner interface
 		26.11.98 - added procedure Close
 		26.1.99 - added procedure Split
+		21.5.99 - fixed major bug in Reverse (no update of destination path fields)
+		12.7.99 - fixed another bug in Reverse (wrong direction when reverting Exit element)
+		12.7.99 - approximate arc with line if radius is smaller than flatness
+		18.02.2000 - simpler initial step without sqrt in EnumArc
+		18.02.2000 - more robust bezier code (deals with folded curves and cusps)
+		27.02.2000 - fixed arc code for starting points that are not on the ellipse
+		04.05.2000 - fixed solve; one execution path never set number of solutions (noticed by gf)
+		04.06.2000 - fixed bug in EnumBezier.draw: used xy11 as midpoint of Bezier curve instead of xy12
 	*)
 	
 	IMPORT
@@ -175,7 +186,7 @@ MODULE GfxPaths;	(** eos   **)
 		path.firstEB.coords := 0
 	END Clear;
 	
-	(** append begin element **)
+	(** append enter element **)
 	PROCEDURE AddEnter* (path: Path; x, y, dx, dy: REAL);
 	BEGIN
 		AddElem(path, Enter);
@@ -209,7 +220,7 @@ MODULE GfxPaths;	(** eos   **)
 		AddCoord(path, x, y)
 	END AddBezier;
 	
-	(** append end element **)
+	(** append exit element **)
 	PROCEDURE AddExit* (path: Path; dx, dy: REAL);
 	BEGIN
 		AddElem(path, Exit);
@@ -343,137 +354,230 @@ MODULE GfxPaths;	(** eos   **)
 		CONST
 			eps = 1.0E-3;
 		VAR
-			sense, xs, ys, xe, ye, l1, l2, dt, p2, tmp, p1, dx1, dx2, dy1, dy2, sx, sy, tx, ty, limit, dx, dy, tlen, ex, ey: REAL;
+			lx, ly, sense, xs, ys, xe, ye, dt, p2, tmp, p1, dx1, dx2, dy1, dy2, sx, sy, tx, ty, limit, dx, dy, tlen, ex, ey: REAL;
 			positive: BOOLEAN;
 	BEGIN
-		(* algorithm: D. Fellner & C. Helmberg, Robust Rendering of General Ellipses and Elliptical Arcs, ACM TOG 198? *)
+		(* algorithm: D. Fellner & C. Helmberg, Robust Rendering of General Ellipses and Elliptical Arcs, ACM TOG July 1993 *)
 		data.elem := Line;
 		x1 := x1 - x0; y1 := y1 - y0;
 		x2 := x2 - x0; y2 := y2 - y0;
 		IF ABS(x1 * y2 - y1 * x2) <= eps * ABS(x1 * x2 + y1 * y2) THEN	(* approximate with line *)
-			data.x := x; data.y := y;
-			enum(data)
+			data.x := x; data.y := y; enum(data);
+			RETURN
+		END;
+		
+		lx := ABS(x1) + ABS(x2); ly := ABS(y1) + ABS(y2);
+		IF (lx <= ly) & (lx <= flatness) OR (ly <= lx) & (ly <= flatness) THEN	(* radius smaller than flatness *)
+			data.x := x; data.y := y; enum(data);
+			RETURN
+		END;
+		
+		IF flatness < eps THEN flatness := eps END;
+		IF x1 * y2 > y1 * x2 THEN sense := 1 ELSE sense := -1 END;
+		xs := data.x - x0; ys := data.y - y0;
+		xe := x - x0; ye := y - y0;
+		IF lx >= ly THEN dt := flatness/lx
+		ELSE dt := flatness/ly
+		END;
+		
+		(* find first point on arc *)
+		p2 := xs * y2 - ys * x2;
+		IF ABS(p2) < eps THEN	(* (x2, y2) on start vector *)
+			tmp := x1; x1 := x2; x2 := -tmp;
+			tmp := y1; y1 := y2; y2 := -tmp;
+			p1 := 0
 		ELSE
-			IF flatness < eps THEN flatness := eps END;
-			IF x1 * y2 > y1 * x2 THEN sense := 1 ELSE sense := -1 END;
-			xs := data.x - x0; ys := data.y - y0;
-			xe := x - x0; ye := y - y0;
-			l1 := x1 * x1 + y1 * y1; l2 := x2 * x2 + y2 * y2;
-			IF l1 >= l2 THEN
-				dt := flatness/Math.sqrt(l1)
-			ELSE
-				dt := flatness/Math.sqrt(l2)
+			p1 := xs * y1 - ys * x1
+		END;
+		IF ABS(p1) < eps THEN	(* (x1, y1) on start vector *)
+			IF xs * x1 + ys * y1 < -eps THEN	(* on opposite side of origin *)
+				x1 := -x1; y1 := -y1;
+				x2 := -x2; y2 := -y2
 			END;
-			
-			(* find first point on arc *)
-			p2 := xs * y2 - ys * x2;
-			IF ABS(p2) < eps THEN	(* (x2, y2) on start vector *)
-				tmp := x1; x1 := x2; x2 := -tmp;
-				tmp := y1; y1 := y2; y2 := -tmp;
-				p1 := 0
-			ELSE
-				p1 := xs * y1 - ys * x1
-			END;
-			IF ABS(p1) < eps THEN	(* (x1, y1) on start vector *)
-				IF xs * x1 + ys * y1 < -eps THEN	(* on opposite side of origin *)
-					x1 := -x1; y1 := -y1;
-					x2 := -x2; y2 := -y2
-				END;
-				dx1 := 0; dx2 := 0; dy1 := 0; dy2 := 0
-			ELSE	(* search start point on ellipse *)
-				IF (p1 > 0) = (p2 > 0) THEN
-					tmp := x1; x1 := x2; x2 := -tmp;
-					tmp := y1; y1 := y2; y2 := -tmp;
-					p1 := p2
-				END;
-				IF p1 * sense > 0 THEN
-					x1 := -x1; y1 := -y1;
-					x2 := -x2; y2 := -y2
-				END;
-				dx1 := 0; dx2 := 0; dy1 := 0; dy2 := 0;
-				REPEAT
-					tmp := dx1;
-					dx1 := (x2 - 0.5 * dx2) * dt; dx2 := (x1 + 0.5 * tmp) * dt;
-					x1 := x1 + dx1; x2 := x2 - dx2;
-					tmp := dy1;
-					dy1 := (y2 - 0.5 * dy2) * dt; dy2 := (y1 + 0.5 * tmp) * dt;
-					y1 := y1 + dy1; y2 := y2 - dy2
-				UNTIL (xs * y1 - ys * x1) * sense >= 0;
+			IF ABS(x1 - xs) + ABS(y1 - ys) > flatness THEN
 				data.x := x0 + x1; data.y := y0 + y1;
 				enum(data)
 			END;
-			
-			sx := x1; sy := y1;	(* start point of current line *)
-			tx := 0; ty := 0;	(* (approximate) tangent vector at start point *)
-			limit := flatness * flatness;
-			positive := ((ye * x1 - xe * y1) * sense > 0);
-			LOOP
+			dx1 := 0; dx2 := 0; dy1 := 0; dy2 := 0
+		ELSE	(* search start point on ellipse *)
+			IF (p1 > 0) = (p2 > 0) THEN
+				tmp := x1; x1 := x2; x2 := -tmp;
+				tmp := y1; y1 := y2; y2 := -tmp;
+				p1 := p2
+			END;
+			IF p1 * sense > 0 THEN
+				x1 := -x1; y1 := -y1;
+				x2 := -x2; y2 := -y2
+			END;
+			dx1 := 0; dx2 := 0; dy1 := 0; dy2 := 0;
+			REPEAT
 				tmp := dx1;
 				dx1 := (x2 - 0.5 * dx2) * dt; dx2 := (x1 + 0.5 * tmp) * dt;
 				x1 := x1 + dx1; x2 := x2 - dx2;
 				tmp := dy1;
 				dy1 := (y2 - 0.5 * dy2) * dt; dy2 := (y1 + 0.5 * tmp) * dt;
-				y1 := y1 + dy1; y2 := y2 - dy2;
-				p1 := (ye * x1 - xe * y1) * sense;
-				IF p1 > 0 THEN
-					positive := TRUE
-				ELSIF positive THEN
-					EXIT
-				END;
-				dx := x1 - sx; dy := y1 - sy;
-				IF (tx = 0) & (ty = 0) THEN	(* first point *)
-					tx := dx; ty := dy; tlen := tx * tx + ty * ty
-				ELSE
-					tmp := dx * ty - dy * tx;
-					IF (tmp * tmp)/tlen > limit THEN	(* distance from new point to tangent vector is greater than flatness *)
-						sx := ex; sy := ey;
-						data.x := x0 + sx; data.y := y0 + sy;
-						enum(data);
-						tx := dx; ty := dy; tlen := tx * tx + ty * ty
-					END
-				END;
-				ex := x1; ey := y1
-			END;
-			data.x := x; data.y := y;
+				y1 := y1 + dy1; y2 := y2 - dy2
+			UNTIL (xs * y1 - ys * x1) * sense >= 0;
+			data.x := x0 + x1; data.y := y0 + y1;
 			enum(data)
-		END
+		END;
+		
+		sx := x1; sy := y1;	(* start point of current line *)
+		tx := 0; ty := 0;	(* (approximate) tangent vector at start point *)
+		limit := flatness * flatness;
+		positive := ((ye * x1 - xe * y1) * sense > 0);
+		LOOP
+			tmp := dx1;
+			dx1 := (x2 - 0.5 * dx2) * dt; dx2 := (x1 + 0.5 * tmp) * dt;
+			x1 := x1 + dx1; x2 := x2 - dx2;
+			tmp := dy1;
+			dy1 := (y2 - 0.5 * dy2) * dt; dy2 := (y1 + 0.5 * tmp) * dt;
+			y1 := y1 + dy1; y2 := y2 - dy2;
+			p1 := (ye * x1 - xe * y1) * sense;
+			IF p1 > 0 THEN
+				positive := TRUE
+			ELSIF positive THEN
+				EXIT
+			END;
+			dx := x1 - sx; dy := y1 - sy;
+			IF (tx = 0) & (ty = 0) THEN	(* first point *)
+				tx := dx; ty := dy; tlen := tx * tx + ty * ty
+			ELSE
+				tmp := dx * ty - dy * tx;
+				IF (tmp * tmp)/tlen > limit THEN	(* distance from new point to tangent vector is greater than flatness *)
+					sx := ex; sy := ey;
+					data.x := x0 + sx; data.y := y0 + sy;
+					enum(data);
+					tx := dx; ty := dy; tlen := tx * tx + ty * ty
+				END
+			END;
+			ex := x1; ey := y1
+		END;
+		data.x := x; data.y := y;
+		enum(data)
 	END EnumArc;
 	
 	(** enumerate bezier curve as a sequence of lines with maximal error 'flatness'; current point must be in (data.x, data.y) **)
 	PROCEDURE EnumBezier* (x1, y1, x2, y2, x, y, flatness: REAL; enum: Enumerator; VAR data: EnumData);
-		CONST
-			eps = 1.0E-5;
-		VAR
-			dx, dy, d, tx, ty, t, px1, py1, px2, py2, x11, y11, x22, y22, x12, y12, x21, y21, xm, ym: REAL;
+		CONST eps = 1.0E-8;
+		VAR f2, ax, bx, t, x01, x11, x12, x22, x23, y01, y11, y12, y22, y23: REAL;
+		
+		PROCEDURE subdiv (t, x0, x1, x2, x3: REAL; VAR a1, a2, m, b1, b2: REAL);
+			VAR s, x12: REAL;
+		BEGIN
+			s := 1-t;
+			a1 := s * x0 + t * x1; b2 := s * x2 + t * x3; x12 := s * x1 + t * x2;
+			a2 := s * a1 + t * x12; b1 := s * x12 + t * b2;
+			m := s * a2 + t * b1
+		END subdiv;
+		
+		PROCEDURE draw (x1, y1, x2, y2, x, y: REAL);
+			VAR x01, x11, x12, x22, x23, y01, y11, y12, y22, y23, dx, dy, ex, ey, cp: REAL;
+		BEGIN
+			subdiv(0.5, data.x, x1, x2, x, x01, x11, x12, x22, x23);
+			subdiv(0.5, data.y, y1, y2, y, y01, y11, y12, y22, y23);
+			dx := x12 - data.x; dy := y12 - data.y;
+			ex := x - data.x; ey := y - data.y;
+			cp := dx*ey - dy*ex;
+			IF cp*cp <= f2 * (ex*ex + ey*ey) THEN	(* flat enough *)
+				data.x := x; data.y := y; enum(data)
+			ELSE
+				draw(x01, y01, x11, y11, x12, y12);
+				draw(x22, y22, x23, y23, x, y)
+			END
+		END draw;
+		
+		PROCEDURE solve (a, b, c: REAL; VAR t1, t2: REAL; VAR n: INTEGER);
+			VAR d, e, t: REAL;
+		BEGIN
+			n := 0; d := b * b - a * c;
+			IF d >= 0 THEN
+				d := Math.sqrt(d); e := -b + d;
+				IF (a * e > 0) & (ABS(e) < ABS(a)) THEN
+					t1 := e/a; n := 1;
+					e := -b - d;
+					IF (d > 0) & (a * e > 0) & (ABS(e) < ABS(a)) THEN
+						t2 := e/a; n := 2;
+						IF t2 < t1 THEN t := t1; t1 := t2; t2 := t END
+					END
+				ELSE
+					e := -b - d;
+					IF (a * e > 0) & (ABS(e) < ABS(a)) THEN
+						t1 := e/a; n := 1
+					END
+				END
+			END;
+			ASSERT((n = 0) OR (n = 1) & (0 < t1) & (t1 < 1) OR (n = 2) & (0 < t1) & (t1 < t2) & (t2 < 1))
+		END solve;
+		
+		PROCEDURE norm2y (x1, y1, x2, y2, x, y: REAL);
+			VAR t1, t2, x01, x11, x12, x22, x23, y01, y11, y12, y22, y23: REAL; n: INTEGER;
+		BEGIN
+			solve(y - data.y + 3*(y1 - y2), data.y - 2*y1 + y2, y1 - data.y, t1, t2, n);
+			IF n = 0 THEN
+				draw(x1, y1, x2, y2, x, y)
+			ELSE
+				subdiv(t1, data.x, x1, x2, x, x01, x11, x12, x22, x23);
+				subdiv(t1, data.y, y1, y2, y, y01, y11, y12, y22, y23);
+				draw(x01, y01, x11, y11, x12, y12);
+				IF n = 2 THEN
+					t2 := (t2 - t1)/(1-t1);
+					subdiv(t2, data.x, x22, x23, x, x01, x11, x12, x22, x23);
+					subdiv(t2, data.y, y22, y23, y, y01, y11, y12, y22, y23);
+					draw(x01, y01, x11, y11, x12, y12)
+				END;
+				draw(x22, y22, x23, y23, x, y)
+			END
+		END norm2y;
+		
+		PROCEDURE norm2x (x1, y1, x2, y2, x, y: REAL);
+			VAR t1, t2, x01, x11, x12, x22, x23, y01, y11, y12, y22, y23: REAL; n: INTEGER;
+		BEGIN
+			solve(x - data.x + 3*(x1 - x2), data.x - 2*x1 + x2, x1 - data.x, t1, t2, n);
+			IF n = 0 THEN
+				norm2y(x1, y1, x2, y2, x, y)
+			ELSE
+				subdiv(t1, data.x, x1, x2, x, x01, x11, x12, x22, x23);
+				subdiv(t1, data.y, y1, y2, y, y01, y11, y12, y22, y23);
+				norm2y(x01, y01, x11, y11, x12, y12);
+				IF n = 2 THEN
+					t2 := (t2 - t1)/(1-t1);
+					subdiv(t2, data.x, x22, x23, x, x01, x11, x12, x22, x23);
+					subdiv(t2, data.y, y22, y23, y, y01, y11, y12, y22, y23);
+					norm2y(x01, y01, x11, y11, x12, y12)
+				END;
+				norm2y(x22, y22, x23, y23, x, y)
+			END
+		END norm2x;
+		
+		PROCEDURE norm1y (x1, y1, x2, y2, x, y: REAL);
+			VAR ay, by, t, x01, x11, x12, x22, x23, y01, y11, y12, y22, y23: REAL;
+		BEGIN
+			ay := y - data.y + 3*(y1 - y2); by := data.y - 2*y1 + y2;
+			IF (ay * by < 0) & (ABS(by) < ABS(ay)) THEN
+				t := -by/ay;
+				subdiv(t, data.x, x1, x2, x, x01, x11, x12, x22, x23);
+				subdiv(t, data.y, y1, y2, y, y01, y11, y12, y22, y23);
+				norm2x(x01, y01, x11, y11, x12, y12);
+				norm2x(x22, y22, x23, y23, x, y)
+			ELSE
+				norm2x(x1, y1, x2, y2, x, y)
+			END
+		END norm1y;
+		
 	BEGIN
 		data.elem := Line;
-		flatness := flatness * flatness;
-		IF flatness < eps THEN flatness := eps END;
-		dx := x - data.x; dy := y - data.y;
-		d := dx * dx + dy * dy;
-		IF d < flatness THEN
-			data.x := x; data.y := y;
-			enum(data)
+		f2 := flatness * flatness;
+		IF f2 < eps THEN f2 := eps END;
+		ax := x - data.x + 3*(x1 - x2); bx := data.x - 2*x1 + x2;
+		IF (ax * bx < 0) & (ABS(bx) < ABS(ax)) THEN
+			t := -bx/ax;
+			subdiv(t, data.x, x1, x2, x, x01, x11, x12, x22, x23);
+			subdiv(t, data.y, y1, y2, y, y01, y11, y12, y22, y23);
+			norm1y(x01, y01, x11, y11, x12, y12);
+			norm1y(x22, y22, x23, y23, x, y)
 		ELSE
-			tx := x1 - x; ty := y1 - y;
-			t := (tx * dx + ty * dy)/d;
-			px1 := t * dx - tx; py1 := t * dy - ty;
-			tx := x2 - x; ty := y2 - y;
-			t := (tx * dx + ty * dy)/d;
-			px2 := t * dx - tx; py2 := t * dy - ty;
-			IF (px1 * px1 + py1 * py1 < flatness) & (px2 * px2 + py2 * py2 < flatness) THEN
-				data.x := x; data.y := y;
-				enum(data)
-			ELSE
-				x11 := 0.5 * (data.x + x1); y11 := 0.5 * (data.y + y1);
-				tx := 0.5 * (x1 + x2); ty := 0.5 * (y1 + y2);
-				x22 := 0.5 * (x2 + x); y22 := 0.5 * (y2 + y);
-				x12 := 0.5 * (x11 + tx); y12 := 0.5 * (y11 + ty);
-				x21 := 0.5 * (tx + x22); y21 := 0.5 * (ty + y22);
-				xm := 0.5 * (x12 + x21); ym := 0.5 * (y12 + y21);
-				EnumBezier(x11, y11, x12, y12, xm, ym, flatness, enum, data);
-				EnumBezier(x21, y21, x22, y22, x, y, flatness, enum, data)
-			END
+			norm1y(x1, y1, x2, y2, x, y)
 		END
 	END EnumBezier;
 	
@@ -682,7 +786,7 @@ MODULE GfxPaths;	(** eos   **)
 			| Bezier:
 				get(x1, y1); get(x2, y2); get(x, y);
 				EnumBezier(x1, y1, x2, y2, x, y, flatness, enum, data);
-				data.elem := Line; data.x := x; data.y := y; enum(data)
+				(* why this? data.elem := Line; data.x := x; data.y := y; enum(data) *)
 			| Exit:
 				get(data.dx, data.dy);
 				enum(data)
@@ -947,10 +1051,12 @@ MODULE GfxPaths;	(** eos   **)
 				| Exit:
 					dstEB.elem[depos] := Enter;
 					get(dx, dy);
-					put(-dx, -dx)
+					put(-dx, -dy)
 				END;
 				INC(sepos); DEC(elems)
-			UNTIL elems = 0
+			UNTIL elems = 0;
+			dst.firstEB := dstEB; dst.firstCB := dstCB;
+			dst.elems := src.elems; dst.coords := src.coords
 		END
 	END Reverse;
 	
@@ -1046,6 +1152,9 @@ MODULE GfxPaths;	(** eos   **)
 	
 	(** try to close disconnected enter/exit points by modifying their direction vectors **)
 	PROCEDURE Close* (path: Path);
+		CONST
+			eps = 0.001;
+			
 		VAR
 			pos, epos, cpos, p, spos: INTEGER; eb: ElemBlock; cb, b, sb: CoordBlock; dx, dy, cx, cy, sx, sy, sdx, sdy, x, y, edx, edy: REAL;
 			data: DirData;
@@ -1094,7 +1203,7 @@ MODULE GfxPaths;	(** eos   **)
 			| Exit:
 				b := cb; p := cpos;
 				get(edx, edy);
-				IF (edx = 0) & (edy = 0) & (x = sx) & (y = sy) THEN
+				IF (edx = 0) & (edy = 0) & (ABS(x - sx) <= eps) & (ABS(y - sy) <= eps) THEN
 					IF spos = CoordBlockSize THEN
 						sb := sb.next; spos := 0
 					END;

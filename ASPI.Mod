@@ -1,24 +1,12 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 project *)
 
 	IMPORT SYSTEM, PCI, NCRScript, Kernel;
 
 	CONST
-		debug = FALSE; intdebug = FALSE; msgdebug = FALSE; devlistdebug = FALSE; fifodebug = FALSE;
+		intdebug = FALSE; devlistdebug = FALSE; fifodebug = FALSE; scsidebug = FALSE;
 		ManagerId = "ASPI for Oberon";
 
 		(* Exported ASPI Constants *)
@@ -42,7 +30,7 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 		
 		(* NCR Device & Version Id's *)
 		NCRVendorId = 1000H;
-		DevIDs = 7;
+		DevIDs = 8;
 		C810DevId = 1H; C810VerId = 0H; C810AVerId = 10H; C810ALVVerId = 20H;
 		C810APDevId = 5H;
 		C815DevId = 4H;
@@ -50,6 +38,7 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 		C825DevId = 3H; C825VerId = 0H; C825AVerId = 10H;
 		C860DevId = 6H; C860VerId = 0H; C860LVVerId = 10H;
 		C875DevId = 0FH;
+		C896DevId = 0BH;
 		
 		(* NCR  53C810 Registers *)
 		SCNTL0 = 00H; SCNTL1 = 01H; SCNTL2 = 02H; SCNTL3 = 03H;
@@ -271,18 +260,20 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 	PROCEDURE InitIDs;
 	BEGIN
 		IDs[0] := C810DevId; IDs[1] := C810APDevId; IDs[2] := C815DevId; IDs[3] := C820DevId;
-		IDs[4] := C825DevId; IDs[5] := C860DevId; IDs[6] := C875DevId;
+		IDs[4] := C825DevId; IDs[5] := C860DevId; IDs[6] := C875DevId; IDs[7] := C896DevId
 	END InitIDs;
 
 	PROCEDURE PCIFindSYMDevice(Dev: DevicePtr): LONGINT;
 	VAR res, res1, regVal: LONGINT;
 	BEGIN
 		res := PCI.FindPCIDevice(Dev.devId, NCRVendorId, Dev.devIdx, Dev.busNr, Dev.devNr, Dev.fktNr);
+(*
 		Kernel.WriteString("PCIFindSYMDevice"); Kernel.WriteLn;
 		Kernel.WriteString("   Device: "); LogInt(Dev.devId); Kernel.WriteLn;
 		Kernel.WriteString("   Vendor: "); LogInt(NCRVendorId); Kernel.WriteLn;
 		Kernel.WriteString("   Index: "); LogInt(Dev.devIdx); Kernel.WriteLn;
 		Kernel.WriteString("   res: "); LogInt(res); Kernel.WriteLn;
+*)
 		IF res = PCI.Done THEN
 			res1 := PCI.ReadConfigDword(Dev.busNr, Dev.devNr, Dev.fktNr, PCI.CmdReg, regVal); ASSERT(res1 = PCI.Done, 100);
 			Dev.cmd := regVal MOD 10000H; Dev.status := regVal DIV 10000H;
@@ -490,14 +481,16 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 	PROCEDURE FinishCommand(Dev: DevicePtr; VAR nextdsp: LONGINT);
 	VAR status: CHAR; srb: ExecIOCmdSRB;
 	BEGIN
-		srb := Dev.curTarget.first; Dev.curTarget.first := srb.next;
-		IF srb.next = NIL THEN Dev.curTarget.last := NIL
-		ELSE INCL(Dev.targetReady, Dev.curTarget.id)
-		END;
-		IF srb.TargStat = StatusGood THEN srb.Status := SSComp
-		ELSE srb.Status := SSErr
-		END;
-		StartNextCommand(Dev, nextdsp)
+		IF Dev.curTarget # NIL THEN
+			srb := Dev.curTarget.first; Dev.curTarget.first := srb.next;
+			IF srb.next = NIL THEN Dev.curTarget.last := NIL
+			ELSE INCL(Dev.targetReady, Dev.curTarget.id)
+			END;
+			IF srb.TargStat = StatusGood THEN srb.Status := SSComp
+			ELSE srb.Status := SSErr
+			END;
+			StartNextCommand(Dev, nextdsp)
+		END
 	END FinishCommand;
 	
 	PROCEDURE ReloadDSA(Dev: DevicePtr);
@@ -517,8 +510,12 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 		IF TRUE (* intdebug *) THEN
 			Kernel.WriteString("Abnormal Finished: ");
 			LogInt(Dev.devIdx); Kernel.WriteChar(" ");
-			LogInt(Dev.curTarget.id); Kernel.WriteChar(" ");
-			LogInt(ORD(Dev.curTarget.first.Lun)); Kernel.WriteChar(" ");
+			IF Dev.curTarget # NIL THEN
+				LogInt(Dev.curTarget.id); Kernel.WriteChar(" ");
+				LogInt(ORD(Dev.curTarget.first.Lun)); Kernel.WriteChar(" ")
+			ELSE
+				Kernel.WriteString("curTarget=NIL ")
+			END;
 			LogHex(code); Kernel.WriteLn
 		END;
 		FinishCommand(Dev, nextdsp);
@@ -762,6 +759,7 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 			| C825DevId: srb.HaIdentifier := "53C825"
 			| C860DevId: srb.HaIdentifier := "53C860"
 			| C875DevId: srb.HaIdentifier := "53C875"
+			| C896DevId: srb.HaIdentifier := "53C896"
 			END;
 			FOR i := 8 TO 15 DO srb.HaUnique[i] := 0X END;
 			srb.HaUnique[0] := 3X; srb.HaUnique[1] := 0X; srb.HaUnique[2] := 0X; srb.HaUnique[3] := 8X;
@@ -831,7 +829,7 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 		srb.Status := SSErr
 	END GetDiskInfo;
 	
-	PROCEDURE SendASPICommand*(srb: SRB);
+	PROCEDURE SendASPICommand*(srb: SRB; wait: BOOLEAN);
 	BEGIN
 		IF srb IS HaInquirySRB THEN HaInquiry(srb(HaInquirySRB))
 		ELSIF srb IS GetDevTypeSRB THEN GetDevType(srb(GetDevTypeSRB))
@@ -841,6 +839,9 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 		ELSIF srb IS GetDiskInfoCmdSRB THEN GetDiskInfo(srb(GetDiskInfoCmdSRB))
 		ELSE HALT(100) (* unknown ASPI-Function, shouldn't happen *)
 		END;
+		IF wait THEN
+			REPEAT UNTIL srb.Status # SSPending
+		END
 	END SendASPICommand;
 
 	PROCEDURE InitTargets(Dev: DevicePtr);
@@ -851,7 +852,7 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 	BEGIN
 		NEW(srb);
 		srb.HaId := CHR(Dev.devIdx); srb.Flags := {};
-		srb.BufLen := 0FFH; srb.BufPointer := SYSTEM.ADR(data); srb.SenseLen := 0X;
+		srb.BufLen := LEN(data); srb.BufPointer := SYSTEM.ADR(data); srb.SenseLen := 0X;
 		srb.CDBLen := 6X;
 		srb.CDB[0] := 12X; srb.CDB[1] := 0X; srb.CDB[2] := 0X; srb.CDB[3] := 0X; srb.CDB[4] := 0FFX; srb.CDB[5] := 0X;
 		srb.meas := NIL;
@@ -868,11 +869,14 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 				srb.Lun := CHR(lun);
 				Dev.identify[0] := CHR(DisconnectIdent + 80H + lun);
 				srb.CDB[1] := CHR(SYSTEM.LSH(lun, 5));
-				SendASPICommand(srb);
-				WHILE srb.Status = SSPending DO END;
+				SendASPICommand(srb, TRUE);
 				IF (srb.Status = SSComp) & (data[0] # 7FX) THEN
 					Dev.target[targ].lun[Dev.target[targ].luns].DevType := data[0];
-					LogInt(Dev.devIdx); Kernel.WriteChar(" "); LogInt(targ); Kernel.WriteChar(" "); LogInt(lun); Kernel.WriteChar(" "); LogInt(ORD(data[0])); Kernel.WriteLn;
+					LogInt(Dev.devIdx); Kernel.WriteChar(" "); LogInt(targ); Kernel.WriteChar(" "); 
+					LogInt(lun); Kernel.WriteChar(" "); LogInt(ORD(data[0])); Kernel.WriteLn;
+					IF scsidebug THEN
+						Kernel.WriteMemory(SYSTEM.ADR(data), LEN(data))
+					END;
 					INC(Dev.target[targ].luns)
 				END;
 				Dev.identLen := 1;
@@ -912,10 +916,12 @@ MODULE ASPI;	(** non-portable *)	(* Contributed by P. Ryser to the System 3 proj
 	PROCEDURE Stop*;
 	VAR i: INTEGER;
 	BEGIN
-		FOR i := 0 TO 31 DO
-			IF i IN Ints THEN Kernel.RemoveIP(InterruptHandler, Kernel.IRQ+i) END
-		END;
-		Ints := {};
+		IF Kernel.shutdown = 0 THEN
+			FOR i := 0 TO 31 DO
+				IF i IN Ints THEN Kernel.RemoveIP(InterruptHandler, Kernel.IRQ+i) END
+			END;
+			Ints := {}
+		END
 	END Stop;
 
 	PROCEDURE ResetAll*;

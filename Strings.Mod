@@ -1,24 +1,12 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Strings;	(** portable *) (* ejz,   *)
 
 (** Strings is a utility module that provides procedures to manipulate strings.
 		Note: All strings MUST be 0X terminated. *)
 
-	IMPORT Oberon, Texts, Dates, Reals, FileDir;
+	IMPORT Oberon, Texts, Dates, Reals;
 	
 	CONST
 		CR* = 0DX; (** the Oberon end of line character *)
@@ -219,7 +207,7 @@ MODULE Strings;	(** portable *) (* ejz,   *)
 		WHILE str[i] # 0X DO
 			IF str[i] = "." THEN
 				dot := i
-			ELSIF str[i] = FileDir.PathChar THEN
+			ELSIF str[i] = "/" THEN
 				dot := -1
 			END;
 			INC(i)
@@ -242,7 +230,7 @@ MODULE Strings;	(** portable *) (* ejz,   *)
 		WHILE str[i] # 0X DO
 			IF str[i] = "." THEN
 				dot := i
-			ELSIF str[i] = FileDir.PathChar THEN
+			ELSIF str[i] = "/" THEN
 				dot := -1
 			END;
 			INC(i)
@@ -380,35 +368,30 @@ MODULE Strings;	(** portable *) (* ejz,   *)
 
 (** Convert a string into an integer. Leading white space characters are ignored. *)
 	PROCEDURE StrToInt*(VAR str: ARRAY OF CHAR; VAR val: LONGINT);
-		VAR
-			i, d: LONGINT;
-			neg: BOOLEAN;
+		VAR i, d: LONGINT; ch: CHAR; neg: BOOLEAN;
 	BEGIN
-		i := 0;
-		WHILE (str[i] # 0X) & (str[i] <= " ") DO
-			INC(i)
+		i := 0; ch := str[0];
+		WHILE (ch # 0X) & (ch <= " ") DO
+			INC(i); ch := str[i]
 		END;
-		neg := FALSE;
-		IF str[i] = "+" THEN INC(i) END;
-		IF str[i] = "-" THEN
-			neg := TRUE; INC(i)
-		END;
-		WHILE (str[i] # 0X) & (str[i] <= " ") DO
-			INC(i)
+		neg := FALSE; IF ch = "+" THEN INC(i); ch := str[i] END;
+		IF ch = "-" THEN neg := TRUE; INC(i); ch := str[i] END;
+		WHILE (ch # 0X) & (ch <= " ") DO
+			INC(i); ch := str[i]
 		END;
 		val := 0;
-		WHILE (str[i] >= "0") & (str[i] <= "9") DO
-			d := ORD(str[i])-ORD("0");
+		WHILE (ch >= "0") & (ch <= "9") DO
+			d := ORD(ch)-ORD("0");
+			INC(i); ch := str[i];
 			IF val <= ((MAX(LONGINT)-d) DIV 10) THEN
 				val := 10*val+d
+			ELSIF neg & (val = 214748364) & (d = 8) & ((ch < "0") OR (ch > "9")) THEN
+				val := MIN(LONGINT); neg := FALSE
 			ELSE
 				HALT(99)
-			END;
-			INC(i)
+			END
 		END;
-		IF neg THEN
-			val := -val
-		END
+		IF neg THEN val := -val END
 	END StrToInt;
 
 (** Convert the substring beginning at position i in str into an integer. Any leading whitespace characters are ignored.

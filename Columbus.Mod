@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
+MODULE Columbus; (** portable *)	(* PS   *)
 
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Columbus;	(** portable *)	(* PS   *)
-
-(**  - an inspector tool for objects and libraries. *)
+(** Columbus - an inspector tool for objects and libraries. *)
 
 (*
 	5.6.96	opens a new document not at the pointer's position anymore (thanks pm)
@@ -28,7 +16,8 @@ MODULE Columbus;	(** portable *)	(* PS   *)
 *)
 	IMPORT
 		Files, Objects, Fonts, Texts, Strings, Attributes, Links, Display, Oberon, Gadgets, Panels, TextFields,
-		BasicGadgets, BasicFigures, RefGadgets, ScrollViews, TextGadgets, ListRiders, Documents, Desktops;
+		BasicGadgets, BasicFigures, RefGadgets, ScrollViews, TextGadgets, ListRiders, Documents, Desktops,
+		PanelDocs;
 	
 	CONST
 		Version = "1.2";
@@ -59,7 +48,7 @@ MODULE Columbus;	(** portable *)	(* PS   *)
 		(* inspector panel views *)
 		ObjAttrView = 0; ObjLinkView = 1; ObjCoordView = 2;
 		ObjDscView = 3; ObjDefView = 4;
-		LibOverView = 5;  LibEditView = 6;
+		LibOverView = 5; LibEditView = 6;
 		NoView = 7;
 
 		ObjViews = {ObjAttrView, ObjLinkView, ObjCoordView, ObjDscView, ObjDefView};
@@ -135,7 +124,7 @@ BEGIN k:= 0;
 		a[k] := CHR(i MOD 10 + 30H); i := i DIV 10; INC(k)
 	UNTIL i = 0;
 	j := 2;
-    s[0]:= "#"; s[1]:= " ";
+	s[0]:= "#"; s[1]:= " ";
     REPEAT DEC(k); s[j] := a[k]; INC(j); UNTIL k = 0;
     s[j] := 0X
 END RefToStr;
@@ -218,7 +207,7 @@ BEGIN
 END LoadDoc;
 
 PROCEDURE StoreDoc(D: Documents.Document);
-	VAR f: Files.File; R: Files.Rider; filename: ARRAY 64 OF CHAR;
+	VAR f: Files.File; R: Files.Rider;
 BEGIN
 	String("Store "); ToLog;
 	IF D.name # "" THEN
@@ -226,7 +215,7 @@ BEGIN
 		Files.Set(R, f, 0); Files.WriteInt(R, Documents.Id); Files.WriteString(R, "Columbus.NewDoc");
 		Files.WriteInt(R, D.X); Files.WriteInt(R, D.Y); Files.WriteInt(R, D.W); Files.WriteInt(R, D.H);
 		Files.Register(f);
-		Char(22X); String(filename); Char(22X)
+		Char(22X); String(D.name); Char(22X)
 	ELSE String("[Untitled document]")
 	END;
 	Ln; ToLog
@@ -241,19 +230,26 @@ BEGIN
 					IF M.name = "Gen" THEN M.class := Objects.String; M.s := "Columbus.NewDoc"; M.res := 0
 					ELSIF M.name = "Adaptive" THEN M.class := Objects.Bool; M.b := FALSE; M.res := 0
 					ELSIF M.name = "Icon" THEN M.class := Objects.String; M.s := "Columbus.Icon"; M.res := 0
-					ELSE Documents.Handler(D, M)
+					ELSE PanelDocs.DocHandle(D, M)
 					END
-				ELSE Documents.Handler(D, M)
+				ELSE PanelDocs.DocHandle(D, M)
 				END
 			END	(* WITH *)
 		ELSIF M IS Objects.LinkMsg THEN
 			WITH M: Objects.LinkMsg DO
-				IF (M.name = "SystemMenu") OR (M.name = "UserMenu") OR (M.name = "DeskMenu") THEN
-					M.obj := Desktops.NewMenu(""); M.res := 0
-				ELSE Documents.Handler(D, M)
+				IF (M.id = Objects.get) & (M.name = "DeskMenu") THEN
+					M.obj := Gadgets.CopyPublicObject("Columbus.DeskMenu", TRUE);
+					IF M.obj = NIL THEN M.obj := Desktops.NewMenu("") END; M.res := 0
+				ELSIF (M.id = Objects.get) & (M.name = "UserMenu") THEN
+					M.obj := Gadgets.CopyPublicObject("Columbus.UserMenu", TRUE);
+					IF M.obj = NIL THEN M.obj := Desktops.NewMenu("") END; M.res := 0
+				ELSIF (M.id = Objects.get) & (M.name = "SystemMenu") THEN
+					M.obj := Gadgets.CopyPublicObject("Columbus.SystemMenu", TRUE);
+					IF M.obj = NIL THEN M.obj := Desktops.NewMenu("") END; M.res := 0
+				ELSE PanelDocs.DocHandle(D, M)
 				END
 			END
-		ELSE Documents.Handler(D, M)
+		ELSE PanelDocs.DocHandle(D, M)
 		END
 	END	(* WITH *)
 END DocHandler;
@@ -564,7 +560,7 @@ END WriteLogo;
 (* Write a list of items to <L>. *)
 PROCEDURE WriteItems(VAR L: Layout; classes: SET);
 (* index calculation:
-	0	1	2	3	4	
+	0	1	2	3	4	
 	---------------------------
 	LLLLLLLLLLLLLLLLLLLLLLLLLLL
 	MMMMMMMMMMM	MMMMMMMMMMM
@@ -572,7 +568,7 @@ PROCEDURE WriteItems(VAR L: Layout; classes: SET);
 	SS	MMMMMMMMMMM	SS
 	SS	SS	MMMMMMMMMMM
 	SS	SS	SS		SS
-*)
+*)
 	VAR width: ARRAY 6 OF INTEGER; index: INTEGER;
 
 	PROCEDURE AdjustIndex(W: INTEGER);
@@ -998,7 +994,7 @@ END DscViewButton;
 PROCEDURE MakeDscView(obj: Objects.Object; lib: Objects.Library; VAR L: Layout);
 	VAR p: Panels.Panel; v: ScrollViews.View; o: Display.Frame; cnt: INTEGER;
 			subLay: Layout; A: Objects.AttrMsg; M: Display.ModifyMsg;
-			(* JSS Start *) Generator, Name: ARRAY 32 OF CHAR; offset: INTEGER; (* JSS End *)
+			Generator, Name: ARRAY 32 OF CHAR; offset: INTEGER;
 BEGIN
 	(* write objects in library *)
 	OpenLayout(subLay); subLay.align:= middle;
@@ -1007,14 +1003,9 @@ BEGIN
 	o:= obj(Display.Frame).dsc; cnt:= 0;
 	WHILE o # NIL DO
 		A.id:= Objects.get; A.name:= "Gen"; A.res:= -1; o.handle(o, A);
-		(* JSS Start *)
 		COPY(A.s,Generator);
 		WriteCaption(subLay, A.s, Display.FG, FALSE); WriteTab(subLay);
 		WriteFrame(subLay, MakeLink(o, TRUE)); 
-		(* JSS Start of additions to display an indication of what the object does, e.g. its Name, Caption, Cmd or Value *)
-        (* To do: An object such as a button with a Look (i.e. Icon) could do with the icon being displayed, and RefGadgets
-                          could do with being handled in some way
-        *)
         WriteTab(subLay);
         offset:= subLay.X;
         A.id := Objects.get;A.name := "Caption";A.res := -1;o.handle(o,A);
@@ -1032,17 +1023,14 @@ BEGIN
            Name := " "
         END;
         WriteCaption(subLay,Name,Display.FG,FALSE);
-        (*JSS End of additions to display an indication of what the object does, e.g. its Name, Caption, Cmd or Value *)
         WriteLn(subLay);
 		o:= o.next; INC(cnt)
 	END;
 
 	IF cnt > 10 THEN
 		WriteHSpace(L, 17); WriteCaption(L, "Generator", Display.FG, TRUE);
-		(* JSS Start *)
 		WriteHSpace(L,offset - 50); (* The 50 was just a guess and seems to work *)
 		WriteCaption(L,"Name/Caption/Cmd/Value",Display.FG,TRUE);
-		(* JSS End *)
 		WriteLn(L);
 	
 		Panels.NewPanel; p:= Objects.NewObj(Panels.Panel);
@@ -1060,10 +1048,8 @@ BEGIN
 		WriteFrame(L, v)
 	ELSE
 		WriteCaption(L, "Generator", Display.FG, TRUE); 
-				(* JSS Start *)
 		WriteHSpace(L,offset - 50); (* The 50 was just a guess and seems to work *)
 		WriteCaption(L,"Name/Caption/Cmd/Value",Display.FG,TRUE);
-		(* JSS End *)
 		WriteLn(L);
 		WriteLayout(L, subLay)
 	END
@@ -1088,7 +1074,7 @@ END LibEditorButton;
 
 PROCEDURE MakeLibContentsPanel(lib: Objects.Library): Panels.Panel;
 	VAR obj: Objects.Object; f: Display.Frame; p: Panels.Panel; ref, i, j: INTEGER; name, refStr: Objects.Name;
-			cmd: ARRAY 64 OF CHAR; A: Objects.AttrMsg; L: Layout;
+			cmd: ARRAY 256 OF CHAR; A: Objects.AttrMsg; L: Layout;
 BEGIN
 	OpenLayout(L); L.align:= middle;
 	IF lib # NIL THEN
@@ -1107,12 +1093,12 @@ BEGIN
 					WriteCaption(L, A.s, Display.FG, FALSE); WriteTab(L);
 					RefToStr(ref, refStr);
 					WriteCaption(L, refStr, Display.FG, FALSE); WriteTab(L);
-					cmd:= "Columbus.SetCurrent ";
+					cmd:= "Columbus.SetCurrent '";
 					i:= 0; WHILE cmd[i] # 0X DO INC(i) END;
 					j:= 0; WHILE lib.name[j] # "." DO cmd[i]:= lib.name[j]; INC(i); INC(j) END;
 					cmd[i]:= "."; INC(i);
 					j:= 0; WHILE name[j] # 0X DO cmd[i]:= name[j]; INC(i); INC(j) END;
-					cmd[i]:= 0X;
+					cmd[i] := "'"; cmd[i+1] := 0X;
 					f:= MakeCmd(name, cmd, FALSE); f.W:= 115; f.H:= 20;
 					WriteFrame(L, f); WriteTab(L);
 					WriteFrame(L, MakeLink(obj, TRUE)); WriteLn(L)
@@ -1587,13 +1573,13 @@ BEGIN
 END InspectObj;
 
 (** Used in the form:	Columbus.Inspect [<Name>]
-
+
 Inspects object or library. The target object or library can be specified by...
 	- <Name>, name of a public object/library
 	- a selected frame or a selected name of public a object/library
 	- the marked frame 
 The panel is opened in the attribute view. An existing Columbus panel is set to the attribute view, if the command is initiated within such a panel (magnifier button). If no target can be detected, a so-called empty panel is opened (an existing panel changes to this state, too). 
-*)
+*)
 PROCEDURE Inspect*;
 	VAR obj: Objects.Object; lib: Objects.Library; P: Panel; D: Documents.Document; new: BOOLEAN;
 BEGIN
@@ -1620,8 +1606,8 @@ END Inspect;
 
 (** Used in the form:	Columbus.InspectLink <LinkName>
 
-Inspects the executor's link <LinkName>. The panel is opened in the attribute view. Columbus panels are automatically set to the attribute view, when initiating this command (reference gadgets on the panel use this command).
-*)
+Inspects the executor's link <LinkName>. The panel is opened in the attribute view. Columbus panels are automatically set to the attribute view, when initiating this command (reference gadgets on the panel use this command).
+*)
 PROCEDURE InspectLink*;
 	VAR D: Documents.Document; obj: Objects.Object; P: Panel; new: BOOLEAN;
 			L: Objects.LinkMsg; S: Attributes.Scanner;
@@ -1684,7 +1670,7 @@ BEGIN
 	P:= FindPanel(); Oberon.Defocus;
 	IF (P # NIL) & (P.history # NIL) THEN
 		IF P.history.obj # NIL THEN
-			M.id:= Display.get; M.time:= 0; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
+			M.id:= Display.get; M.time:= -1; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
 			IF M.obj # NIL THEN
 				obj:= M.obj; update := FALSE;
 				WHILE obj #NIL DO update := update OR SetObject(obj ,P); obj:= obj.slink END;
@@ -1718,7 +1704,7 @@ BEGIN
 	P:= FindPanel(); Oberon.Defocus;
 	IF (P # NIL) & (P.history # NIL) THEN	
 		IF P.history.obj # NIL THEN
-			M.id:= Display.get; M.time:= 0; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
+			M.id:= Display.get; M.time:= -1; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
 			IF M.obj # NIL THEN
 				obj:= M.obj;
 				WHILE obj # NIL DO SetNewAttrLink(obj, P); obj:= obj.slink END;
@@ -1752,7 +1738,7 @@ BEGIN
 	P:= FindPanel(); Oberon.Defocus;
 	IF (P # NIL) & (P.history # NIL) THEN	
 		IF P.history.obj # NIL THEN
-			M.id:= Display.get; M.time:= 0; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
+			M.id:= Display.get; M.time:= -1; M.F:= NIL; M.obj:= NIL; Display.Broadcast(M);
 			IF M.obj # NIL THEN
 				obj:= M.obj;
 				WHILE obj # NIL DO RemoveAttrLink(obj, P); obj:= obj.slink END;
@@ -1931,7 +1917,7 @@ PROCEDURE SetCurrent*;
 	VAR obj, field, dlink: Objects.Object; A: Objects.AttrMsg; S: Attributes.Scanner;
 BEGIN
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Attributes.Scan(S);
-	IF S.class = Attributes.Name THEN
+	IF S.class IN {Attributes.Name, Attributes.String} THEN
 		obj:= Gadgets.FindPublicObj(S.s);
 		IF obj # NIL THEN
 			Objects.GetName(obj.lib.dict, obj.ref, A.s);
@@ -1956,8 +1942,8 @@ END SetCurrent;
 
 (** Used in the form:	Columbus.ShowObjs <LibName>
 
-Inserts a list of all named objects in <LibName> as panel into a scroll view named "objlist". <LibName> must include the ".Lib" extension. It also updates a text field named "thelib".  The view and the text field must be detectable in the current context. If the view can not be found, the list is shown as text.
-	*)
+Inserts a list of all named objects in <LibName> as panel into a scroll view named "objlist". <LibName> must include the ".Lib" extension. It also updates a text field named "thelib".  The view and the text field must be detectable in the current context. If the view can not be found, the list is shown as text.
+*)
 PROCEDURE ShowObjs*;
 	VAR lib: Objects.Library; dst: Objects.Object; i: INTEGER;
 			S: Attributes.Scanner; A: Objects.AttrMsg;
@@ -1980,9 +1966,9 @@ END ShowObjs;
 
 (** Used in the form:	Columbus.GetObj <LibName.ObjName>
 
+	If <LibName.ObjName> is a document gadget, a (deep) copy of the document is opened on the display. Frame gadget are inserted at the caret. A copy is made depending on the value of an object named "copystyle". If this object cannot be dedected in the current context, the copy style 'deep' is assumed. If <LibName.ObjName> is a model, the "Model" link of all selected frames is set to this model (No copies are made for modelsl).
 
-If <LibName.ObjName> is a document gadget, a (deep) copy of the document is opened on the display. Frame gadget are inserted at the caret. A copy is made depending on the value of an object named "copystyle". If this object cannot be dedected in the current context, the copy style 'deep' is assumed. If <LibName.ObjName> is a model, the "Model" link of all selected frames is set to this model (No copies are made for modelsl).
-*)
+*)
 PROCEDURE GetObj*;
 	VAR obj, sel: Objects.Object; time: LONGINT; style: INTEGER; C: Objects.CopyMsg; L: Objects.LinkMsg; 
 			S: Attributes.Scanner;
@@ -2022,8 +2008,7 @@ END GetObj;
 
 (** Used in the form:	Columbus.FreeObj <LibName.ObjName>
 
-Frees <LibName.ObjName>. The scroll view named "objlist" in the current context is cleared, too. 
-*)
+Frees <LibName.ObjName>. The scroll view named "objlist" in the current context is cleared, too. *)
 PROCEDURE FreeObj*;
 	VAR lib: Objects.Library; dst, obj: Objects.Object; ref: INTEGER; S: Attributes.Scanner; A: Objects.AttrMsg;
 BEGIN
@@ -2051,8 +2036,9 @@ END FreeObj;
 
 (** Used in the form:	Columbus.AddObj <LibName.ObjName>
 
-Inserts the object taken from the reference gadget in the current context named  "value"  as <LibName.ObjName>. If the reference gadget cannot be detected, the selected frame will be added instead. This command also updates the scroll view named "objlist" in the current context.
-*)
+
+Inserts the object taken from the reference gadget in the current context named  "value"  as <LibName.ObjName>. If the reference gadget cannot be detected, the selected frame will be added instead. This command also updates the scroll view named "objlist" in the current context.
+*)
 PROCEDURE AddObj*;
 	VAR lib: Objects.Library; obj, old: Objects.Object; libname, objname: Objects.Name;
 			ref: INTEGER; B: Objects.BindMsg; S: Attributes.Scanner;
@@ -2087,8 +2073,8 @@ END AddObj;
 
 (** Used in the form:	Columbus.RenameObj <LibName.ObjName> <NewName>
 
-Renames <LibName.ObjName> with <NewName>. It also updates the the scroll view in the current context named "objlist".
-*)
+Renames <LibName.ObjName> with <NewName>. It also updates the the scroll view in the current context named "objlist".
+*)
 PROCEDURE RenameObj*;
 	VAR lib: Objects.Library; obj: Objects.Object; name: Objects.Name; ref: INTEGER; S: Attributes.Scanner;
 BEGIN
@@ -2122,8 +2108,8 @@ END RenameObj;
 
 (** Used in the form:	Columbus.ShowLibs <ObjName>
 
-Inserts the names of loaded libraries into a list named <ObjName> detectable in the current context. If the list could not be detected, a text is opened instead.
-*)
+Inserts the names of loaded libraries into a list named <ObjName> detectable in the current context. If the list could not be detected, a text is opened instead.
+*)
 PROCEDURE ShowLibs*;
 	VAR T: Texts.Text; list: Objects.Object; S: Attributes.Scanner;
 BEGIN
@@ -2213,8 +2199,8 @@ END UnloadLib;
 
 (** Used in the form:	Columbus.CleanupLib {<LibNames>}
 
-Frees unused objects in <LibName>. <LibNames> must include the ".Lib" extendion. The cleaned librariy will be stored to disk and reloaded into the memory.
-*)
+Frees unused objects in <LibName>. <LibNames> must include the ".Lib" extendion. The cleaned librariy will be stored to disk and reloaded into the memory.
+*)
 PROCEDURE CleanupLib*;
 	VAR P: Panel; S: Attributes.Scanner;
 
@@ -2308,11 +2294,11 @@ Columbus is an universial tool for inspecting and changing different kind of inf
 
 Columbus consists of two different panels. One can be used to configure the state of objects and is called 'Objects.Panel'. The other can be used manipulate public libaries and is called 'Libraries.Panel'. Parts of the 'Libraries.Panel' is integrated in the object inspector. The 'Objects.Panel' on the other hand can directly be opened from the library editor.
 
-Use the command Columbus.Inspect ~ to open the inspector panel. Before executing this commandf, you can specifiy the target object or library by...
+Use the command Columbus.Inspect ~ to open the inspector panel. Before executing this commandf, you can specifiy the target object or library by...
 	- the name of a public object/library
 	- a selected frame or the selected name of public object/library
 	- the marked frame 
 The panel is opened in the attribute view. If no target can be detected, an so-calleds empty panel is opened.
 
-Desktops.OpenDoc Libraries.Panel ~ opens the library editor. This editor lets you manipulate public libraries and their contents.
+Desktops.OpenDoc Libraries.Panel ~ opens the library editor. This editor lets you manipulate public libraries and their contents.
 *)

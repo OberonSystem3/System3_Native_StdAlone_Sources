@@ -1,25 +1,14 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE PPM;	(** portable *)	(** by W. Ibl *)
+MODULE PPM; (** portable *)	(** by W. Ibl *)
 (** The Portable Pixmap/Graymap File Format to Oberon Picture Format *)
 (*
 	Jul '97	first release
 	Aug '97	combined PGM & PPM
 	Aug '97	added PBM format
 	Aug '97	added DocGadget support
+	1999.08.06	g.f.	fixed 2 bugs	<<<
 *)
 IMPORT BIT,Display,Documents,Files,Objects,Out,Pictures,Strings,Texts;
 
@@ -156,7 +145,7 @@ BEGIN
 	ELSE
 		i:= 0;
 		REPEAT R.Read(R,c[i]); UNTIL R.eof OR ~WhiteSpace(c[i]);
-		IF (c = Comment) THEN SkipComment(R,c[i]); END;
+		IF (c[i] = Comment) THEN SkipComment(R,c[i]); END;	(*<<<1*)
 		WHILE ~R.eof & ~WhiteSpace(c[i]) DO INC(i); R.Read(R,c[i]); END;
 		c[i]:= 0X; Strings.StrToInt(c,i);
 	END;
@@ -206,21 +195,22 @@ BEGIN
 	IF conversion THEN
 		k:= 0;
 		WHILE (k < 256) & (map[k] # -1) DO
-			IF (r1[k] = red) & (g1[k] = green) & (b1[k] = blue) THEN RETURN(map[k]); END;
+			IF (r1[k] = red) & (g1[k] = green) & (b1[k] = blue) THEN RETURN map[k] END;
 			INC(k);
 		END;
 		min:= MAX(LONGINT);
 		FOR j:= 0 TO SHORT(depth) DO
 			x:= ABS((red*delta)-r0[j]); y:= ABS((green*delta)-g0[j]); z:= ABS((blue*delta)-b0[j]);
 			d:= x;
-			IF (y > d) THEN d:= y; END;
-			IF (z > d) THEN d:= z; END;
+			IF y > d THEN d := y END; IF z > d THEN d := z END;
 			d:= d*d + (x*x + y*y + z*z);
-			IF (d < min) THEN min:= d; minj:= j; END
+			IF d < min THEN min := d; minj := j END
 		END;
-		IF (k < 256) THEN r1[k]:= red; g1[k]:= green; b1[k]:= blue; map[k]:= minj; END;
-		Pictures.SetColor(pict,minj,r0[minj],g0[minj],b0[minj]);
-		RETURN(minj);
+		IF (k < 256) THEN (*<<<*)
+			r1[k] := red; g1[k] := green; b1[k] := blue; map[k] := minj;
+			Pictures.SetColor(pict, k, r1[k], g1[k], b1[k])
+		END;
+		RETURN minj
 	ELSE
 		Pictures.SetColor(pict,i,red*delta,green*delta,blue*delta);
 		RETURN(i);
@@ -261,8 +251,9 @@ VAR
 		IF colorConversion THEN
 			FOR v0:= 0 TO SHORT(depth) DO
 				Display.GetColor(v0,r0[v0],g0[v0],b0[v0]); map[v0]:= -1;
-			END;
-		END;
+				Pictures.SetColor(pict, v0, r0[v0], g0[v0], b0[v0])	(*<<<*)
+			END
+		END
 	END GetDepth;
 
 BEGIN
@@ -306,7 +297,7 @@ BEGIN
 				WHILE ~R.eof & (x < w) DO
 					v0:= Value(R); v1:= Value(R); v2:= Value(R);
 					v0:= ScanColor(pict,i,v0,v1,v2,colorConversion);
-					Pictures.Dot(pict,map[v0 MOD p],x,y,Display.replace);
+					Pictures.Dot(pict, SHORT(v0 MOD p) ,x,y,Display.replace);	(*<<<*)
 					INC(x);
 				END;
 				WHILE (x < w) DO

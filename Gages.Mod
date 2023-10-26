@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Gages;	(** portable *) (* kr/ jm 21.12.94 *)
 
@@ -258,7 +246,7 @@ END NewFrame;
 
 BEGIN
 	maxLoad := 1; load := 0;
-	NEW(task); task.handle := TaskHandle; Oberon.Install(task);
+	NEW(task); task.handle := TaskHandle; task.time := Oberon.Time(); Oberon.Install(task);
 	Modules.InstallTermHandler(Deinstall);
 	BasicGadgets.NewInteger; Mem := Objects.NewObj(BasicGadgets.Integer);
 	BasicGadgets.NewInteger; Load := Objects.NewObj(BasicGadgets.Integer);
@@ -270,11 +258,9 @@ END Gages.
 
 System.Free Gages  ~
 Gadgets.Insert Gages.NewFrame Gages.NewMem ~
-Gadgets.Insert TextFields.NewTextField Gages.NewLap ~
+Gadgets.Insert TextFields.NewTextField Gages.NewMem ~
 Gadgets.Insert Gages.NewFrame ~Gages.NewLoad ~
 
 Gadgets.Change Gages.NewFrame ~
 Gadgets.SetAttr Max 1024
 Gadgets.SetAttr Min -1024
-
-Gadgets.Change Gages.NewFrame ~

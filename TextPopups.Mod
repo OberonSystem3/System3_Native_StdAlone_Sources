@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 (** 
  	TextPopups
@@ -56,9 +44,13 @@ of the source code to another platform with the name OBERON. *)
 		Input, Views, Strings;
 
 	CONST
-		times = 1; and = 5; plus=6; minus=7; eql = 9; arrow = 17; colon=20; rparen=22; lparen=30; 
-		ident = 40; semicolon = 41; end = 43; record = 57; begin = 59; const = 60; type = 61; var = 62;
-		procedure = 63; eof = 67;
+		times = OPS.times; and = OPS.and; plus = OPS.plus; minus = OPS.minus; 
+		eql = OPS.eql; arrow = OPS.arrow; colon = OPS.colon; rparen = OPS.rparen; 
+		lparen = OPS.lparen; ident = OPS.ident; semicolon = OPS.semicolon;
+		end = OPS.end; object = OPS.object; record = OPS.record; begin = OPS.begin; 
+		const = OPS.const; type = OPS.type; var = OPS.var; procedure = OPS.procedure; 
+		eof = OPS.eof; 
+		
 		CR = 0DX;	TAB = 09X;	SPACE = " ";	LF = 0AX;	
 		MaxHistory = 20; MaxHeight = 250;
 		PopupFileName = "TextPopups.Text";
@@ -80,7 +72,11 @@ of the source code to another platform with the name OBERON. *)
 		TMarkerMenuItem = POINTER TO TMarkerMenuItemDesc;
 		TMarkerMenuItemDesc = RECORD	(MenuItemDesc) pos: LONGINT	END;
 
-		(* procedure name marker *)
+		(* LaTeX section marker *)
+		LMarkerMenuItem = POINTER TO LMarkerMenuItemDesc;
+		LMarkerMenuItemDesc = RECORD	(MenuItemDesc) pos: LONGINT	END;
+
+		(* file name marker *)
 		FileMenuItem = POINTER TO FileMenuItemDesc;
 		FileMenuItemDesc = RECORD	(MenuItemDesc)	END;
 		
@@ -91,22 +87,27 @@ of the source code to another platform with the name OBERON. *)
 	VAR 
 		W: Texts.Writer; nofLines, width: INTEGER; 
 		itemList, lastItem: MenuItem; doItem: MenuItem; called: BOOLEAN;
-		fileHistory: FileHistory; 
+		fileHistory: FileHistory;
+		sections: ARRAY 7 OF ARRAY 14 OF CHAR;
 		
 (* execute a command *)
 		
 	PROCEDURE Call(F: TextGadgets.Frame; T: Texts.Text; x, y: INTEGER);
 		VAR text: Texts.Text; R: Texts.Reader; res: INTEGER; cmd: ARRAY 64 OF CHAR;
-			d: Documents.Document;
+			d: Documents.Document; C: Oberon.ControlMsg;
 	BEGIN
 		IF doItem=NIL THEN RETURN END;
 		IF doItem IS PMarkerMenuItem THEN
 			WITH doItem: PMarkerMenuItem DO	
-				TextDocs.SetCaret(F, T, doItem.pos)	
+				TextDocs.SetCaret(F, T, doItem.pos)
 			END
 		ELSIF doItem IS TMarkerMenuItem THEN
 			WITH doItem: TMarkerMenuItem DO	
-				TextDocs.SetCaret(F, T, doItem.pos)	
+				TextDocs.SetCaret(F, T, doItem.pos)
+			END
+		ELSIF doItem IS LMarkerMenuItem THEN
+			WITH doItem: LMarkerMenuItem DO	
+				TextDocs.SetCaret(F, T, doItem.pos)
 			END
 		ELSIF doItem IS CmdMenuItem THEN
 			WITH doItem: CmdMenuItem DO
@@ -117,8 +118,11 @@ of the source code to another platform with the name OBERON. *)
 				cmd[res-1]:=0X;
 				Oberon.FadeCursor(Oberon.Pointer);
 				Oberon.Pointer.X:=x; Oberon.Pointer.Y:=y;
+				C.F := F; C.id := Oberon.mark; C.X := x; C.Y := y;
+				Display.Broadcast(C);
 				Oberon.Par.text:=text; Oberon.Par.pos:=Texts.Pos(R)-1;
-				Oberon.Call(cmd, Oberon.Par, FALSE, res)
+				Oberon.Call(cmd, Oberon.Par, FALSE, res);
+				Oberon.FadeCursor(Oberon.Pointer)
 			END
 		ELSIF doItem IS FileMenuItem THEN
 			WITH doItem: FileMenuItem DO
@@ -142,6 +146,14 @@ of the source code to another platform with the name OBERON. *)
 		ELSE doItem:=NIL END
 	END Do;
 	
+	PROCEDURE AppendToTypeList(VAR list, last: MenuItem; context, name: ARRAY OF CHAR; pos: LONGINT);
+		VAR t: TMarkerMenuItem; q: MenuItem;
+	BEGIN
+		NEW(t); COPY(context, t.val); Strings.Append(t.val, name); t.pos := pos;
+		q := list; WHILE (q.link # NIL) & (q.link.val < t.val) DO q := q.link END;
+		IF q.link = NIL THEN last := t END; t.link := q.link; q.link := t;
+	END AppendToTypeList;
+	
 (* build item list *)
 	PROCEDURE ExtractProcTypeNames(T: Texts.Text; VAR lastProc, lastType: MenuItem);
 		CONST	rec = 0; proc = 1; mod = 2;
@@ -150,18 +162,23 @@ of the source code to another platform with the name OBERON. *)
 			Context, name: ARRAY 128 OF CHAR;startP, startT, q: MenuItem; p: PMarkerMenuItem; t: TMarkerMenuItem;
 	BEGIN
 		Texts.OpenReader(R, T, 0);
-		OPM.Init({}, R, Oberon.Log(*Null*)); OPS.Init; startP := lastProc; startT := lastType; isType := FALSE;
+		OPM.Init({}, {}, R, Oberon.Log(*Null*)); OPS.Init; startP := lastProc; startT := lastType; isType := FALSE;
 		ST := 0; Stack[ST] := mod; Context := ""; OPS.Get(sym);
 		REPEAT
-			IF sym = type THEN	isType := TRUE
+			IF (sym = ident) & (OPS.name = "DEFINITION") THEN
+				OPS.Get(sym);
+				IF sym = ident THEN
+					AppendToTypeList(startT, lastType, "", OPS.name, OPM.curpos-1);
+				END;
+				REPEAT OPS.Get(sym) UNTIL (sym = end) OR (sym = eof);
+			ELSIF sym = type THEN
+				isType := TRUE; OPS.Get(sym)
 			ELSIF (sym = ident) & isType THEN
 				COPY(OPS.name, name); i := OPM.curpos-1;
 				OPS.Get(sym);
 				IF sym = times THEN OPS.Get(sym) END;
 				IF (sym =  eql) THEN
-					NEW(t); COPY(Context, t.val); Strings.Append(t.val, name); t.pos := i;
-					q := startT; WHILE (q.link # NIL) & (q.link.val < t.val) DO q := q.link END;
-					IF q.link = NIL THEN lastType := t END; t.link := q.link; q.link := t;
+					AppendToTypeList(startT, lastType, Context, name, i);
 					OPS.Get(sym);
 					IF sym=procedure THEN
 						OPS.Get(sym);
@@ -171,10 +188,12 @@ of the source code to another platform with the name OBERON. *)
 					END
 				END
 			ELSIF (sym = const) OR (sym = var) OR (sym = begin) THEN
-				isType := FALSE
-			ELSIF sym = record THEN
+				isType := FALSE;
+				OPS.Get(sym)
+			ELSIF (sym = record) OR (sym = object) THEN
 				INC(ST); Stack[ST] := rec; Strings.Append(Context, name); Strings.AppendCh(Context, ".");
-				isType := FALSE
+				isType := FALSE;
+				OPS.Get(sym)
 			ELSIF (sym = procedure) & ((prevsym # colon) & (prevsym # eql)) THEN	(*procdecl*)
 				OPS.Get(sym);
 				IF sym # arrow THEN	(*skip forw*)
@@ -199,15 +218,20 @@ of the source code to another platform with the name OBERON. *)
 						INC(ST); Stack[ST] := proc; Strings.Append(Context, name); Strings.AppendCh(Context, ".");
 						isType := FALSE
 					END
-				END
+				END;
+				OPS.Get(sym)
 			ELSIF (Stack[ST] = rec)&(sym = end) OR (Stack[ST] = proc)&(prevsym=end)&(sym=ident) THEN
 				isType := (Stack[ST] = rec)OR(Stack[ST-1] = rec);
 				DEC(ST);
 				i := Strings.Length(Context)-2;
 				WHILE (i>0) & (Context[i]#".") DO DEC(i) END;
 				IF i <= 0 THEN Context[0] := 0X ELSE Context[i+1] := 0X END;
-			END;
-			prevsym := sym; OPS.Get(sym);
+				OPS.Get(sym)
+			ELSIF (sym = ident) THEN
+				REPEAT OPS.Get(sym) UNTIL (sym = semicolon) OR (sym = end) OR (sym = eof);
+			ELSE
+				prevsym := sym; OPS.Get(sym)
+			END
 		UNTIL sym = eof;
 		OPM.Close;  OPS.Init
 	END ExtractProcTypeNames;
@@ -220,6 +244,122 @@ of the source code to another platform with the name OBERON. *)
 			h:=h.link; DEC(nof)
 		END;
 	END ExtractHistory;
+	
+	(* Extract LaTeX sections *)
+	
+	PROCEDURE ExtractSections(t: Texts.Text);
+	CONST Marker = ".";
+	VAR r: Texts.Reader; i, j: LONGINT; q: LMarkerMenuItem; first: MenuItem; s: ARRAY 64 OF CHAR; ch: CHAR;
+	
+		PROCEDURE Found(root: MenuItem; VAR s: ARRAY OF CHAR): BOOLEAN;
+		BEGIN
+			WHILE (root # NIL) & (root.val # s) DO root := root.link END;
+			RETURN root # NIL
+		END Found;
+	
+		PROCEDURE Modify(VAR s: ARRAY OF CHAR);
+		VAR i: LONGINT;
+		BEGIN
+			i := 0; WHILE s[i] # 0X DO INC(i) END;
+			IF (i < 2) OR (s[i-2] # Marker) OR (s[i-1] < "1") OR (s[i-1] > "9") THEN	(* first time *)
+				IF i+2 >= LEN(s) THEN DEC(i, 2) END;
+				s[i] := Marker; s[i+1] := "1"; s[i+2] := 0X
+			ELSE
+				s[i-1] := CHR(ORD(s[i-1])+1)
+			END
+		END Modify;
+		
+	BEGIN
+		first := lastItem;
+		Texts.OpenReader(r, t, 0); Texts.Read(r, ch);
+		WHILE ~r.eot DO
+			IF ch = "%" THEN	(* comment till end of line *)
+				REPEAT Texts.Read(r, ch) UNTIL r.eot OR (ch = 0DX)
+			ELSIF ch = "\" THEN	(* command *)
+				i := 0;	(* read command *)
+				LOOP
+					Texts.Read(r, ch);
+					IF r.eot OR (CAP(ch) < "A") OR (CAP(ch) > "Z") THEN EXIT END;
+					IF i < LEN(s)-1 THEN s[i] := ch; INC(i) END
+				END;
+				IF i # 0 THEN	(* command found *)
+					s[i] := 0X;	(* check if section command *)
+					j := 0; WHILE (j # LEN(sections)) & (s # sections[j]) DO INC(j) END;
+					IF (j = LEN(sections)) & (s = "title") THEN j := 0 END;	(* treat \title like \part *)
+					IF j # LEN(sections) THEN	(* section command level j, get parameter *)
+						IF ch = "*" THEN Texts.Read(r, ch) END;
+						IF ch = "{" THEN	(* read command parameter *)
+							i := 0; WHILE i # 2*j DO s[i] := " "; INC(i) END;	(* indent *)
+							Texts.Read(r, ch); j := 0;	(* j counts { } nesting level *)
+							WHILE ~r.eot & ((ch # "}") OR (j # 0)) & (i < LEN(s)-1) DO
+								IF ch = "{" THEN INC(j)
+								ELSIF ch = "}" THEN DEC(j)
+								END;
+								s[i] := ch; INC(i); Texts.Read(r, ch)
+							END;
+							s[i] := 0X;
+								(* check for duplicates *)
+							WHILE Found(first, s) DO Modify(s) END;
+								(* append menu item *)
+							NEW(q); COPY(s, q.val); q.pos := Texts.Pos(r);
+							lastItem.link := q; lastItem := q
+						END
+					END
+				END
+			ELSE	(* other character *)
+				Texts.Read(r, ch)
+			END
+		END
+	END ExtractSections;
+	
+	(* Extract BibTeX entries *)
+	
+	PROCEDURE ExtractBibtex(t: Texts.Text);
+	VAR r: Texts.Reader; i, j: LONGINT; first, p: MenuItem; q: LMarkerMenuItem; s, e: ARRAY 64 OF CHAR; ch: CHAR;
+	BEGIN
+		first := lastItem;
+		Texts.OpenReader(r, t, 0); Texts.Read(r, ch);
+		WHILE ~r.eot DO
+			IF ch = "%" THEN	(* comment till end of line *)
+				REPEAT Texts.Read(r, ch) UNTIL r.eot OR (ch = 0DX)
+			ELSIF ch = "@" THEN	(* bibtex entry *)
+				i := 0;	(* read entry *)
+				LOOP
+					Texts.Read(r, ch);
+					IF r.eot OR (CAP(ch) < "A") OR (CAP(ch) > "Z") THEN EXIT END;
+					IF i < LEN(s)-1 THEN e[i] := CHR(ORD(CAP(ch))+32); INC(i) END
+				END;
+				IF i # 0 THEN	(* entry found *)
+					e[i] := 0X;	(* check if legal entry *)
+					IF e # "string" THEN
+						WHILE ~r.eot & ((ch = " ") OR (ch = 0DX) OR (ch = 9X)) DO Texts.Read(r, ch) END;
+						IF ch = "{" THEN	(* read parameter *)
+							REPEAT Texts.Read(r, ch) UNTIL r.eot OR ((ch # " ") & (ch # 0DX) & (ch # 9X));
+							i := 0; j := 0;
+							WHILE ~r.eot & (ch # ",") & (ch # CR) & (i < LEN(s)-1) DO
+								s[i] := ch; INC(i); Texts.Read(r, ch)
+							END;
+							s[i] := " "; INC(i);
+							s[i] := "("; INC(i);
+							WHILE e[j] # 0X DO s[i] := e[j]; INC(i); INC(j) END;
+							s[i] := ")"; INC(i);
+							s[i] := 0X;
+							NEW(q); COPY(s, q.val); q.pos := Texts.Pos(r);
+							(*sort entries*)
+							p := first;
+							WHILE (p.link # NIL) & (p.link.val < q.val) DO p := p.link END;
+							q.link := p.link; p.link := q
+							(* lastItem.link := q; lastItem := q *)
+						END
+					END
+				END
+			ELSE	(* other character *)
+				Texts.Read(r, ch)
+			END
+		END;
+		WHILE first.link # NIL DO first := first.link END;
+		lastItem := first
+	END ExtractBibtex;
 	
 	PROCEDURE CreateMenuItems(listR: ListRiders.Rider; T: Texts.Text; ext: ARRAY OF CHAR): BOOLEAN;
 		VAR p: MenuItem; w, h, dsr: INTEGER; R: Texts.Reader; cmd: CmdMenuItem; text: Texts.Text;
@@ -251,6 +391,10 @@ of the source code to another platform with the name OBERON. *)
 			ELSIF s = "<Types>" THEN
 				IF ~parsed THEN ExtractProcTypeNames(T, plast, tlast); parsed := TRUE END;
 				IF tlist.link # NIL THEN lastItem.link := tlist.link; lastItem := tlast END
+			ELSIF s = "<LaTeXSections>" THEN
+				ExtractSections(T)
+			ELSIF s = "<BibTeXEntries>" THEN
+				ExtractBibtex(T)
 			ELSIF s[0]="<" THEN (* recent files *)
 				h:=1; w:=0; WHILE (s[h]#0X) & (s[h]>="0") & (s[h]<="9") DO
 					w:=w*10+ORD(s[h])-ORD("0"); INC(h)
@@ -397,6 +541,8 @@ of the source code to another platform with the name OBERON. *)
 	END Remove;
 
 BEGIN
+	sections[0] := "part"; sections[1] := "chapter"; sections[2] := "section"; sections[3] := "subsection";
+	sections[4] := "subsubsection"; sections[5] := "paragraph"; sections[6] := "subparagraph";
 	Texts.OpenWriter(W);  Modules.InstallTermHandler(Remove);
 	Texts.WriteString(W, "TextPopups using ");  Texts.WriteString(W, PopupFileName);
 	Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)

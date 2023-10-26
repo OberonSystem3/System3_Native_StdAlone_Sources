@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE MathL;	(** portable *)
 
@@ -154,10 +142,10 @@ END arctan;
 PROCEDURE sqrt*(x: LONGREAL): LONGREAL;
 VAR h: SET; e: LONGINT; a, s: LONGREAL; Error: ARRAY 32 OF CHAR;
 BEGIN 
-	IF x <= 0 THEN
-		IF x = 0 THEN RETURN 0 ELSE Error := "NEGATIVE ARGUMENT"; HALT(80) END
-	ELSIF Kernel.copro THEN
+	IF Kernel.copro THEN
 		RETURN Sqrt(x)
+	ELSIF x <= 0 THEN
+		IF x = 0 THEN RETURN 0 ELSE Error := "NEGATIVE ARGUMENT"; HALT(80) END
 	ELSE
 		S.GET(S.ADR(x)+H, h); S.PUT(S.ADR(x)+H, h - {20..30} + {21..29}); a := x; 	(* expo(a) = 1022 *)
 		e := S.LSH(S.VAL(LONGINT, h), -20) MOD 2048 - 1022;
@@ -174,9 +162,9 @@ END sqrt;
 PROCEDURE ln*(x: LONGREAL): LONGREAL;
 VAR h: SET; e: LONGINT; a, aa, a1, a2: LONGREAL; Error: ARRAY 32 OF CHAR;
 BEGIN 
-	IF x <= 0 THEN Error := "NEGATIVE ARGUMENT"; HALT(80)
-	ELSIF Kernel.copro THEN
+	IF Kernel.copro THEN
 		RETURN Ln(x)
+	ELSIF x <= 0 THEN Error := "NEGATIVE ARGUMENT"; HALT(80)
 	ELSE
 		S.GET(S.ADR(x)+H, h); S.PUT(S.ADR(x)+H, h - {20..30} + {21..29}); a := x; 	(* expo(a) = 1022 *)
 		e := S.LSH(S.VAL(LONGINT, h), -20) MOD 2048 - 1022;

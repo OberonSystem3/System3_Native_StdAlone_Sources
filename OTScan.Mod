@@ -1,8 +1,15 @@
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
 MODULE OTScan;	(** eos   **)
 
 	(**
 		Scan conversion for TrueType contours
 	**)
+	
+	(*
+		7.12.1999 - don't let dropout control move coordinates out of bounding box
+	*)
 	
 	IMPORT
 		OTInt;
@@ -270,7 +277,11 @@ MODULE OTScan;	(** eos   **)
 					END;
 					IF (x0 = x1) & (Dropouts IN r.rules) & (~(Stubs IN r.rules) OR (is0.link # is) & (is.link # is0)) THEN
 						IF Round IN r.rules THEN
-							IF Smart IN r.rules THEN
+							IF x0 = r.xmin THEN
+								x1 := x0 + 40H
+							ELSIF x1 = r.xmax THEN
+								x0 := x1 - 40H
+							ELSIF Smart IN r.rules THEN
 								r0 := ((is0.xy + is.xy) DIV 2) MOD 40H;	(* use middle of both points to choose pixel *)
 								IF (r0 = 0) OR (r0 > 20H) THEN x0 := x1 - 40H	(* midpoint in upper half of lower pixel *)
 								ELSE x1 := x0 + 40H	(* midpoint in lower half of upper pixel *)
@@ -283,6 +294,7 @@ MODULE OTScan;	(** eos   **)
 						END
 					END;
 					IF x0 < x1 THEN
+						ASSERT((r.xmin <= x0) & (x1 <= r.xmax), 110);
 						enum(SHORT((hor.yx - r.ymin) DIV 40H), x0 - r.xmin, x1 - r.xmin, data)
 					END;
 					is := is.next
@@ -314,7 +326,11 @@ MODULE OTScan;	(** eos   **)
 					END;
 					IF (y0 = y1) & (Dropouts IN r.rules) & (~(Stubs IN r.rules) OR (is0.link # is) & (is.link # is0)) THEN
 						IF Round IN r.rules THEN
-							IF Smart IN r.rules THEN
+							IF y0 = r.ymin THEN
+								y1 := y0 + 40H
+							ELSIF y1 = r.ymax THEN
+								y0 := y1 - 40H
+							ELSIF Smart IN r.rules THEN
 								r0 := ((is0.xy + is.xy) DIV 2) MOD 40H;	(* use middle of both points to choose pixel *)
 								IF (r0 = 0) OR (r0 > 20H) THEN y0 := y1 - 40H	(* midpoint in upper half of lower pixel *)
 								ELSE y1 := y0 + 40H	(* midpoint in lower half of upper pixel *)
@@ -327,6 +343,7 @@ MODULE OTScan;	(** eos   **)
 						END
 					END;
 					IF y0 < y1 THEN
+						ASSERT((r.ymin <= y0) & (y1 <= r.ymax), 110);
 						enum(SHORT((ver.yx - r.xmin) DIV 40H), y0 - r.ymin, y1 - r.ymin, data)
 					END;
 					is := is.next

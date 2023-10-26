@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Oberon;	(** portable, except where noted *) (*JG 22.7.94*)
 
@@ -29,8 +17,6 @@ scheduling of tasks, cursor handling and command execution.
     get* = 0; set* = 1; reset* = 2; (** CaretMsg id, SelectMsg id*)
 
     GCInterval = 100000; ActVal = 5000;
-
-    minint = MIN(INTEGER);
 
     Neutralise = 0A5X; SETUP = 0A4X;
 
@@ -104,6 +90,7 @@ scheduling of tasks, cursor handling and command execution.
       next*: Task;	(** for internal use. *)
       time*: LONGINT;	(** Earliest time to schedule task. *)
       safe*: BOOLEAN;	(** Don't remove from task queue when a trap occurs. *)
+      active: BOOLEAN;	(* is task active? used to avoid recursive task calls *)
       handle*: Handler	(** Task handler. *)
     END;
     
@@ -120,14 +107,16 @@ scheduling of tasks, cursor handling and command execution.
 	OptionChar*: CHAR;	(** Option character "/" or "\" *)
 	OpenText*: PROCEDURE (title: ARRAY OF CHAR; T: Texts.Text; W, H: INTEGER);
 
-    CurTask: Task;
+    CurTask: Task;	(* current task, for trap handling. *)
 	NextTask*: Task;	(** non-portable, for internal use. *)
 
+	New*: BOOLEAN;	(** enable new style mouse handling suitable for two-button mice *)
+	
     DW, DH, CL, W0, H0, H1, H2, H3: INTEGER;
 
     GCTask: Task; (* garbage collection task *)
     
-    PalTab: ARRAY 3*256 OF CHAR;
+    PalTab: POINTER TO ARRAY 3*256 OF CHAR;
     ScreenOn: BOOLEAN;
 	FillerColor: SHORTINT;
 
@@ -227,6 +216,7 @@ This is required before drawing inside the area X, Y, W, H. *)
            WITH M: ControlMsg DO
              IF M.id = mark THEN 
                IF (M.X >= V.X) & (M.X < V.X + V.W) & (M.Y >= V.Y) & (M.Y < V.Y + V.H) THEN
+                 FadeCursor(Mouse);
                  DrawCursor(Pointer, Star, M.X, M.Y)
                END
              END
@@ -265,12 +255,25 @@ default layout of the Oberon screen. *)
     BEGIN
        Input.SetMouseLimits(0, 0, Viewers.curW + UW + SW, H);
        Display.ReplConst(FillerColor, Viewers.curW, 0, UW + SW, H, 0);
-       NEW(Filler); Filler.handle := HandleFiller;
-       Viewers.InitTrack(UW, H, Filler); (*init user track*)
-       NEW(Filler); Filler.handle := HandleFiller;
-       Viewers.InitTrack(SW, H, Filler) (*init system track*)
+       IF UW # 0 THEN
+         NEW(Filler); Filler.handle := HandleFiller;
+         Viewers.InitTrack(UW, H, Filler) (*init user track*)
+       END;
+       IF SW # 0 THEN 
+         NEW(Filler); Filler.handle := HandleFiller;
+         Viewers.InitTrack(SW, H, Filler) (*init system track*)
+       END
     END OpenDisplay;
 
+    PROCEDURE UpdateDisplay;
+    VAR dcm: Display.ControlMsg;  cm: ControlMsg;
+    BEGIN
+    	cm.F := NIL;  cm.id := neutralize;  Display.Broadcast(cm);
+    	FadeCursor(Mouse);  FadeCursor(Pointer);
+    	dcm.F := NIL;  dcm.id := Display.suspend;  Display.Broadcast(dcm);
+    	dcm.F := NIL;  dcm.id := Display.restore;  Display.Broadcast(dcm)
+    END UpdateDisplay;
+    
 (** Returns the width in pixels of the display that contains the X coordinate. *)
     PROCEDURE DisplayWidth* (X: INTEGER): INTEGER;
     BEGIN RETURN DW
@@ -347,7 +350,7 @@ returns the suggested position. *)
 PROCEDURE MarkedFrame*(): Display.Frame;
 	VAR L: Display.LocateMsg;
 BEGIN
-	L.loc := NIL; L.X := Pointer.X; L.Y := Pointer.Y; L.F := NIL; L.res := -1;
+	L.loc := NIL; L.X := Pointer.X; L.Y := Pointer.Y; L.F := NIL;
 	Display.Broadcast(L);
 	RETURN L.loc
 END MarkedFrame;
@@ -386,7 +389,7 @@ if the module M should be reloaded from disk (obly possible if M is a "top"
 module, i.e. it has no clients. Res indicates success (res = 0) or failure (res # 0). 
 Modules.resMsg contains an explanation of what went wrong when res # 0. *)
     PROCEDURE Call* (name: ARRAY OF CHAR; par: ParList; new: BOOLEAN; VAR res: INTEGER);
-      VAR Mod: Modules.Module; P: Modules.Command; i, j: INTEGER;
+      VAR Mod: Modules.Module; P: Modules.Command; i, j: LONGINT;
     BEGIN res := 1;
       i := 0; j := 0;
       WHILE name[j] # 0X DO
@@ -419,7 +422,7 @@ Modules.resMsg contains an explanation of what went wrong when res # 0. *)
     END Call;
 
 (** Returns the selected stretch [beg, end[ of the current selected text T. 
-Time indicates the time of selection; time < 0 indicate that no text is currently selected. *)
+Time indicates the time of selection; time = -1 indicates that no text is currently selected. *)
     PROCEDURE GetSelection* (VAR text: Texts.Text; VAR beg, end, time: LONGINT);
       VAR M: SelectMsg;
     BEGIN
@@ -428,7 +431,8 @@ Time indicates the time of selection; time < 0 indicate that no text is currentl
     END GetSelection;
 
     PROCEDURE *GC (me: Task);
-    BEGIN GCTask.time := Input.Time() + GCInterval;
+    BEGIN
+      me.time := Input.Time() + GCInterval;
       Kernel.GC
     END GC;
 
@@ -436,7 +440,7 @@ Time indicates the time of selection; time < 0 indicate that no text is currentl
 by calling its handler when the system has nothing else to do. *)
     PROCEDURE Install* (T: Task);
       VAR t: Task;
-    BEGIN t := NextTask;
+    BEGIN t := NextTask; T.active := FALSE;
       WHILE (t.next # NextTask) & (t.next # T) DO t := t.next END;
       IF t.next # T THEN T.next := t.next; t.next := T END
     END Install;
@@ -458,7 +462,9 @@ by calling its handler when the system has nothing else to do. *)
 
 (** Set the default font used when typing characters. *)
     PROCEDURE SetFont* (fnt: Fonts.Font);
-    BEGIN CurFnt := fnt
+    BEGIN
+    	CurFnt := fnt;
+		IF CurFnt = NIL THEN CurFnt := Fonts.Default END
     END SetFont;
 
 (** Set the color of typed characters. *)
@@ -512,7 +518,7 @@ by calling its handler when the system has nothing else to do. *)
       name[j] := 0X;
       done := FALSE; eos := FALSE;
       REPEAT
-        IF (S.class = Texts.Name) THEN Texts.Scan(S);
+        IF (S.class IN {Texts.Name, Texts.String}) THEN Texts.Scan(S);
           IF ~S.eot THEN
             IF (S.class = Texts.Char) & (S.c = "=") THEN (* named entry *)
               IF S.s = part THEN Texts.Scan(S);
@@ -535,15 +541,6 @@ by calling its handler when the system has nothing else to do. *)
     IF ~done OR (conftext.len = 0) THEN S.class := Texts.Inval END
   END OpenScanner;
 
-    PROCEDURE UpdateDisplay;
-    VAR dcm: Display.ControlMsg;  cm: ControlMsg;
-    BEGIN
-    	cm.F := NIL;  cm.id := neutralize;  Display.Broadcast(cm);
-    	FadeCursor(Mouse);  FadeCursor(Pointer);
-    	dcm.F := NIL;  dcm.id := Display.suspend;  Display.Broadcast(dcm);
-    	dcm.F := NIL;  dcm.id := Display.restore;  Display.Broadcast(dcm)
-    END UpdateDisplay;
-    
 	PROCEDURE ResetPalette;
 	VAR F: Files.File; R: Files.Rider; i, cols: INTEGER; r, g, b: CHAR;
 	BEGIN
@@ -566,6 +563,7 @@ by calling its handler when the system has nothing else to do. *)
     PROCEDURE ToggleScreen;
     VAR i, m, r, g, b: INTEGER;
     BEGIN
+    	IF PalTab = NIL THEN NEW(PalTab) END;
     	i := Display.Depth(0);  m := 1;
     	WHILE i # 0 DO m := m*2; DEC(i) END;
     	IF m > 256 THEN m := 256 END;
@@ -583,7 +581,41 @@ by calling its handler when the system has nothing else to do. *)
  	   ScreenOn := ~ScreenOn;
 		IF Display.TrueColor(0) THEN UpdateDisplay END
     END ToggleScreen;
-    
+
+    PROCEDURE Reboot;
+    VAR cmd: Modules.Command;  m: Modules.Module;
+	BEGIN
+		m := Modules.ThisMod("System");
+		IF m # NIL THEN
+			cmd := Modules.ThisCommand(m, "Reboot");
+			IF cmd # NIL THEN cmd END
+		END
+    END Reboot;
+
+(** Call the handler of the next task (for use in polling loops). *)
+	PROCEDURE CallTask*;
+	VAR p, c: Task;
+	BEGIN
+		Kernel.Idle(0);	(* halt processor (is this called too often here?) *)
+		p := CurTask;	(* save the currently active task *)
+		CurTask := NextTask; c := CurTask; NextTask := c.next;
+		IF (c.time - Input.Time() <= 0) & ~c.active THEN
+			Display.ResetClip;
+			c.active := TRUE; c.handle(c); c.active := FALSE
+		END;
+		CurTask := p	(* restore the previously active task *)
+	END CallTask;
+	
+(* Recover after a task has trapped. *)
+	PROCEDURE HandleTaskTrap;
+	VAR t: Task;
+	BEGIN
+		t := NextTask;	(* clear active flag of all tasks, since trap terminated all recursively called tasks. *)
+		REPEAT t.active := FALSE; t := t.next UNTIL t = NextTask;
+		IF ~CurTask.safe THEN Remove(CurTask) END;	(* remove the trapped task, unless it is safe *)
+		CurTask := NIL	(* now no task is active *)
+	END HandleTaskTrap;
+
 (** Main Oberon task dispatcher. Reads the mouse position and characters 
 typed, informing the viewer of the display space of events using the 
 Display.InputMsg. The loop broadcasts a ControlMsg (id = mark) when the 
@@ -593,21 +625,24 @@ selections and the caret. The Loop periodically activates background tasks and
 the garbage collector, if no mouse or keyboard events are arriving. *)
    PROCEDURE Loop*;
       VAR V: Viewers.Viewer; M: InputMsg; N: ControlMsg;
-       X, Y: INTEGER; keys: SET; ch: CHAR;
+       X, Y: INTEGER; keys, shift, oldshift: SET; ch: CHAR;
     BEGIN
-      IF (CurTask # NIL) & ~CurTask.safe THEN Remove(CurTask) END;
-      Input.Mouse(keys, X, Y);
+      IF CurTask # NIL THEN HandleTaskTrap END;
+      Input.Mouse(keys, X, Y); oldshift := {};
       LOOP
-        IF Input.Available() > 0 THEN Input.Read(ch);
-          IF ch = Neutralise THEN
+        IF Input.Available() > 0 THEN
+          Input.Read(ch);
+          IF ~ScreenOn THEN ToggleScreen
+          ELSIF ch = Neutralise THEN
             N.F := NIL; N.id := neutralize; Display.Broadcast(N);
             FadeCursor(Mouse); FadeCursor(Pointer)
           ELSIF ch = SETUP THEN
             N.F := NIL; N.id := mark; N.X := X; N.Y := Y; Display.Broadcast(N)
           ELSIF ch = 0F5X THEN ToggleScreen
           ELSIF ch = 0F7X THEN ResetPalette
+          ELSIF ch = 0F8X THEN New := ~New; UpdateDisplay
           ELSIF ch = 0F9X THEN UpdateDisplay
-          ELSIF ch = 0FFX THEN Kernel.Shutdown(0)
+          ELSIF ch = 0FFX THEN Reboot
           ELSE
             M.F := NIL; M.id := consume; M.ch := ch; M.fnt := CurFnt; M.col := CurCol; M.voff := CurOff;
             Display.Broadcast(M);
@@ -618,24 +653,25 @@ the garbage collector, if no mouse or keyboard events are arriving. *)
           REPEAT
             M.keys := keys; M.X := X; M.Y := Y;
             M.dlink := NIL; M.x := 0; M.y := 0;
-            M.res := minint; Objects.Stamp(M);
+            M.res := MIN(INTEGER); Objects.Stamp(M);
             V := Viewers.This(M.X, M.Y); V.handle(V, M);
             Input.Mouse(keys, X, Y)
           UNTIL (keys = {}) OR (Input.Available() # 0);
           DEC(GCTask.time, ActVal)
         ELSE (*keys = {}*)
-          M.F := NIL; M.id := track; M.keys := keys; M.X := X; M.Y := Y; 
+          M.F := NIL; M.id := track; M.keys := keys; M.X := X; M.Y := Y;
           M.dlink := NIL; M.x := 0; M.y := 0;
-          M.res := minint; Objects.Stamp(M);
+          M.res := MIN(INTEGER); Objects.Stamp(M);
           V := Viewers.This(X, Y); V.handle(V, M);
           Input.Mouse(keys, X, Y);
-          IF (keys = {}) & (X = M.X) & (Y = M.Y) & (Input.Available() = 0) THEN
-            Kernel.Idle(0);
-            CurTask := NextTask; NextTask := CurTask.next;
-            IF CurTask.time - Input.Time() <= 0 THEN CurTask.handle(CurTask) END;
-            CurTask := NIL;
-            Input.Mouse(keys, X, Y)
-          END
+          LOOP
+            Input.KeyState(shift);
+            IF (keys # {}) OR (X # M.X) OR (Y # M.Y) OR (Input.Available() # 0) OR (shift # oldshift) THEN EXIT END;
+            CallTask;
+            Input.Mouse(keys, X, Y);
+            IF ~Mouse.on THEN EXIT END	(* a task or handler switched off the mouse *)
+          END;
+          oldshift := shift
         END
       END
     END Loop;
@@ -644,21 +680,14 @@ the garbage collector, if no mouse or keyboard events are arriving. *)
 	VAR s: ARRAY 8 OF CHAR;
 	BEGIN
 		Kernel.GetConfig("Color", s);
-		IF s[0] # "0" THEN FillerColor := 12 ELSE FillerColor := 0 END
+		IF s[0] # "0" THEN FillerColor := 12 ELSE FillerColor := 0 END;
+		Kernel.GetConfig("MB", s);
+		New := (s # "3")
 	END Init;
 
-	PROCEDURE LoadSystem;
-	VAR cmd: Modules.Command;  m: Modules.Module;
-	BEGIN
-		m := Modules.ThisMod("System");	(* init System trap, log etc. *)
-		INC(m.refcnt);	(* disallow unloading of System *)
-		cmd := Modules.ThisCommand(m, "Init");
-		cmd	(* execute System.InitCommands from Oberon.Text (uses Oberon.OpenScanner) *)
-	END LoadSystem;
-	
 BEGIN
   Init;
-  OptionChar := "\"; OpenText := NIL;
+  OptionChar := "\"; OpenText := NIL; CurTask := NIL;
   Arrow.Fade := FlipArrow; Arrow.Draw := FlipArrow;
   Star.Fade := FlipStar; Star.Draw := FlipStar;
   OpenCursor(Mouse); OpenCursor(Pointer);
@@ -671,6 +700,7 @@ BEGIN
 
   ScreenOn := TRUE; ResetPalette;
   W0 := DW DIV 8 * 5;
+  IF W0 < 400 THEN W0 := 0 END;
   OpenDisplay(W0, DW - W0, DH);
   Display.SetMode(0, {});
 
@@ -685,9 +715,7 @@ BEGIN
   CurCol := Display.FG;
   CurOff := 0;
 
-  conftime := -1; confdate := -1; NEW(conftext);
-  
-  LoadSystem
+  conftime := -1; confdate := -1; NEW(conftext)
 END Oberon.
 
 (** Remarks:
@@ -798,5 +826,4 @@ the Oberon system is left. After a trap occurs, the run-time stack is reset, and
 Oberon loop is started afresh. The Oberon loop polls the mouse and keyboard for 
 events that it broadcasts to the display space using messages. When no events are 
 happening, background tasks are activated periodically in a round-robin fashion.
-
 *)

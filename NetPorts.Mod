@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE NetPorts;	(** non-portable *)	(* 16.08.96 mg *)
 
-IMPORT NetBase, NetIP;
+IMPORT SYSTEM, NetIP;
 
 CONST
 	anyport* = 0; minport = 1023; maxport = 2000;
@@ -54,7 +42,7 @@ BEGIN
 		curr := ports.next;
 		LOOP
 			IF curr = ports THEN EXIT END;
-			IF NetBase.Equal(curr.rip, rip, NetIP.AdrLen) & (curr.lport = lport) & (curr.rport = rport) THEN
+			IF (SYSTEM.VAL(LONGINT, curr.rip) = SYSTEM.VAL(LONGINT, rip)) & (curr.lport = lport) & (curr.rport = rport) THEN
 				EXIT
 			END;
 			curr := curr.next
@@ -66,7 +54,7 @@ END Available;
 PROCEDURE Access* (port: Port; lip: NetIP.Adr; loc: INTEGER; rip: NetIP.Adr; rmt: INTEGER; mode: SHORTINT): BOOLEAN;
 BEGIN port.mode := mode;
 	port.lport := loc; port.rport := rmt;
-	NetBase.Copy(lip, port.lip, NetIP.AdrLen); NetBase.Copy(rip, port.rip, NetIP.AdrLen);
+	port.lip := lip; port.rip := rip;
 	port.next := ports.next; ports.next := port;
 	RETURN TRUE
 END Access;
@@ -79,11 +67,11 @@ BEGIN
 	LOOP
 		IF port = ports THEN EXIT END;
 		IF port.lport = loc THEN
-			IF NetBase.Equal(port.rip, rip, NetIP.AdrLen) & (port.rport = rmt) THEN EXIT END;
+			IF (SYSTEM.VAL(LONGINT, port.rip) = SYSTEM.VAL(LONGINT, rip)) & (port.rport = rmt) THEN EXIT END;
 			IF (port.mode = passive) OR (port.mode = conctless) THEN
-				IF NetBase.Equal(port.rip, NetIP.IPany, NetIP.AdrLen) THEN
+				IF SYSTEM.VAL(LONGINT, port.rip) = SYSTEM.VAL(LONGINT, NetIP.IPany) THEN
 					IF (port.rport = rmt) OR (port.rport = anyport) THEN nport := port END
-				ELSIF NetBase.Equal(port.rip, rip, NetIP.AdrLen) THEN
+				ELSIF SYSTEM.VAL(LONGINT, port.rip) = SYSTEM.VAL(LONGINT, rip) THEN
 					IF port.rport = anyport THEN nport := port END
 				END
 			END
@@ -114,9 +102,10 @@ BEGIN
 END Enumerate;
 
 PROCEDURE Init*;
-BEGIN ports.next := ports; portnr := minport
+BEGIN
+	ports.next := ports; portnr := minport
 END Init;
 
-BEGIN NEW(ports);
-	ports.next := ports; portnr := minport
+BEGIN
+	NEW(ports); Init
 END NetPorts.

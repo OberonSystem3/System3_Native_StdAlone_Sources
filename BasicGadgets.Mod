@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE BasicGadgets;	(** portable *) (* jm 18.1.95 *)
 
@@ -465,8 +453,8 @@ them a different SetValue attribute numbered from 0. This is useful to create mu
 PROCEDURE SetValues*;
 VAR M: Display.SelectMsg; b, c: Objects.Object; val: INTEGER;
 BEGIN
-	M.id := Display.get; M.F := NIL; M.time := 0; M.obj := NIL; Display.Broadcast(M);
-	IF M.time > 0 THEN
+	M.id := Display.get; M.F := NIL; M.time := -1; M.obj := NIL; Display.Broadcast(M);
+	IF M.time # -1 THEN
 		b := M.obj; val := 0; 
 		WHILE b # NIL DO
 			IF b IS Button THEN
@@ -479,7 +467,7 @@ BEGIN
 			b := b.slink
 		END;
 		IF c # NIL THEN Gadgets.Update(c) END	(* ps - 29.7.96 *)
-	END;
+	END
 END SetValues;
 
 	PROCEDURE ForceString(F: Display.Frame; VAR M: Objects.AttrMsg);
@@ -553,11 +541,11 @@ BEGIN
 END ButtonAttr;
 
 PROCEDURE RestoreButton(R: Display3.Mask; F: Button; x, y, w, h, u, v, w1, h1: INTEGER; dlink: Objects.Object);
-VAR D: Display.DisplayMsg; L: Gadgets.Frame; O: Display3.OverlapMsg; A: Objects.AttrMsg; ll, lr, lb, lt, col: INTEGER;
+VAR D: Display.DisplayMsg; L: Gadgets.Frame; O: Display3.OverlapMsg; A: Objects.AttrMsg; ll, lr, lb, lt: INTEGER; col: Display.Color;
 BEGIN
 	Oberon.RemoveMarks(x, y, w, h);
 	A.id := Objects.get; A.name := "Color"; A.class := Objects.Inval; A.i := Display3.upC; A.res := -1;
-	F.handle(F, A); IF A.class = Objects.Int THEN col := SHORT(A.i) ELSE col := Display3.upC END;
+	F.handle(F, A); IF A.class = Objects.Int THEN col := A.i ELSE col := Display3.upC END;
 	IF F.val THEN
 		Display3.Rect3D(R, Display3.bottomC, Display3.topC, x, y, w, h, 1, Display.replace);
 		Display3.Rect3D(R, Display3.downC, Display3.upC, x + 1, y + 1, w - 2, h - 2, 1, Display.replace);
@@ -816,7 +804,7 @@ BEGIN
 					END
 				ELSIF M IS Oberon.InputMsg THEN
 					WITH M: Oberon.InputMsg DO 
-						IF (M.id = Oberon.track) & (1 IN M.keys) & Gadgets.InActiveArea(F, M) THEN
+						IF (M.id = Oberon.track) & ((1 IN M.keys) OR (Oberon.New & (2 IN M.keys))) & Gadgets.InActiveArea(F, M) THEN
 							F.val := ~F.val;
 							IF F.obj # NIL THEN
 								ButtonSetModel(F); Gadgets.Update(F.obj)
@@ -841,7 +829,7 @@ BEGIN
 										ButtonSetModel(F); Gadgets.Update(F.obj)
 									ELSE Gadgets.Update(F);
 									END;
-									IF keysum = {1} THEN
+									IF (keysum = {1}) OR (Oberon.New & (keysum = {2})) THEN
 										Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL);
 									END
 								END
@@ -849,7 +837,7 @@ BEGIN
 								keysum := M.keys;
 								REPEAT Effects.TrackMouse(M.keys, M.X, M.Y, Effects.Arrow); keysum := keysum + M.keys;
 								UNTIL M.keys = {}; M.res := 0;
-								IF keysum = {1} THEN
+								IF (keysum = {1}) OR (Oberon.New & (keysum = {2})) THEN
 									Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL);
 								END;
 							END;
@@ -954,18 +942,18 @@ BEGIN
 END CheckBoxAttr;
 
 PROCEDURE RestoreCheckBox(R: Display3.Mask; F: CheckBox; x, y, w, h: INTEGER);
-VAR A: Objects.AttrMsg; col: INTEGER;
+VAR A: Objects.AttrMsg; col: Display.Color;
 BEGIN
 	Oberon.RemoveMarks(x, y, w, h);
 	A.id := Objects.get; A.name := "Color"; A.class := Objects.Inval; A.i := Display3.textbackC; A.res := -1;
-	F.handle(F, A); IF A.class = Objects.Int THEN col := SHORT(A.i) ELSE col := Display3.textbackC END;
+	F.handle(F, A); IF A.class = Objects.Int THEN col := A.i ELSE col := Display3.textbackC END;
 	A.id := Objects.get; Field(F, A.name); A.class := Objects.Inval; A.res := -1;
 	IF F.obj # NIL THEN F.obj.handle(F.obj, A) END;
 	
 	IF (A.res >= 0) & (A.class = Objects.Int) THEN (* change look if integers are involved *)
 		Display3.FilledRect3D(R, Display3.bottomC, Display3.topC, col, x, y, w, h, 1, Display.replace);
 		IF F.val THEN
-			Display3.FilledRect3D(R, Display3.topC, Display3.bottomC, Display3.groupC, x + 3, y + 3, w - 6, h - 6, 1, Display.replace);
+			Display3.FilledRect3D(R, Display3.topC, Display3.bottomC, Display3.groupC, x + 3, y + 3, w - 6, h - 6, 1, Display.replace)
 		END
 	ELSE
 		Display3.FilledRect3D(R, Display3.bottomC, Display3.topC, col, x, y, w, h, 1, Display.replace);
@@ -973,14 +961,16 @@ BEGIN
 			Display3.ReplConst(R, Display3.white, x + 5, y + 4, 1, 10, Display.replace);
 			Display3.ReplConst(R, Display3.black, x + 6, y + 4, 1, 10, Display.replace);
 			Display3.Line(R, Display3.white, Display.solid, x + 5, y + 5, x + 17, y + 17, 1, Display.replace);
-			Display3.Line(R, Display3.black, Display.solid, x + 5, y + 4, x + 17, y + 16, 1, Display.replace);
+			Display3.Line(R, Display3.black, Display.solid, x + 5, y + 4, x + 17, y + 16, 1, Display.replace)
 		END
 	END;
-	IF Gadgets.selected IN F.state THEN Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint); END;
+	IF Gadgets.selected IN F.state THEN
+		Display3.FillPattern(R, Display3.white, Display3.selectpat, x, y, x, y, w, h, Display.paint)
+	END
 END RestoreCheckBox;
 
 PROCEDURE PrintCheckBox(F: CheckBox; VAR M: Display.DisplayMsg);
-VAR A: Objects.AttrMsg; R: Display3.Mask; x, y, w, h, col: INTEGER;
+VAR A: Objects.AttrMsg; R: Display3.Mask; x, y, w, h: INTEGER; col: Display.Color;
 
 	PROCEDURE P(x: INTEGER): INTEGER;
 	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
@@ -989,12 +979,12 @@ VAR A: Objects.AttrMsg; R: Display3.Mask; x, y, w, h, col: INTEGER;
 BEGIN
 	Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
 	A.id := Objects.get; A.name := "Color"; A.class := Objects.Inval; A.i := Display3.textbackC; A.res := -1;
-	F.handle(F, A); IF A.class = Objects.Int THEN col := SHORT(A.i) ELSE col := Display3.textbackC END;
+	F.handle(F, A); IF A.class = Objects.Int THEN col := A.i ELSE col := Display3.textbackC END;
 	x := M.x; y := M.y; w := P(F.W); h := P(F.H);
 	IF (F.obj # NIL) & (F.obj IS Integer) THEN
 		Printer3.FilledRect3D(R, Display3.bottomC, Display3.topC, col, x, y, w, h, P(1), Display.replace);
 		IF F.val THEN
-			Printer3.FilledRect3D(R, Display3.topC, Display3.bottomC, Display3.groupC, x + P(3), y + P(3), w - P(6), h - P(6), 1, Display.replace);
+			Printer3.FilledRect3D(R, Display3.topC, Display3.bottomC, Display3.groupC, x + P(3), y + P(3), w - P(6), h - P(6), 1, Display.replace)
 		END
 	ELSE
 		Printer3.FilledRect3D(R, Display3.bottomC, Display3.topC, col, x, y, w, h, P(1), Display.replace);
@@ -1002,7 +992,7 @@ BEGIN
 			Printer3.ReplConst(R, Display3.white, x + P(5), y + P(4), P(1), P(10), Display.replace);
 			Printer3.ReplConst(R, Display3.black, x + P(6), y + P(4), P(1), P(10), Display.replace);
 			Printer3.Line(R, Display3.white, Display.solid, x + P(5), y + P(5), x + P(17), y + P(17), P(1), Display.replace);
-			Printer3.Line(R, Display3.black, Display.solid, x + P(5), y + P(4), x + P(17), y + P(16), P(1), Display.replace);
+			Printer3.Line(R, Display3.black, Display.solid, x + P(5), y + P(4), x + P(17), y + P(16), P(1), Display.replace)
 		END
 	END
 END PrintCheckBox;
@@ -1037,7 +1027,7 @@ BEGIN
 					ELSE
 						Texts.WriteString(W, "Version "); Texts.WriteInt(W, VersionNewCheckbox, 3);
 						Texts.WriteString(W, " of checkboxes cannot read version "); Texts.WriteInt(W, ver, 3); Texts.WriteLn(W); Log;
-						HALT(42);
+						HALT(42)
 					END
 				END
 			END
@@ -1046,7 +1036,7 @@ BEGIN
 				IF M.stamp = F.stamp THEN M.obj := F.dlink
 				ELSE NEW(F0); F.stamp := M.stamp; F.dlink := F0; CopyCheckBox(M, F, F0); M.obj := F0
 				END
-			END;
+			END
 		ELSIF M IS Display.FrameMsg THEN
 			WITH M: Display.FrameMsg DO
 				x := M.x + F.X; y := M.y + F.Y; w := F.W; h := F.H; (* calculate actual coordinates *)
@@ -1086,7 +1076,7 @@ BEGIN
 					END
 				ELSIF M IS Oberon.InputMsg THEN
 					WITH M: Oberon.InputMsg DO 
-						IF (M.id = Oberon.track) & (1 IN M.keys) & Gadgets.InActiveArea(F, M) THEN
+						IF (M.id = Oberon.track) & ((1 IN M.keys) OR (Oberon.New & (2 IN M.keys))) & Gadgets.InActiveArea(F, M) THEN
 							F.val := ~F.val;
 							IF F.obj # NIL THEN
 								CheckBoxSetModel(F); Gadgets.Update(F.obj)
@@ -1098,20 +1088,22 @@ BEGIN
 								keysum := keysum + M.keys
 							UNTIL M.keys = {};
 							M.res := 0;
-							IF keysum = {1} THEN Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL) END
+							IF (keysum = {1}) OR (Oberon.New & (keysum = {2})) THEN
+								Gadgets.ExecuteAttr(F, "Cmd", M.dlink, NIL, NIL)
+							END
 						ELSIF ~(Gadgets.selected IN F.state) THEN
-							Gadgets.framehandle(F, M);
-						END; 
-					END;
+							Gadgets.framehandle(F, M)
+						END
+					END
 				ELSE
-					Gadgets.framehandle(F, M);	
+					Gadgets.framehandle(F, M)
 				END;
-				M.x := u; M.y := v; (* restore volatile info *)
-			END;
+				M.x := u; M.y := v (* restore volatile info *)
+			END
 		ELSE
-			Gadgets.framehandle(F, M);
-		END;
-	END;
+			Gadgets.framehandle(F, M)
+		END
+	END
 END CheckBoxHandler;
 
 PROCEDURE InitCheckBox*(F: CheckBox);
@@ -1339,7 +1331,7 @@ PROCEDURE Break*;
 VAR M: Display.SelectMsg; t: Display.Frame; B: Button;
 BEGIN
 	M.F := NIL; M.id := Display.get; M.time := -1; M.obj := NIL; Display.Broadcast(M);
-	IF (M.time > 0) & (M.obj # NIL) THEN
+	IF (M.time # -1) & (M.obj # NIL) THEN
 		IF M.obj IS Button THEN
 			B := M.obj(Button);
 			IF (B.look # NIL) THEN

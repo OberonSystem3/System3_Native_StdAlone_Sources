@@ -1,21 +1,15 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE PPPLCP;	(** non-portable *)
-(* $VCS   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:19:22 $
+(* $VCS   4, Edgar@EdgarSchwarz.de, 9 May :0, 1:20:35 $
     $Log$
+$   4, Edgar@EdgarSchwarz.de, 9 May :0, 1:20:35
+more debug info with auth stuff
+$   3, Edgar@EdgarSchwarz.de, 25 Apr :0, 10:47:30
+more debug info, drop Identification code
+$   2, Edgar.Schwarz@z.zgs.de, 5 Sep 99, 13:49:32
+minimal lenght for echo request set to 4 bytes
 $   1, Edgar.Schwarz@z.zgs.de, 28 Feb 99, 22:19:22
 version for PPP 1.0.0
 *)
@@ -328,15 +322,28 @@ VAR
 								status:=Rej; INCL(eo, MagicNumber);
 							END;
 						| AuthType:
+(*es*)				  IF HDLC.debug THEN
+								Debug.String("LCP.ReCI: AuthType"); Debug.Ln;
+(**)	 				END;
 							IF size>=ShortLen THEN x := T.GetInt(p, posp+2);
+(*es*)				  	IF HDLC.debug THEN
+									Debug.String("x ="); Debug.Int(x, 3); Debug.Ln;
+(**)	 					END;
 								IF x = PAP.PAPProt THEN (*UPap *)
 									IF (NegUPap IN f.ao.O) & (size >= ShortLen) THEN 
 										(* dm:1.10.96: size = ShortLen *)
 										INCL(f.ho.O, NegUPap);
+(*es*)							  IF HDLC.debug THEN
+											Debug.String("LCP.ReCI: NegUPap added to his options"); Debug.Ln;
+(**)	 							END;
 									ELSE
+(*es*)							  IF HDLC.debug THEN
+											Debug.String("Rej: NegUPap"); Debug.Int(size,5); Debug.Int(ShortLen,5); Debug.Ln;
+(**)	 							END;
 										status := Rej; INCL(eo, AuthType);
 									END
 								ELSE 
+(*es*)				  		Debug.String("LCP.ReCI: AuthType CHAP not supported"); Debug.Ln;
 									INCL(f.ho.O, NegChap); INCL(eo, AuthType);
 									IF status = Ack THEN status := Nak END;
 								END
@@ -461,10 +468,14 @@ VAR
 		WITH f:LCPfsm DO
 			CASE code OF
 				  ProtocolRej: RecProtRej(f, p, pos, len); RETURN TRUE
+(** es, 4 Bytes should be enough for a echo request without data (magic only) *)
 				| EchoReq: IF len<4 THEN len:=4; END; T.PutLong(f.go.MagicNumb, p, pos);
+(**				| EchoReq: IF len<6 THEN len:=6; END; T.PutLong(f.go.MagicNumb, p, pos); **)
 					FSM.SendData(f, EchoReply, id, p, pos, len); RETURN TRUE
 				| EchoReply: (* RecEchoReply(f, id, p, pos, len); To implement if we intend to send Echo-Requests *) RETURN TRUE
 				| DiscardReq: RETURN TRUE
+				(* test code for a problem of Jose Francisco <jfglez@teleline.es>, 05.10.1999, es *)
+				| Identification: (* a peer seems to choke on CodeRej, so just try to drop it. *) RETURN TRUE
 			ELSE RETURN FALSE
 			END
 		END

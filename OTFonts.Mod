@@ -1,8 +1,16 @@
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
 MODULE OTFonts;	(** eos   **)
 
 	(**
 		Make OpenType fonts available to Oberon System
 	**)
+	
+	(*
+		18.11.1999 - portability fix for big_endian architectures in FillRect (pjm)
+		10.12.1999 - assert valid memory access in FillRect (eos)
+	*)
 	
 	IMPORT
 		SYSTEM, Files, Objects, Fonts, Texts, Oberon, Strings, OTInt, OType;
@@ -16,6 +24,7 @@ MODULE OTFonts;	(** eos   **)
 		RasterData = RECORD (OType.RasterData)
 			adr: LONGINT;	(* base address of pattern *)
 			bpr: LONGINT;	(* number of bytes per row *)
+			len: LONGINT;	(* pattern length *)
 		END;
 		
 		Font = POINTER TO FontDesc;
@@ -49,8 +58,9 @@ MODULE OTFonts;	(** eos   **)
 			END;
 			n := h; a := adr;
 			WHILE n > 0 DO
+				ASSERT((data.adr <= a) & (a < data.adr + data.len), 110);
 				SYSTEM.GET(a, byte);
-				SYSTEM.PUT(a, SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, byte) + mask));
+				SYSTEM.PUT(a, CHR(SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, LONG(ORD(byte))) + mask)));
 				DEC(n); INC(a, data.bpr)
 			END;
 			IF x0 < x1 THEN
@@ -58,6 +68,7 @@ MODULE OTFonts;	(** eos   **)
 				WHILE x0 < x1 DO
 					n := h; a := adr;
 					WHILE n > 0 DO
+						ASSERT((data.adr <= a) & (a < data.adr + data.len), 111);
 						SYSTEM.PUT(a, 0FFX);
 						DEC(n); INC(a, data.bpr)
 					END;
@@ -67,8 +78,9 @@ MODULE OTFonts;	(** eos   **)
 					mask := {0 .. (urx-1) MOD 8};
 					n := h; a := adr;
 					WHILE n > 0 DO
+						ASSERT((data.adr <= a) & (a < data.adr + data.len), 112);
 						SYSTEM.GET(a, byte);
-						SYSTEM.PUT(a, SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, byte) + mask));
+						SYSTEM.PUT(a, CHR(SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, LONG(ORD(byte))) + mask)));
 						DEC(n); INC(a, data.bpr)
 					END
 				END
@@ -141,7 +153,7 @@ MODULE OTFonts;	(** eos   **)
 					IF Glyph.hby < ymin THEN ymin := Glyph.hby END;
 					IF Glyph.hbx + Glyph.rw > xmax THEN xmax := Glyph.hbx + Glyph.rw END;
 					IF Glyph.hby + Glyph.rh > ymax THEN ymax := Glyph.hby + Glyph.rh END;
-					data.rect := FillRect; data.adr := SYSTEM.ADR(Pattern); data.bpr := (Glyph.rw+7) DIV 8;
+					data.rect := FillRect; data.adr := SYSTEM.ADR(Pattern); data.bpr := (Glyph.rw+7) DIV 8; data.len := LEN(Pattern);
 					bytes := Glyph.rh * data.bpr;
 					ASSERT(bytes < LEN(Pattern));
 					k := 0; REPEAT Pattern[k] := 0X; INC(k) UNTIL k = bytes;
@@ -173,7 +185,7 @@ MODULE OTFonts;	(** eos   **)
 		SYSTEM.PUT(p, CHR(glyph.rh)); INC(p);
 		IF glyph.rw * glyph.rh # 0 THEN
 			data.rect := FillRect; data.adr := p; data.bpr := (glyph.rw+7) DIV 8;
-			bytes := glyph.rh * data.bpr;
+			bytes := glyph.rh * data.bpr;  data.len := bytes;
 			REPEAT SYSTEM.PUT(p, 0X); INC(p) UNTIL p = data.adr + bytes;
 			OType.EnumRaster(glyph, data)
 		END;

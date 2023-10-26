@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Bitmaps;	(** non-portable *)
 
@@ -22,11 +10,12 @@ o get rid of buffer
 o ASSERT bounds everywhere
 *)
 
-IMPORT Display, SYSTEM;
+IMPORT SYSTEM, Display;
 
 CONST
 	BufSize = 10000H;
-
+	Assembler = TRUE;
+	
 TYPE	
 	Bitmap* = POINTER TO BitmapDesc;
 	BitmapDesc* = RECORD	(* cf. Display.DisplayBlock  *)
@@ -144,7 +133,7 @@ BEGIN
 			REPEAT	(* loop over bits *)
 				IF ODD(ASH(ORD(ch), -i)) THEN	(* pixel on *)
 					SYSTEM.GET(dst, SYSTEM.VAL(CHAR, s)); 
-					SYSTEM.PUT(dst, SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, col) / s))
+					SYSTEM.PUT(dst, CHR(SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, col) / s)))
 				END;	
 				INC(dst);  INC(i)
 			UNTIL i = m;
@@ -194,7 +183,6 @@ BEGIN
 END CopyPattern1;
 
 PROCEDURE CopyPattern*(B: Bitmap; col: INTEGER; pat: LONGINT; X, Y, mode: INTEGER);
-VAR BitmapWth, PatWth, DestAdr, PatHeight, DestinationWth: LONGINT;
 VAR x, y, x2, y2, w, w0, h, src, dst: LONGINT;  ch: CHAR;
 BEGIN
 	SYSTEM.GET(pat, ch);  w := ORD(ch);
@@ -256,7 +244,7 @@ BEGIN
 			REPEAT	(* loop over bits *)
 				IF ODD(ASH(ORD(ch), -i)) THEN	(* pixel on *)
 					SYSTEM.GET(dst, SYSTEM.VAL(CHAR, s));
-					SYSTEM.PUT(dst, SYSTEM.VAL(CHAR, SYSTEM.VAL(SET, col) / s))
+					SYSTEM.PUT(dst, CHR(SYSTEM.VAL(LONGINT, SYSTEM.VAL(SET, col) / s)))
 				END;
 				INC(dst);  INC(i)
 			UNTIL i = m;
@@ -358,6 +346,92 @@ BEGIN
 		END
 	END;
 END PutPix;
+
+PROCEDURE -Copy0(src, dst, hx, sw2, dw2: LONGINT);
+CODE {SYSTEM.i386}
+	POP EDX	; dw2
+	POP ECX	; sw2
+	POP EBX	; hx
+	POP EDI	; dst
+	POP ESI	; src
+	MOV EAX, EDX
+	SHR EAX, 1
+	PUSH EAX	; count
+for:
+	MOV AL, [ESI]
+	MOV [EDI], AL
+	JMP while1
+while0:
+	INC ESI
+	SUB EBX, EDX
+while1:
+	CMP EBX, 0
+	JG while0
+	INC EDI
+	ADD EBX, ECX
+	DEC DWORD [ESP]
+	JNZ for
+	POP EAX
+END Copy0;
+
+PROCEDURE Copy*(sB, dB: Bitmap; SX, SY, SW, SH, DX, DY, DW, DH, mode: INTEGER);
+VAR hx, hy, DW2, SW2, src, dst, i: LONGINT; dy: INTEGER; ch: CHAR;
+BEGIN
+	IF (SX >= 0) & (SY >= 0) & (SX+SW <= sB.width) & (SY+SH <= sB.height) &
+			(DX >= 0) & (DY >= 0) & (DX+DW <= dB.width) & (DY+DH <= dB.height) &
+			(SW > 0) & (SH > 0) & (DW > 0) & (DH > 0) THEN
+		dy := DY + DH; DW2 := 2 * DW; SW2 := 2 * SW;
+		hy := 2*SH - DH; 
+		WHILE DY < dy DO
+			IF Assembler THEN
+				Copy0(sB.address + SY*sB.wth + SX, dB.address + DY*dB.wth + DX, 2*SW - DW, SW2, DW2)
+			ELSE
+				hx := 2*SW - DW;
+				src := sB.address + SY*sB.wth + SX;
+				dst := dB.address + DY*dB.wth + DX;
+				FOR i := 1 TO DW DO
+					SYSTEM.GET(src, ch); SYSTEM.PUT(dst, ch);
+					WHILE hx > 0 DO INC(src); DEC(hx, DW2) END;
+					INC(dst); INC(hx, SW2)
+				END
+			END;
+			WHILE hy > 0 DO INC(SY); hy := hy - 2 * DH END;
+			INC(DY); hy := hy + 2*SH
+		END
+	ELSE
+		HALT(99)
+	END
+END Copy;
+
+PROCEDURE PutLine*(B: Bitmap; VAR data: ARRAY OF INTEGER; X, Y, W: INTEGER);
+VAR dst, src, i: LONGINT; ch: CHAR;
+BEGIN
+	IF (X >= 0) & (X+W <= B.width) & (Y >= 0) & (Y < B.height) & (W <= LEN(data)) THEN
+		src := SYSTEM.ADR(data[0]); dst := B.address + Y*B.wth + X; i := W;
+		WHILE i > 0 DO
+			SYSTEM.GET(src, ch); SYSTEM.PUT(dst, ch);
+			INC(src, 2); INC(dst);
+			DEC(i)
+		END
+	ELSE
+		HALT(99)
+	END
+END PutLine;
+
+PROCEDURE GetLine*(B: Bitmap; VAR data: ARRAY OF INTEGER; X, Y, W: INTEGER);
+VAR dst, src, i: LONGINT; ch: CHAR;
+BEGIN
+	IF (X >= 0) & (X+W <= B.width) & (Y >= 0) & (Y < B.height) & (W <= LEN(data)) THEN
+		dst := SYSTEM.ADR(data[0]); src := B.address + Y*B.wth + X; i := W;
+		WHILE i > 0 DO
+			SYSTEM.GET(src, ch); SYSTEM.PUT(dst, ORD(ch));
+			INC(src); INC(dst, 2);
+			DEC(i)
+		END
+	ELSE
+		HALT(99)
+	END
+END GetLine;
 
 BEGIN
 	NEW(buffer)

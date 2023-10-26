@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 
-(* Niklaus Mannhart, Patrik Reali, Pieter Muller *)
+(* Niklaus Mannhart, Patrik Reali, Pieter Muller, Bernhard Egger *)
 
 	IMPORT Modules, Files, Fonts, Texts, Objects, Display, Oberon, Strings, Out, SYSTEM;
 
@@ -42,6 +30,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		AL = 0; CL = 1; DL = 2; BL = 3; AH = 4; CH = 5; DH = 6; BH = 7; (* 8 bit register *)
 		ES = 20; CS = 21; SS = 22; DS = 23; FS = 24; GS = 25;  (* 6, 7 reserved *) (* Segment register *)
 		CR = 0; DR = 8; TR = 16;
+		
+		MM0 = 8;	(*offset added to reg *)
 
 		(* i387 *)
 		SReal = 0; (* single real 32 bit*)
@@ -79,40 +69,39 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		
 		
 		(*Targets*)
-		Priv = 16;
+		Priv = 16; MMX = 18;
 		i486 = 1; Pentium = 2; PPro = 3;
 
 	TYPE
-		ProcArray = POINTER TO ARRAY OF ProcEntry;
-		ProcEntry = RECORD
-			name: ARRAY 64 OF CHAR;
-			point: LONGINT
+		ProcEntry* = RECORD
+			name*: ARRAY 64 OF CHAR;
+			point*: LONGINT
 		END;
+		ProcArray* = POINTER TO ARRAY OF ProcEntry;
 		EntryArray = POINTER TO ARRAY OF LONGINT;
+		DecodeHandler* = PROCEDURE(VAR pc: LONGINT; VAR r: Files.Rider; VAR w: Texts.Writer);
 		
 	VAR
 		R, Ref: Files.Rider; (* Rider for Object file *)
 		W: Texts.Writer; (* Writer for output on screen *)
-		pc, breakpos: LONGINT; column: INTEGER; (* curser position in the current line *)
+		pc, breakpos: LONGINT; column: INTEGER; (* cursor position in the current line *)
 		prefix, w: INTEGER; adrPrefix, opPrefix: BOOLEAN;
 		defaultFont, titleFont: Fonts.Font;
-		PE: ProcArray;
-		nofPE: LONGINT;
-		memory, compilable, suppressOut, suppressH: BOOLEAN;
+		PE*: ProcArray;
+		nofPE*: LONGINT;
+		memory, compilable, raw, suppressOut, suppressH, noOutput: BOOLEAN;
 		ReadAdr: LONGINT;
 		target: SET;
 		objSuffix: ARRAY 8 OF CHAR;
 		OpPos, RMPos: SHORTINT;
-
+		decoder: DecodeHandler;
+		FlagName: ARRAY 32, 24 OF CHAR;
 
 (* general Procedures *)
 
 	PROCEDURE Bug (no: INTEGER);
 	BEGIN
-		Texts.WriteLn(W);  Texts.WriteString(W, "*** decode error ***");
-		Texts.WriteLn(W);
-		(*Texts.Append(T, W.buf);
-		HALT(BUG)*)
+		WriteLn;  WriteString("*** decode error ***"); WriteLn
 	END Bug;
 
 	PROCEDURE Next (VAR ch: CHAR);
@@ -160,7 +149,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	
 	PROCEDURE WriteLn; 
 	BEGIN
-		Texts.WriteLn(W); column:= 0
+		IF ~suppressOut THEN Texts.WriteLn(W) END;
+		column:= 0
 	END WriteLn;
 
 	PROCEDURE WriteString (str: ARRAY OF CHAR);
@@ -172,6 +162,11 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		IF ~suppressOut THEN	Texts.Write(W, ch); INC(column)	END
 	END Write;
+	
+	PROCEDURE WriteInt (x: LONGINT);
+	BEGIN
+		IF ~suppressOut THEN	Texts.WriteInt(W, x, 10); INC(column, 10)	END
+	END WriteInt;
 	
 	PROCEDURE WriteByte (byte: INTEGER);
 	(* write byte in hexadecimal form *)
@@ -223,14 +218,16 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	
 	PROCEDURE WriteDisp (disp: LONGINT);
 	BEGIN
-		Texts.WriteInt(W, disp, 1);
-		IF disp = MIN(LONGINT) THEN INC(column, 12)	(* " -2147483648" *)
-		ELSE
-			IF disp <= 0 THEN INC(column) END;
-			disp:= ABS(disp);
-			WHILE disp # 0 DO
-				disp:= disp DIV 10;
-				INC(column)
+		IF ~suppressOut THEN
+			Texts.WriteInt(W, disp, 1);
+			IF disp = MIN(LONGINT) THEN INC(column, 12)	(* " -2147483648" *)
+			ELSE
+				IF disp <= 0 THEN INC(column) END;
+				disp:= ABS(disp);
+				WHILE disp # 0 DO
+					disp:= disp DIV 10;
+					INC(column)
+				END
 			END
 		END
 	END WriteDisp;
@@ -244,7 +241,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 
 	PROCEDURE WriteOp (opStr: ARRAY OF CHAR);
 	BEGIN
-		suppressOut := FALSE;
+		suppressOut := noOutput;
 		Tab(OpPos); WriteString(opStr); Tab(RMPos)
 	END WriteOp;
 
@@ -252,45 +249,47 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	(* w = 0: 8 bit; w = 1: 16/32 bit *)
 	BEGIN
 		IF reg >= ES (*DS*) THEN 					(*  <<<< MH 15.3.1994 *)
-			IF reg = CS THEN WriteString("cs")
-			ELSIF reg = DS THEN WriteString("ds")
-			ELSIF reg = ES THEN WriteString("es")
-			ELSIF reg = SS THEN WriteString("ss")
-			ELSIF reg = FS THEN WriteString("fs")
-			ELSIF reg = GS THEN WriteString("gs")
+			IF reg = CS THEN WriteString("CS")
+			ELSIF reg = DS THEN WriteString("DS")
+			ELSIF reg = ES THEN WriteString("ES")
+			ELSIF reg = SS THEN WriteString("SS")
+			ELSIF reg = FS THEN WriteString("FS")
+			ELSIF reg = GS THEN WriteString("GS")
 			ELSE Bug(BUG)
 			END
 		ELSIF w = 0 THEN
-			IF reg = 0 THEN WriteString("al")
-			ELSIF reg = 1 THEN WriteString("cl")
-			ELSIF reg = 2 THEN WriteString("dl")
-			ELSIF reg = 3 THEN WriteString("bl")
-			ELSIF reg = 4 THEN WriteString("ah")
-			ELSIF reg = 5 THEN WriteString("ch")
-			ELSIF reg = 6 THEN WriteString("dh")
-			ELSIF reg = 7 THEN WriteString("bh")
+			IF reg = 0 THEN WriteString("AL")
+			ELSIF reg = 1 THEN WriteString("CL")
+			ELSIF reg = 2 THEN WriteString("DL")
+			ELSIF reg = 3 THEN WriteString("BL")
+			ELSIF reg = 4 THEN WriteString("AH")
+			ELSIF reg = 5 THEN WriteString("CH")
+			ELSIF reg = 6 THEN WriteString("DH")
+			ELSIF reg = 7 THEN WriteString("BH")
 			ELSE Bug(BUG)
 			END
 		ELSIF opPrefix THEN
-			IF reg = 0 THEN WriteString("ax")
-			ELSIF reg = 1 THEN WriteString("cx")
-			ELSIF reg = 2 THEN WriteString("dx")
-			ELSIF reg = 3 THEN WriteString("bx")
-			ELSIF reg = 4 THEN WriteString("sp")
-			ELSIF reg = 5 THEN WriteString("bp")
-			ELSIF reg = 6 THEN WriteString("si")
-			ELSIF reg = 7 THEN WriteString("di")
+			IF reg = 0 THEN WriteString("AX")
+			ELSIF reg = 1 THEN WriteString("CX")
+			ELSIF reg = 2 THEN WriteString("DX")
+			ELSIF reg = 3 THEN WriteString("BX")
+			ELSIF reg = 4 THEN WriteString("SP")
+			ELSIF reg = 5 THEN WriteString("BP")
+			ELSIF reg = 6 THEN WriteString("SI")
+			ELSIF reg = 7 THEN WriteString("DI")
 			ELSE Bug(BUG)
 			END
 		ELSE
-			IF reg = 0 THEN WriteString("eax")
-			ELSIF reg = 1 THEN WriteString("ecx")
-			ELSIF reg = 2 THEN WriteString("edx")
-			ELSIF reg = 3 THEN WriteString("ebx")
-			ELSIF reg = 4 THEN WriteString("esp")
-			ELSIF reg = 5 THEN WriteString("ebp")
-			ELSIF reg = 6 THEN WriteString("esi")
-			ELSIF reg = 7 THEN WriteString("edi")
+			CASE reg OF
+			| 0:  WriteString("EAX")
+			| 1:  WriteString("ECX")
+			| 2:  WriteString("EDX")
+			| 3:  WriteString("EBX")
+			| 4:  WriteString("ESP")
+			| 5:  WriteString("EBP")
+			| 6:  WriteString("ESI")
+			| 7:  WriteString("EDI")
+			| MM0..MM0+8:  WriteString("MM"); Write(CHR(reg-MM0+ORD("0")))
 			ELSE Bug(BUG)
 			END
 		END
@@ -299,25 +298,25 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	PROCEDURE WriteAdrReg(reg: INTEGER);
 	BEGIN
 		IF adrPrefix THEN
-			IF reg = 0 THEN WriteString("ax")
-			ELSIF reg = 1 THEN WriteString("cx")
-			ELSIF reg = 2 THEN WriteString("dx")
-			ELSIF reg = 3 THEN WriteString("bx")
-			ELSIF reg = 4 THEN WriteString("sp")
-			ELSIF reg = 5 THEN WriteString("bp")
-			ELSIF reg = 6 THEN WriteString("si")
-			ELSIF reg = 7 THEN WriteString("di")
+			IF reg = 0 THEN WriteString("AX")
+			ELSIF reg = 1 THEN WriteString("CX")
+			ELSIF reg = 2 THEN WriteString("DX")
+			ELSIF reg = 3 THEN WriteString("BX")
+			ELSIF reg = 4 THEN WriteString("SP")
+			ELSIF reg = 5 THEN WriteString("BP")
+			ELSIF reg = 6 THEN WriteString("SI")
+			ELSIF reg = 7 THEN WriteString("DI")
 			ELSE Bug(BUG)
 			END
 		ELSE
-			IF reg = 0 THEN WriteString("eax")
-			ELSIF reg = 1 THEN WriteString("ecx")
-			ELSIF reg = 2 THEN WriteString("edx")
-			ELSIF reg = 3 THEN WriteString("ebx")
-			ELSIF reg = 4 THEN WriteString("esp")
-			ELSIF reg = 5 THEN WriteString("ebp")
-			ELSIF reg = 6 THEN WriteString("esi")
-			ELSIF reg = 7 THEN WriteString("edi")
+			IF reg = 0 THEN WriteString("EAX")
+			ELSIF reg = 1 THEN WriteString("ECX")
+			ELSIF reg = 2 THEN WriteString("EDX")
+			ELSIF reg = 3 THEN WriteString("EBX")
+			ELSIF reg = 4 THEN WriteString("ESP")
+			ELSIF reg = 5 THEN WriteString("EBP")
+			ELSIF reg = 6 THEN WriteString("ESI")
+			ELSIF reg = 7 THEN WriteString("EDI")
 			ELSE Bug(BUG)
 			END
 		END
@@ -326,11 +325,11 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	PROCEDURE WriteSpecialReg(reg: INTEGER);
 	BEGIN
 		IF reg >= TR THEN
-			WriteString("tr"); Write(CHR( reg-TR + ORD("0")))
+			WriteString("TR"); Write(CHR( reg-TR + ORD("0")))
 		ELSIF reg >= DR THEN
-			WriteString("dr"); Write(CHR( reg-DR + ORD("0")))
+			WriteString("DR"); Write(CHR( reg-DR + ORD("0")))
 		ELSE
-			WriteString("cr"); Write(CHR( reg-CR + ORD("0")))
+			WriteString("CR"); Write(CHR( reg-CR + ORD("0")))
 		END;
 		INCL(target, Priv)
 	END WriteSpecialReg;
@@ -366,12 +365,12 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			Write("["); WriteDisp(disp)
 		END;
 		IF (inx # none) & ~((inx = ESP) & (base = ESP))(* !! 15.4.93 Bug? & (base # ESP) *) THEN (* indexed *)
-			IF scale = 0 THEN WriteString(" + 1 * ")
-			ELSIF scale = 1 THEN WriteString(" + 2 * ")
-			ELSIF scale = 2 THEN WriteString(" + 4 * ")
-			ELSE WriteString(" +  8* ")
+			WriteString(" + "); WriteAdrReg(inx);
+			IF scale = 0 THEN WriteString(" * 1")
+			ELSIF scale = 1 THEN WriteString(" * 2")
+			ELSIF scale = 2 THEN WriteString(" * 4")
+			ELSE WriteString(" *  8")
 			END;
-			WriteAdrReg(inx)
 		END;
 		Write("]")
 	END WriteMem;
@@ -438,6 +437,31 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ELSE Bug(BUG)
 		END
 	END WriteRM;
+
+	PROCEDURE WriteMM (mode: SHORTINT; d, reg, base, inx, scale: INTEGER; disp, imm: LONGINT; hex: BOOLEAN);
+	BEGIN
+		CASE mode OF
+			RegImm:
+				WriteRegImm(reg+MM0, imm, hex)
+		  | MemImm:
+				WriteMemImm(reg, base, inx, SHORT(scale), disp, imm, hex)
+		  | Reg:
+				WriteRegReg(d, reg+MM0, base+MM0)
+		  | Mem1:
+				WriteMem1(d, reg+MM0, base, disp)
+		  | Mem2:
+				WriteMem2(d, reg+MM0, base, inx, SHORT(scale), disp)
+		  | MemFull:
+				IF d = 1 THEN 
+					WriteReg(reg+MM0); Write(",")
+				END;
+				Write("["); WriteDisp(disp); Write("]");
+				IF d = 0 THEN
+					Write(","); WriteReg(reg+MM0)
+				END
+		ELSE Bug(BUG)
+		END
+	END WriteMM;
 
 (* Decode part *)
 
@@ -516,7 +540,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("add");
+		WriteOp("ADD");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Add;
 
@@ -525,21 +549,21 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		w:= 1;
 		IF op = 60H THEN 
-			IF opPrefix THEN WriteOp("pusha") ELSE WriteOp("pushad") END;
+			IF opPrefix THEN WriteOp("PUSHA") ELSE WriteOp("PUSHAD") END;
 		ELSIF op = 68H THEN
 			IF opPrefix THEN
 				GetWord(imm); WriteWord(imm)
 			ELSE
 				GetDWord(imm); WriteDWord(imm)
 			END;
-			WriteOp("push"); WriteDisp(imm)
+			WriteOp("PUSH"); WriteDisp(imm)
 		ELSIF op = 6AH THEN
 			GetImm(0, imm);
-			WriteOp("push"); WriteDisp(imm)
+			WriteOp("PUSH"); WriteDisp(imm)
 		ELSIF op = 9CH THEN 
-			IF opPrefix THEN WriteOp("pushf") ELSE WriteOp("pushfd") END;
+			IF opPrefix THEN WriteOp("PUSHF") ELSE WriteOp("PUSHFD") END;
 		ELSE
-			WriteOp("push");
+			WriteOp("PUSH");
 			CASE op OF
 				6: WriteReg(ES)
 			  | 0EH: WriteReg(CS)
@@ -559,18 +583,18 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		IF op = 61H THEN 
-			IF opPrefix THEN WriteOp("popa") ELSE WriteOp("popad") END;
+			IF opPrefix THEN WriteOp("POPA") ELSE WriteOp("POPAD") END;
 		ELSIF op = 8FH THEN
 			ModRm(mode, reg, base, inx, scale, disp);
-			WriteOp("pop");
-			IF opPrefix THEN WriteString("word ptr ")
-			ELSE WriteString("dword ptr ")
+			WriteOp("POP");
+			IF opPrefix THEN WriteString("WORD PTR ")
+			ELSE WriteString("DWORD PTR ")
 			END;
 			WriteMem(base, inx, scale, disp)
 		ELSIF op = 9DH THEN 
-			IF opPrefix THEN WriteOp("popf") ELSE WriteOp("popfd") END;
+			IF opPrefix THEN WriteOp("POPF") ELSE WriteOp("POPFD") END;
 		ELSE
-			WriteOp("pop");
+			WriteOp("POP");
 			w := 1;	(* pop takes only 16 or 32 bit ops *)
 			CASE op OF
 				7: WriteReg(ES)
@@ -590,7 +614,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 08H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("or");
+		WriteOp("OR");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, TRUE)
 	END Or;
 	
@@ -598,7 +622,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op -10H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("adc");
+		WriteOp("ADC");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Adc;
 
@@ -606,7 +630,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 18H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("sbb");
+		WriteOp("SBB");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Sbb;
 
@@ -614,7 +638,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 20H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("and");
+		WriteOp("AND");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, TRUE)
 	END And;
 
@@ -622,7 +646,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 28H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("sub");
+		WriteOp("SUB");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Sub;
 
@@ -630,7 +654,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 30H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("xor");
+		WriteOp("XOR");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, TRUE)
 	END Xor;
 
@@ -638,19 +662,19 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx, d: INTEGER; scale, mode: SHORTINT; disp, imm: LONGINT;
 	BEGIN
 		Type1(op - 38H, mode, d, reg, base, inx, scale, disp, imm);
-		WriteOp("cmp");
+		WriteOp("CMP");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Cmp ;
 
 	PROCEDURE Inc (op: INTEGER);
 	BEGIN
-		WriteOp("inc"); w := 1;		(* set width to 16/32 bits, bug2 *)
+		WriteOp("INC"); w := 1;		(* set width to 16/32 bits, bug2 *)
 		WriteReg(op - 40H)
 	END Inc;
 
 	PROCEDURE Dec (op: INTEGER);
 	BEGIN
-		WriteOp("dec"); w := 1;
+		WriteOp("DEC"); w := 1;
 		WriteReg(op - 48H)
 	END Dec;
 
@@ -659,7 +683,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		w:= 1;
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("bound");
+		WriteOp("BOUND");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Bound;
 
@@ -671,7 +695,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		IF op = 69H THEN GetImm(1, imm)
 		ELSIF op = 6BH THEN GetImm(0, imm) (* sign extended *)
 		END;
-		WriteOp("imul");
+		WriteOp("IMUL");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE);
 		Write(","); WriteDisp(imm)
 	END Imul;
@@ -681,23 +705,23 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		w:= 1;
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("imul");
+		WriteOp("IMUL");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Imul2;
 
 	PROCEDURE Ins (op: INTEGER);
 	BEGIN
-		IF op =  6CH THEN WriteOp("insb")
-		ELSIF opPrefix THEN WriteOp("insw")
-		ELSE WriteOp("insd")
+		IF op =  6CH THEN WriteOp("INSB")
+		ELSIF opPrefix THEN WriteOp("INSW")
+		ELSE WriteOp("INSD")
 		END	
 	END Ins;
 
 	PROCEDURE Outs (op: INTEGER);
 	BEGIN
-		IF op = 6EH THEN WriteOp("outsb")
-		ELSIF opPrefix THEN WriteOp("outsw")
-		ELSE WriteOp("outsd")
+		IF op = 6EH THEN WriteOp("OUTSB")
+		ELSIF opPrefix THEN WriteOp("OUTSW")
+		ELSE WriteOp("OUTSD")
 		END
 	END Outs;
 
@@ -707,22 +731,22 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		GetByte(disp); WriteByte(disp);
 		IF disp >= 128 THEN disp:= disp - 256 END;
 		CASE op OF
-			70H: WriteOp("jo")
-		  | 71H: WriteOp("jno")
-		  | 72H: WriteOp("jb")
-		  | 73H: WriteOp("jnb")
-		  | 74H: WriteOp("jz")
-		  | 75H: WriteOp("jnz")
-		  | 76H: WriteOp("jbe")
-		  | 77H: WriteOp("jnbe")
-		  | 78H: WriteOp("js")
-		  | 79H: WriteOp("jns")
-		  | 7AH: WriteOp("jp")
-		  | 7BH: WriteOp("jnp")
-		  | 7CH: WriteOp("jl")
-		  | 7DH: WriteOp("jnl")
-		  | 7EH: WriteOp("jle")
-		  | 7FH: WriteOp("jnle")
+			70H: WriteOp("JO")
+		  | 71H: WriteOp("JNO")
+		  | 72H: WriteOp("JB")
+		  | 73H: WriteOp("JNB")
+		  | 74H: WriteOp("JZ")
+		  | 75H: WriteOp("JNZ")
+		  | 76H: WriteOp("JBE")
+		  | 77H: WriteOp("JNBE")
+		  | 78H: WriteOp("JS")
+		  | 79H: WriteOp("JNS")
+		  | 7AH: WriteOp("JP")
+		  | 7BH: WriteOp("JNP")
+		  | 7CH: WriteOp("JL")
+		  | 7DH: WriteOp("JNL")
+		  | 7EH: WriteOp("JLE")
+		  | 7FH: WriteOp("JNLE")
 		ELSE Bug(BUG)
 		END;
 		WriteDisp(disp); WriteString("  ("); (*Texts.*)WriteDWHex(pc + disp); Write(")")
@@ -737,22 +761,22 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			GetDWord(disp); WriteDWord(disp)
 		END;
 		CASE op OF
-			80H: WriteOp("jo")
-		  | 81H: WriteOp("jno")
-		  | 82H: WriteOp("jb")
-		  | 83H: WriteOp("jnb")
-		  | 84H: WriteOp("jz")
-		  | 85H: WriteOp("jnz")
-		  | 86H: WriteOp("jbe")
-		  | 87H: WriteOp("jnbe")
-		  | 88H: WriteOp("js")
-		  | 89H: WriteOp("jns")
-		  | 8AH: WriteOp("jp")
-		  | 8BH: WriteOp("jnp")
-		  | 8CH: WriteOp("jl")
-		  | 8DH: WriteOp("jnl")
-		  | 8EH: WriteOp("jle")
-		  | 8FH: WriteOp("jnle")
+			80H: WriteOp("JO")
+		  | 81H: WriteOp("JNO")
+		  | 82H: WriteOp("JB")
+		  | 83H: WriteOp("JNB")
+		  | 84H: WriteOp("JZ")
+		  | 85H: WriteOp("JNZ")
+		  | 86H: WriteOp("JBE")
+		  | 87H: WriteOp("JNBE")
+		  | 88H: WriteOp("JS")
+		  | 89H: WriteOp("JNS")
+		  | 8AH: WriteOp("JP")
+		  | 8BH: WriteOp("JNP")
+		  | 8CH: WriteOp("JL")
+		  | 8DH: WriteOp("JNL")
+		  | 8EH: WriteOp("JLE")
+		  | 8FH: WriteOp("JNLE")
 		ELSE Bug(BUG)
 		END;
 		WriteDisp(disp); WriteString("  ("); (*Texts.*)WriteDWHex(pc + disp); Write(")")
@@ -775,7 +799,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			ELSE w:= 1
 			END
 		END;
-		WriteOp("test");
+		WriteOp("TEST");
 		WriteRM(mode, 0, reg, base, inx, scale, disp, imm, FALSE)			(* bug1 *)
 	END Test;
 
@@ -791,7 +815,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			ELSE w:= 1
 			END
 		END;
-		WriteOp("xchg");
+		WriteOp("XCHG");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Xchg;
 
@@ -837,7 +861,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			END;
 			GetImm(w, imm)
 		END;
-		WriteOp("mov");
+		WriteOp("MOV");
 		WriteRM(mode, d, reg, base, inx, scale, disp, imm, FALSE)
 	END Mov;
 
@@ -845,7 +869,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN (* reg, base only used, because Mov2 op codes contains special registers (debug/test/controll) *)
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("mov");
+		WriteOp("MOV"); w := 1;
 		CASE op OF
 		 	20H: WriteReg(base); Write(","); WriteSpecialReg(CR+reg)
 		  | 21H: WriteReg(base); Write(","); WriteSpecialReg(DR+reg)
@@ -857,49 +881,38 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		END
 	END Mov2;
 
-	PROCEDURE Movzx (op: INTEGER);
-		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
+	PROCEDURE Movx(op: INTEGER);
+		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT; byte: BOOLEAN;
 	BEGIN
+		byte := (op = 0B6H) OR (op = 0BEH);
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("movzx");
-		w:= 1;
-		WriteReg(reg); Write(",");
-		IF mode = Reg THEN WriteReg(base)
+		IF (op = 0B6H) OR (op = 0B7H) THEN
+			WriteOp("MOVZX")
 		ELSE
-			IF op = 0B6H THEN WriteString("byte ptr ")
-			ELSE WriteString("word ptr ")
-			END;
-			WriteMem(base, inx, scale, disp)
-		END 
-	END Movzx;
-	
-	PROCEDURE Movsx (op: INTEGER);
-		VAR VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
-	BEGIN
-		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("movsx");
+			WriteOp("MOVSX")
+		END;
 		w:= 1;
 		WriteReg(reg); Write(",");
 		IF mode = Reg THEN 
-			IF op = 0BEH THEN 
+			IF byte THEN 
 				w:= 0; WriteReg(base)
 			ELSE
 				w:= 1; opPrefix:= TRUE; WriteReg(base)
-			END;
+			END
 		ELSE
-			IF op = 0BEH THEN WriteString("byte ptr ")
-			ELSE WriteString("word ptr ")
+			IF byte THEN WriteString("BYTE PTR ")
+			ELSE WriteString("WORD PTR ")
 			END;
 			WriteMem(base, inx, scale, disp)
 		END 
-	END Movsx;
-
+	END Movx;
+	
 	PROCEDURE Lea (op: INTEGER);
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
 		w:= 1;
-		WriteOp("lea");
+		WriteOp("LEA");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, TRUE)
 	END Lea;
 
@@ -920,7 +933,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			END;
 			GetWord(sel); Write(" "); WriteWord(sel);
 		END;
-		WriteOp("call");
+		WriteOp("CALL");
 		IF op = 09AH THEN 
 			WriteDisp(sel); Write(":") 
 		END;
@@ -929,45 +942,45 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 
 	PROCEDURE Movs (op: INTEGER);
 	BEGIN
-		IF op = 0A4H THEN WriteOp("movsb")
-		ELSIF (op = 0A5H) & opPrefix THEN WriteOp("movsw")
-		ELSIF op  = 0A5H THEN WriteOp("movsd")
+		IF op = 0A4H THEN WriteOp("MOVSB")
+		ELSIF (op = 0A5H) & opPrefix THEN WriteOp("MOVSW")
+		ELSIF op  = 0A5H THEN WriteOp("MOVSD")
 		ELSE Bug(BUG)
 		END
 	END Movs;
 
 	PROCEDURE Cmps (op: INTEGER);
 	BEGIN
-		IF op = 0A6H THEN WriteOp("cmpsb")
-		ELSIF (op = 0A7H) & opPrefix THEN WriteOp("cmpsb")
-		ELSIF op = 0A7H THEN WriteOp("cmpsw")
+		IF op = 0A6H THEN WriteOp("CMPSB")
+		ELSIF (op = 0A7H) & opPrefix THEN WriteOp("CMPSB")
+		ELSIF op = 0A7H THEN WriteOp("CMPSW")
 		ELSE Bug(BUG)
 		END
 	END Cmps;
 
 	PROCEDURE Stos (op: INTEGER);
 	BEGIN
-		IF op = 0AAH THEN WriteOp("stosb")
-		ELSIF (op = 0ABH) & opPrefix THEN WriteOp("stosw")
-		ELSIF op = 0ABH THEN WriteOp("stosd")
+		IF op = 0AAH THEN WriteOp("STOSB")
+		ELSIF (op = 0ABH) & opPrefix THEN WriteOp("STOSW")
+		ELSIF op = 0ABH THEN WriteOp("STOSD")
 		ELSE Bug(BUG)
 		END
 	END Stos;
 
 	PROCEDURE Lods (op: INTEGER);
 	BEGIN
-		IF op = 0ACH THEN WriteOp("lodsb")
+		IF op = 0ACH THEN WriteOp("LODSB")
 		ELSIF op = 0ADH THEN
-			IF opPrefix THEN WriteOp("lodsw") ELSE WriteOp("lodsd") END
+			IF opPrefix THEN WriteOp("LODSW") ELSE WriteOp("LODSD") END
 		ELSE Bug(BUG)
 		END
 	END Lods;
 
 	PROCEDURE Scas (op: INTEGER);
 	BEGIN
-		IF op = 0AEH THEN WriteOp("scasb")
-		ELSIF (op = 0AFH) & opPrefix THEN WriteOp("scasw")
-		ELSIF op = 0AFH THEN WriteOp("scasd")
+		IF op = 0AEH THEN WriteOp("SCASB")
+		ELSIF (op = 0AFH) & opPrefix THEN WriteOp("SCASW")
+		ELSIF op = 0AFH THEN WriteOp("SCASD")
 		ELSE Bug(BUG)
 		END
 	END Scas;
@@ -978,8 +991,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		IF (op = 0C2H) OR (op = 0CAH) THEN 
 			GetWord(imm); WriteWord(imm) 
 		END;
-		IF (op = 0CAH) OR (op = 0CBH) THEN WriteOp("ret far")
-		ELSE WriteOp("ret")
+		IF (op = 0CAH) OR (op = 0CBH) THEN WriteOp("RET FAR")
+		ELSE WriteOp("RET")
 		END;
 		IF (op = 0C2H) OR (op = 0CAH) THEN WriteDisp(imm) END
 	END Ret;
@@ -989,7 +1002,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		GetWord(l); WriteWord(l); Write(" ");
 		GetByte(b); WriteByte(b); Write(" ");
-		WriteOp("enter");
+		WriteOp("ENTER");
 		WriteDisp(l); Write(","); WriteDisp(b)
 	END Enter;
 
@@ -997,7 +1010,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("les");
+		WriteOp("LES");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Les;
 
@@ -1005,7 +1018,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("lds");
+		WriteOp("LDS");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Lds;
 	
@@ -1013,9 +1026,9 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
-		IF op = 0B2H THEN WriteOp("lss")
-		ELSIF op = 0B4H THEN WriteOp("lfs")
-		ELSE WriteOp("lgs")
+		IF op = 0B2H THEN WriteOp("LSS")
+		ELSIF op = 0B4H THEN WriteOp("LFS")
+		ELSE WriteOp("LGS")
 		END;
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Ldseg;
@@ -1027,7 +1040,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			GetByte(imm); WriteByte(imm)
 		ELSE imm := 3
 		END;
-		WriteOp("int");
+		WriteOp("INT");
 		WriteDisp(imm)
 	END Int;
 
@@ -1036,10 +1049,10 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		GetImm(0, imm);
 		CASE op OF
-			0E0H: WriteOp("loopne")
-		  | 0E1H: WriteOp("loope")
-		  | 0E2H: WriteOp("loop")
-		  | 0E3H: IF adrPrefix THEN WriteOp("jcxz") ELSE WriteOp("jecxz") END
+			0E0H: WriteOp("LOOPNE")
+		  | 0E1H: WriteOp("LOOPE")
+		  | 0E2H: WriteOp("LOOP")
+		  | 0E3H: IF adrPrefix THEN WriteOp("JCXZ") ELSE WriteOp("JECXZ") END
 		ELSE Bug(BUG)
 		END;
 		WriteDisp(imm)
@@ -1051,14 +1064,14 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		in := op MOD 4 < 2;
 		dx := op MOD 16 >= 8;
 		IF ~dx THEN GetByte(port); WriteByte(port) END;
-		IF in THEN WriteOp("in") ELSE WriteOp("out") END;
+		IF in THEN WriteOp("IN") ELSE WriteOp("OUT") END;
 		IF ~in & dx THEN WriteString("dx,")
 		ELSIF ~in THEN WriteDisp(port); Write(",") END;
 		IF ODD(op) THEN
-			IF opPrefix THEN WriteString("ax") ELSE WriteString("eax") END
-		ELSE WriteString("al") END;
+			IF opPrefix THEN WriteString("AX") ELSE WriteString("EAX") END
+		ELSE WriteString("AL") END;
 		IF in THEN
-			IF dx THEN WriteString(",dx") ELSE WriteString(","); WriteDisp(port) END
+			IF dx THEN WriteString(",DX") ELSE WriteString(","); WriteDisp(port) END
 		END
 	END InOut;
 
@@ -1074,8 +1087,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			END;
 		END;
 		Tab(OpPos);
-		IF op = 0EAH THEN WriteOp("jmp far")
-		ELSE WriteOp("jmp")
+		IF op = 0EAH THEN WriteOp("JMP FAR")
+		ELSE WriteOp("JMP")
 		END;
 		Tab(RMPos); WriteDisp(imm); WriteString ("  ("); (*Texts.*)WriteDWHex(pc + imm); Write(")")
 	END Jmp;
@@ -1084,7 +1097,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("lar");
+		WriteOp("LAR");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Lar;
 
@@ -1092,7 +1105,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR reg, base, inx: INTEGER; scale, mode: SHORTINT; disp: LONGINT;
 	BEGIN
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("lsl");
+		WriteOp("LSL");
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Lsl;
 
@@ -1102,22 +1115,22 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		w:= 0; (* always 8 bit wide *)
 		ModRm(mode, reg, base, inx, scale, disp);
 		(* not nice but necessary -> no more constant memory for case table *)
-		IF op = 90H THEN WriteOp("seto")
-		ELSIF op = 91H THEN WriteOp("setno")
-		ELSIF op = 92H THEN WriteOp("setb/setc/setnae")
-		ELSIF op = 93H THEN WriteOp("setnb/setae/setnc")
-		ELSIF op = 94H THEN WriteOp("setz/sete")
-		ELSIF op = 95H THEN WriteOp("setnz/setne")
-		ELSIF op = 96H THEN WriteOp("setbe/setna")
-		ELSIF op = 97H THEN WriteOp("setnbe/seta")
-		ELSIF op = 98H THEN WriteOp("sets")
-		ELSIF op = 99H THEN WriteOp("setns")
-		ELSIF op = 9AH THEN WriteOp("setp/setpe")
-		ELSIF op = 9BH THEN WriteOp("setnp/setnp")
-		ELSIF op = 9CH THEN WriteOp("setl/setnge")
-		ELSIF op = 9DH THEN WriteOp("setnl/setge")
-		ELSIF op = 9EH THEN WriteOp("setle/setng")
-		ELSIF op = 9FH THEN WriteOp("setnle/setg")
+		IF op = 90H THEN WriteOp("SETO")
+		ELSIF op = 91H THEN WriteOp("SETNO")
+		ELSIF op = 92H THEN WriteOp("SETB/SETC/SETNAE")
+		ELSIF op = 93H THEN WriteOp("SETNB/SETAE/SETNC")
+		ELSIF op = 94H THEN WriteOp("SETZ/SETE")
+		ELSIF op = 95H THEN WriteOp("SETNZ/SETNE")
+		ELSIF op = 96H THEN WriteOp("SETBE/SETNA")
+		ELSIF op = 97H THEN WriteOp("SETNBE/SETA")
+		ELSIF op = 98H THEN WriteOp("SETS")
+		ELSIF op = 99H THEN WriteOp("SETNS")
+		ELSIF op = 9AH THEN WriteOp("SETP/SETPE")
+		ELSIF op = 9BH THEN WriteOp("SETNP/SETNP")
+		ELSIF op = 9CH THEN WriteOp("SETL/SETNGE")
+		ELSIF op = 9DH THEN WriteOp("SETNL/SETGE")
+		ELSIF op = 9EH THEN WriteOp("SETLE/SETNG")
+		ELSIF op = 9FH THEN WriteOp("SETNLE/SETG")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1131,19 +1144,19 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		w:= 1;
 		ModRm(mode, reg, base, inx, scale, disp);
 		IF op = 0A3H THEN 
-			WriteOp("bt"); d:= 1
+			WriteOp("BT"); d:= 0
 		ELSIF op = 0ABH THEN 
-			WriteOp("bts"); d:= 1
+			WriteOp("BTS"); d:= 0
 		ELSIF op = 0B3H THEN 
-			WriteOp("btr"); d:= 1
+			WriteOp("BTR"); d:= 0
 		ELSIF op = 0BBH THEN 
-			WriteOp("btc"); d:= 1
+			WriteOp("BTC"); d:= 0
 		ELSIF op = 0BCH THEN
-			WriteOp("bsf"); d:= 1
+			WriteOp("BSF"); d:= 1
 		ELSE
-			WriteOp("bsr"); d:= 1
+			WriteOp("BSR"); d:= 1
 		END;
-		IF mode = Reg THEN WriteRM(Reg, d, base, reg, none, 0, 0, 0, FALSE)
+		IF mode = Reg THEN WriteRM(Reg, d, reg, base, none, 0, 0, 0, FALSE)
 		ELSE WriteRM(mode, d, reg, base, inx, scale, disp, 0, FALSE)
 		END
 	END Bit;
@@ -1157,14 +1170,14 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ELSE
 			imm := -1
 		END;
-		IF (op = 0A4H) OR (op = 0A5H) THEN WriteOp("shld")
-		ELSIF (op = 0ACH) OR (op = 0ADH) THEN WriteOp("shrd")
+		IF (op = 0A4H) OR (op = 0A5H) THEN WriteOp("SHLD")
+		ELSIF (op = 0ACH) OR (op = 0ADH) THEN WriteOp("SHRD")
 		ELSE Bug(BUG)
 		END;
 		w := 1;
 		WriteRM(mode, 0, reg, base, inx, scale, disp, imm, FALSE);
 		Write(",");
-		IF imm = -1 THEN WriteString("cl")
+		IF imm = -1 THEN WriteString("CL")
 		ELSE WriteDisp(imm)
 		END
 	END Shift;
@@ -1180,7 +1193,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		INCL(target, i486);
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("xadd");
+		WriteOp("XADD");
 		IF op = 0C1H THEN w := 1 END;
 		IF mode = Reg THEN WriteReg(base)
 		ELSE WriteMem(base, inx, scale, disp)
@@ -1193,7 +1206,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		INCL(target, i486);
 		ModRm(mode, reg, base, inx, scale, disp);
-		WriteOp("cmpxchg");
+		WriteOp("CMPXCHG");
 		IF op = 0B1H THEN w := 1 END;
 		IF mode = Reg THEN WriteReg(base)
 		ELSE WriteMem(base, inx, scale, disp)
@@ -1207,22 +1220,22 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		INCL(target, PPro);  w := 1;
 		ModRm(mode, reg, base, inx, scale, disp);
 		CASE op OF
-			40H: WriteOp("cmovo")
-		  | 41H: WriteOp("cmovno")
-		  | 42H: WriteOp("cmovb")
-		  | 43H: WriteOp("cmovnb")
-		  | 44H: WriteOp("cmovz")
-		  | 45H: WriteOp("cmovnz")
-		  | 46H: WriteOp("cmovbe")
-		  | 47H: WriteOp("cmovnbe")
-		  | 48H: WriteOp("cmovs")
-		  | 49H: WriteOp("cmovns")
-		  | 4AH: WriteOp("cmovp")
-		  | 4BH: WriteOp("cmovnp")
-		  | 4CH: WriteOp("cmovl")
-		  | 4DH: WriteOp("cmovnl")
-		  | 4EH: WriteOp("cmovle")
-		  | 4FH: WriteOp("cmovnle")
+			40H: WriteOp("CMOVO")
+		  | 41H: WriteOp("CMOVNO")
+		  | 42H: WriteOp("CMOVB")
+		  | 43H: WriteOp("CMOVNB")
+		  | 44H: WriteOp("CMOVZ")
+		  | 45H: WriteOp("CMOVNZ")
+		  | 46H: WriteOp("CMOVBE")
+		  | 47H: WriteOp("CMOVNBE")
+		  | 48H: WriteOp("CMOVS")
+		  | 49H: WriteOp("CMOVNS")
+		  | 4AH: WriteOp("CMOVP")
+		  | 4BH: WriteOp("CMOVNP")
+		  | 4CH: WriteOp("CMOVL")
+		  | 4DH: WriteOp("CMOVNL")
+		  | 4EH: WriteOp("CMOVLE")
+		  | 4FH: WriteOp("CMOVNLE")
 		ELSE Bug(BUG)
 		END;
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
@@ -1240,14 +1253,14 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			w:= 1; GetImm(0, imm)
 		END;
 		CASE reg OF
-			0: WriteOp("add")
-		  | 1: WriteOp("or")
-		  | 2: WriteOp("adc")
-		  | 3: WriteOp("sbb")
-		  | 4: WriteOp("and")
-		  | 5: WriteOp("sub")
-		  | 6: WriteOp("xor")
-		  | 7: WriteOp("cmp")
+			0: WriteOp("ADD")
+		  | 1: WriteOp("OR")
+		  | 2: WriteOp("ADC")
+		  | 3: WriteOp("SBB")
+		  | 4: WriteOp("AND")
+		  | 5: WriteOp("SUB")
+		  | 6: WriteOp("XOR")
+		  | 7: WriteOp("CMP")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1274,13 +1287,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			GetImm(0, imm); (* only 8 bit possible *)
 		END;
 		CASE reg OF
-			0: WriteOp("rol")
-		  | 1: WriteOp("ror")
-		  | 2: WriteOp("rcl")
-		  | 3: WriteOp("rcr")
-		  | 4: WriteOp("shl/sal")
-		  | 5: WriteOp("shr")
-		  | 7: WriteOp("sar")
+			0: WriteOp("ROL")
+		  | 1: WriteOp("ROR")
+		  | 2: WriteOp("RCL")
+		  | 3: WriteOp("RCR")
+		  | 4: WriteOp("SHL/SAL")
+		  | 5: WriteOp("SHR")
+		  | 7: WriteOp("SAR")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1288,7 +1301,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		END;
 		Write(","); 
 		IF (op = 0D0H) OR (op = 0D1H) THEN Write("1")
-		ELSIF (op = 0D2H) OR (op = 0D3H) THEN WriteString("cl")  
+		ELSIF (op = 0D2H) OR (op = 0D3H) THEN WriteString("CL")  
 		ELSE WriteDisp(imm)
 		END
 	END Grp2;
@@ -1302,13 +1315,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		END;
 		IF reg = 0 (* test *) THEN GetImm(w, imm) END;
 		CASE reg OF 
-			0: WriteOp("test")
-		  | 2: WriteOp("not")
-		  | 3: WriteOp("neg")
-		  | 4: WriteOp("mul")
-		  | 5: WriteOp("imul")
-		  | 6: WriteOp("div")
-		  | 7: WriteOp("idiv")
+			0: WriteOp("TEST")
+		  | 2: WriteOp("NOT")
+		  | 3: WriteOp("NEG")
+		  | 4: WriteOp("MUL")
+		  | 5: WriteOp("IMUL")
+		  | 6: WriteOp("DIV")
+		  | 7: WriteOp("IDIV")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1324,11 +1337,11 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		w:= 0;
 		ModRm(mode, reg, base, inx, scale, disp);
-		IF reg = 0 THEN WriteOp("inc")
-		ELSE WriteOp("dec")
+		IF reg = 0 THEN WriteOp("INC")
+		ELSE WriteOp("DEC")
 		END;
 		IF mode # Reg THEN
-			WriteString("byte ptr "); WriteMem(base, inx, scale, disp)
+			WriteString("BYTE PTR "); WriteMem(base, inx, scale, disp)
 		ELSE WriteReg(base)
 		END
 	END Grp4;
@@ -1338,13 +1351,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		w:= 1;
 		ModRm(mode, reg, base, inx, scale, disp);
-		IF reg = 0 THEN WriteOp("inc")
-		ELSIF reg = 1 THEN WriteOp("dec")
-		ELSIF reg = 2 THEN WriteOp("call")
-		ELSIF reg = 3 THEN WriteOp("call far")
-		ELSIF reg = 4 THEN WriteOp("jmp")
-		ELSIF reg = 5 THEN WriteOp("jmp far")
-		ELSIF reg = 6 THEN WriteOp("push")
+		IF reg = 0 THEN WriteOp("INC")
+		ELSIF reg = 1 THEN WriteOp("DEC")
+		ELSIF reg = 2 THEN WriteOp("CALL")
+		ELSIF reg = 3 THEN WriteOp("CALL FAR")
+		ELSIF reg = 4 THEN WriteOp("JMP")
+		ELSIF reg = 5 THEN WriteOp("JMP FAR")
+		ELSIF reg = 6 THEN WriteOp("PUSH")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1358,12 +1371,12 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		w := 1;
 		ModRm(mode, reg, base, inx, scale, disp);
 		CASE reg OF
-		|  0: WriteOp("sldt")
-		|  1: WriteOp("str")
-		|  2: WriteOp("lldt"); INCL(target, Priv)
-		|  3: WriteOp("ltr"); INCL(target, Priv)
-		|  4: WriteOp("verr")
-		|  6: WriteOp("verw")
+		|  0: WriteOp("SLDT")
+		|  1: WriteOp("STR")
+		|  2: WriteOp("LLDT"); INCL(target, Priv)
+		|  3: WriteOp("LTR"); INCL(target, Priv)
+		|  4: WriteOp("VERR")
+		|  6: WriteOp("VERW")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1377,13 +1390,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		w := 1;
 		ModRm(mode, reg, base, inx, scale, disp);
 		CASE reg OF
-		|  0: WriteOp("sgdt")
-		|  1: WriteOp("sidt")
-		|  2: WriteOp("lgdt"); INCL(target, Priv)
-		|  3: WriteOp("lidt"); INCL(target, Priv)
-		|  4: WriteOp("smsw")
-		|  6: WriteOp("lmsw"); INCL(target, Priv)
-		|  7: WriteOp("invlpg"); target := target + {Priv,i486}
+		|  0: WriteOp("SGDT")
+		|  1: WriteOp("SIDT")
+		|  2: WriteOp("LGDT"); INCL(target, Priv)
+		|  3: WriteOp("LIDT"); INCL(target, Priv)
+		|  4: WriteOp("SMSW")
+		|  6: WriteOp("LMSW"); INCL(target, Priv)
+		|  7: WriteOp("INVLPG"); target := target + {Priv,i486}
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1398,10 +1411,10 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, reg, base, inx, scale, disp);
 		GetImm(0, imm); (* always 8 bit wide *)
 		CASE reg OF
-			4: WriteOp("bt")
-		  | 5: WriteOp("bts")
-		  | 6: WriteOp("btr")
-		  | 7: WriteOp("btc")
+			4: WriteOp("BT")
+		  | 5: WriteOp("BTS")
+		  | 6: WriteOp("BTR")
+		  | 7: WriteOp("BTC")
 		ELSE Bug(BUG)
 		END;
 		IF mode = Reg THEN WriteReg(base)
@@ -1416,16 +1429,107 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		w:= 1;
 		ModRm(mode, reg, base, inx, scale, disp);
 		CASE reg OF
-			1: WriteOp("cmpxch8"); INCL(target, Pentium)
+			1: WriteOp("CMPXCH8"); INCL(target, Pentium)
 		ELSE Bug(BUG)
 		END;
 		WriteRM(mode, 1, reg, base, inx, scale, disp, 0, FALSE)
 	END Grp9;
+	
+	PROCEDURE Mmx(op: INTEGER);
+		VAR mode, scale: SHORTINT;  reg, base, inx, d: INTEGER; disp: LONGINT;
+	BEGIN
+		INCL(target, MMX);
+		d := 1; w := 1;
+		ModRm(mode, reg, base, inx, scale, disp);
+		CASE op OF
+		| 60H: WriteOp("PUNPCKLBW")
+		| 61H: WriteOp("PUNPCKLWD")
+		| 62H: WriteOp("PUNPCKLDQ")
+		| 63H: WriteOp("PACKSSWB")
+		| 64H: WriteOp("PCMPGTB")
+		| 65H: WriteOp("PCMPGTW")
+		| 66H: WriteOp("PCMPGTD")
+		| 67H: WriteOp("PACKUSWB")
+		| 68H: WriteOp("PUNPCKHBW")
+		| 69H: WriteOp("PUNPCKHWD")
+		| 6AH: WriteOp("PUNPCKHDQ")
+		| 6BH: WriteOp("PACKSSDB")
+		| 6EH:
+				WriteOp("MOVD");
+				IF mode = Reg THEN DEC(base, MM0) END;	(*cheat*)
+		| 6FH: WriteOp("MOVQ")
+		| 74H: WriteOp("PCMPEQB")
+		| 75H: WriteOp("PCMPEQW")
+		| 76H: WriteOp("PCMPEQD")
+		| 7EH:
+				WriteOp("MOVD"); d := 0;
+				IF mode = Reg THEN DEC(base, MM0) END;	(*cheat*)
+		| 7FH: WriteOp("MOVQ"); d := 0
+		| 0D5H: WriteOp("PMULLW")
+		| 0D8H: WriteOp("PSUBUSB")
+		| 0D9H: WriteOp("PSUBUSW")
+		| 0DBH: WriteOp("PAND")
+		| 0DCH: WriteOp("PADDUSB")
+		| 0DDH: WriteOp("PADDUSW")
+		| 0DFH: WriteOp("PANDN")
+		| 0E4H: WriteOp("PMULHUW")
+		| 0E5H: WriteOp("PMULHW")
+		| 0E8H: WriteOp("PSUBSB")
+		| 0E9H: WriteOp("PSUBSW")
+		| 0EBH: WriteOp("POR")
+		| 0ECH: WriteOp("PADDSB")
+		| 0EDH: WriteOp("PADDSW")
+		| 0EFH: WriteOp("PXOR")
+		| 0F5H: WriteOp("PMADDWD")
+		| 0F8H: WriteOp("PSUBB")
+		| 0F9H: WriteOp("PSUBW")
+		| 0FAH: WriteOp("PSUBD")
+		| 0FCH: WriteOp("PADDB")
+		| 0FDH: WriteOp("PADDW")
+		| 0FEH: WriteOp("PADDD")
+		END;
+		WriteMM(mode, d, reg, base, inx, scale, disp, 0, FALSE);
+	END Mmx;
+	
+	PROCEDURE MmxShift(op: INTEGER);
+		VAR mode, scale: SHORTINT;  reg, base, inx, d: INTEGER; disp, imm: LONGINT; instr: ARRAY 6 OF CHAR;
+	BEGIN
+		w := 1;
+		INCL(target, MMX);
+		ModRm(mode, reg, base, inx, scale, disp);
+		
+		IF (op DIV 10H) = 0FH THEN
+			instr := "PSLLX"
+		ELSIF (op DIV 10H) = 0EH THEN
+			instr := "PSRAX"
+		ELSIF (op DIV 10H) = 0DH THEN
+			instr := "PSRLX"
+		ELSIF (op DIV 10H) = 07H THEN
+			mode := RegImm;
+			GetImm(0, imm);
+			CASE reg OF
+			| 2:  instr := "PSRLX"
+			| 4:  instr := "PSRAX"
+			| 6:  instr := "PSLLX"
+			END;
+			reg := base;
+		ELSE 
+			Bug(BUG)
+		END;
+		
+		CASE op MOD 10H OF
+		| 1:  instr[4] := "W"
+		| 2:  instr[4] := "D"
+		| 3:  instr[4] := "Q"
+		END;
+		WriteOp(instr);
+		WriteMM(mode, 1, reg, base, inx, scale, disp, imm, FALSE)
+	END MmxShift;
 
 	PROCEDURE Escape (op: INTEGER);
 	BEGIN
 		GetByte(op); WriteByte(op); Write(" ");
-		IF op < 50H THEN (* because of DOSOberon *)
+		IF op < 80H THEN (* because of DOSOberon *)
 			CASE op OF
 				0: 
 					Grp6(op)
@@ -1436,26 +1540,32 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			  | 3:
 					Lsl(op)
 			  | 6: 
-					WriteOp("clts"); INCL(target, Priv)
+					WriteOp("CLTS"); INCL(target, Priv)
 			  | 8:
-					WriteOp("invd"); target := target + {Priv,i486}
+					WriteOp("INVD"); target := target + {Priv,i486}
 			  | 9:
-					WriteOp("wbinvd"); target := target + {Priv,i486}
+					WriteOp("WBINVD"); target := target + {Priv,i486}
 			  | 20H..24H, 26H:
 					Mov2(op)
 			  | 30H:
-			         WriteOp("wrmsr"); target := target + {Priv,Pentium}
+			         WriteOp("WRMSR"); target := target + {Priv,Pentium}
 			  | 31H:
-			         WriteOp("rdtsc"); target := target + {Priv,Pentium}
+			         WriteOp("RDTSC"); target := target + {Priv,Pentium}
 			  | 32H:
-			         WriteOp("rdmsr"); target := target + {Priv,Pentium}
+			         WriteOp("RDMSR"); target := target + {Priv,Pentium}
 			  | 33H:
-			         WriteOp("rdpmc"); target := target + {Priv,Pentium}
+			         WriteOp("RDPMC"); target := target + {Priv,Pentium}
 			  | 40H..4FH: 
 					Cmov(op)
+			  | 60H..6BH, 6EH, 6FH, 74H..76H, 7EH, 7FH:
+					Mmx(op)
+			  | 71H..73H:
+					MmxShift(op)
+			  | 77H:
+			         WriteOp("EMMS"); INCL(target, MMX)
 			ELSE Bug(BUG)
 			END
-		ELSIF op < 0D0H THEN
+		ELSIF op < 0FFH THEN
 			CASE op OF
 			  | 80H..8FH:
 					Jcc2(op)
@@ -1466,7 +1576,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			  | 0A1H, 0A9H:
 					Pop2(op)
 			  | 0A2H:
-					WriteOp ("cpuid");  INCL(target, Pentium)
+					WriteOp ("CPUID");  INCL(target, Pentium)
 			  | 0A3H, 0ABH, 0B3H, 0BBH..0BDH:
 					Bit(op)
 			  | 0A4H, 0A5H, 0ACH, 0ADH:
@@ -1477,10 +1587,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 					Cmpxchg(op)
 			  | 0B2H, 0B4H, 0B5H:
 					Ldseg(op)
-			  | 0B6H, 0B7H:
-					Movzx(op)
-			  | 0BEH, 0BFH:
-					Movsx(op)
+			  | 0B6H, 0B7H, 0BEH, 0BFH:
+					Movx(op)
 			  | 0BAH:
 					Grp8(op)
 			  | 0C0H,0C1H:
@@ -1489,6 +1597,10 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 					Grp9(op)
 			  | 0C8H..0CFH:
 					Bswap(op)
+			  | 0D5H, 0D8H, 0D9H, 0DBH..0DDH, 0DFH, 0E4H, 0E5H, 0E8H, 0E9H, 0EBH, 0ECH, 0EDH, 0EFH, 0F5H, 0F8H..0FAH, 0FCH..0FEH:
+					Mmx(op)
+			  | 0D1H..0D3H, 0E1H, 0E2H, 0F1H..0F3H:
+					MmxShift(op)
 			ELSE Bug(BUG)
 			END
 		ELSE Bug(BUG)
@@ -1499,24 +1611,24 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 
 	PROCEDURE WriteFReg (freg: INTEGER);
 	BEGIN
-		IF freg = 0 THEN WriteString("st")
+		IF freg = 0 THEN WriteString("ST")
 		ELSE
-			WriteString("st("); WriteDisp(freg); Write(")")
+			WriteString("ST("); WriteDisp(freg); Write(")")
 		END
 	END WriteFReg;
 
 	PROCEDURE WriteFloat (form: SHORTINT; base, inx: INTEGER; scale: SHORTINT; disp: LONGINT);
 	BEGIN
 		(* not nice but necessary -> no more constant memory for case table *)
-		IF form = SReal THEN WriteString("single ")
-		ELSIF form = LReal THEN WriteString("double ")
-		ELSIF form = EReal THEN WriteString("extended ")
-		ELSIF form = WInt THEN WriteString("word ")
-		ELSIF form = SInt THEN WriteString("short ")
-		ELSIF form = LInt THEN WriteString("long ")
-		ELSIF (form = Byte14) OR (form = Byte94) THEN WriteString("small ")
-		ELSIF (form = Byte28) OR (form = Byte108) THEN WriteString("big ")
-		ELSIF form = Decimal THEN WriteString("bcd ")
+		IF form = SReal THEN WriteString("SINGLE ")
+		ELSIF form = LReal THEN WriteString("DOUBLE ")
+		ELSIF form = EReal THEN WriteString("EXTENDED ")
+		ELSIF form = WInt THEN WriteString("WORD ")
+		ELSIF form = SInt THEN WriteString("SHORT ")
+		ELSIF form = LInt THEN WriteString("LONG ")
+		ELSIF (form = Byte14) OR (form = Byte94) THEN WriteString("SMALL ")
+		ELSIF (form = Byte28) OR (form = Byte108) THEN WriteString("BIG ")
+		ELSIF form = Decimal THEN WriteString("BCD ")
 		END;
 		WriteMem(base, inx, scale, disp)
 	END WriteFloat;
@@ -1528,27 +1640,27 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN (* memory *)
 			CASE stat OF
-				0: WriteOp("fadd")
-			  | 1: WriteOp("fmul")
-			  | 2: WriteOp("fcom")
-			  | 3: WriteOp("fcomp")
-			  | 4: WriteOp("fsub")
-			  | 5: WriteOp("fsubr")
-			  | 6: WriteOp("fdiv")
-			  | 7: WriteOp("fdivr")
+				0: WriteOp("FADD")
+			  | 1: WriteOp("FMUL")
+			  | 2: WriteOp("FCOM")
+			  | 3: WriteOp("FCOMP")
+			  | 4: WriteOp("FSUB")
+			  | 5: WriteOp("FSUBR")
+			  | 6: WriteOp("FDIV")
+			  | 7: WriteOp("FDIVR")
 			ELSE Bug(BUG)
 			END;
 			WriteFloat(SReal, base, inx, scale, disp)
 		ELSE
 			CASE stat OF
-				0: WriteOp("fadd"); WriteFReg(0); Write(",")
-			  | 1: WriteOp("fmul"); WriteFReg(0); Write(",")
-			  | 2: WriteOp("fcom")
-			  | 3: WriteOp("fcomp")
-			  | 4: WriteOp("fsub"); WriteFReg(0); Write(",")
-			  | 5: WriteOp("fsubr"); WriteFReg(0); Write(",")
-			  | 6: WriteOp("fdiv"); WriteFReg(0); Write(",")
-			  | 7: WriteOp("fdivr"); WriteFReg(0); Write(",")
+				0: WriteOp("FADD"); WriteFReg(0); Write(",")
+			  | 1: WriteOp("FMUL"); WriteFReg(0); Write(",")
+			  | 2: WriteOp("FCOM")
+			  | 3: WriteOp("FCOMP")
+			  | 4: WriteOp("FSUB"); WriteFReg(0); Write(",")
+			  | 5: WriteOp("FSUBR"); WriteFReg(0); Write(",")
+			  | 6: WriteOp("FDIV"); WriteFReg(0); Write(",")
+			  | 7: WriteOp("FDIVR"); WriteFReg(0); Write(",")
 			ELSE Bug(BUG)
 			END;
 			WriteFReg(base)
@@ -1562,13 +1674,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN
 			CASE stat OF
-				0: WriteOp("fld")
-			  | 2: WriteOp("fst")
-			  | 3: WriteOp("fstp")
-			  | 4: WriteOp("fldenv")
-			  | 5: WriteOp("fldcw")
-			  | 6: WriteOp("fstenv")
-			  | 7: WriteOp("fstcw")
+				0: WriteOp("FLD")
+			  | 2: WriteOp("FST")
+			  | 3: WriteOp("FSTP")
+			  | 4: WriteOp("FLDENV")
+			  | 5: WriteOp("FLDCW")
+			  | 6: WriteOp("FSTENV")
+			  | 7: WriteOp("FSTCW")
 			ELSE Bug(BUG)
 			END;
 			IF (stat = 4) OR (stat = 6) THEN
@@ -1579,41 +1691,41 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			ELSE WriteFloat(nothing, base, inx, scale, disp)
 			END
 		ELSIF stat = 0 THEN 
-			WriteOp("fld"); WriteFReg(base)
+			WriteOp("FLD"); WriteFReg(base)
 		ELSIF stat = 1 THEN
-			WriteOp("fxch"); WriteFReg(base)
+			WriteOp("FXCH"); WriteFReg(base)
 		ELSE
 			stat:= stat * 8 + base;
-			IF stat = 10H THEN WriteOp("fnop")
+			IF stat = 10H THEN WriteOp("FNOP")
 			ELSE
 				CASE stat OF
-					20H: WriteOp("fchs")
-				  | 21H: WriteOp("fabs")
-				  | 24H: WriteOp("ftst")
-				  | 25H: WriteOp("fxam")
-				  | 28H: WriteOp("fld1")
-				  | 29H: WriteOp("fldl2t")
-				  | 2AH: WriteOp("fldl2e")
-				  | 2BH: WriteOp("fldpi")
-				  | 2CH: WriteOp("fldlg2")
-				  | 2DH: WriteOp("fldln2")
-				  | 2EH: WriteOp("fldz")
-				  | 30H: WriteOp("f2xm1")
-				  | 31H: WriteOp("fyl2x")
-				  | 32H: WriteOp("fptan")
-				  | 33H: WriteOp("fpatan")
-				  | 34H: WriteOp("fxtract")
-				  | 35H: WriteOp("fprem1")
-				  | 36H: WriteOp("fdecstp")
-				  | 37H: WriteOp("fincstp")
-				  | 38H: WriteOp("fprem")
-				  | 39H: WriteOp("fyl2xp1")
-				  | 3AH: WriteOp("fsqrt")
-				  | 3BH: WriteOp("fsincos")
-				  | 3CH: WriteOp("frndint")
-				  | 3DH: WriteOp("fscale")
-				  | 3EH: WriteOp("fsin")
-				  | 3FH: WriteOp("fcos")
+					20H: WriteOp("FCHS")
+				  | 21H: WriteOp("FABS")
+				  | 24H: WriteOp("FTST")
+				  | 25H: WriteOp("FXAM")
+				  | 28H: WriteOp("FLD1")
+				  | 29H: WriteOp("FLDL2T")
+				  | 2AH: WriteOp("FLDL2E")
+				  | 2BH: WriteOp("FLDPI")
+				  | 2CH: WriteOp("FLDLG2")
+				  | 2DH: WriteOp("FLDLN2")
+				  | 2EH: WriteOp("FLDZ")
+				  | 30H: WriteOp("F2XM1")
+				  | 31H: WriteOp("FYL2X")
+				  | 32H: WriteOp("FPTAN")
+				  | 33H: WriteOp("FPATAN")
+				  | 34H: WriteOp("FXTRACT")
+				  | 35H: WriteOp("FPREM1")
+				  | 36H: WriteOp("FDECSTP")
+				  | 37H: WriteOp("FINCSTP")
+				  | 38H: WriteOp("FPREM")
+				  | 39H: WriteOp("FYL2XP1")
+				  | 3AH: WriteOp("FSQRT")
+				  | 3BH: WriteOp("FSINCOS")
+				  | 3CH: WriteOp("FRNDINT")
+				  | 3DH: WriteOp("FSCALE")
+				  | 3EH: WriteOp("FSIN")
+				  | 3FH: WriteOp("FCOS")
 				ELSE Bug(BUG)
 				END
 			END
@@ -1627,18 +1739,18 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN
 			CASE stat OF
-				0: WriteOp("fiadd")
-			  | 1: WriteOp("fimul")
-			  | 2: WriteOp("ficom")
-			  | 3: WriteOp("ficomp")
-			  | 4: WriteOp("fisub")
-			  | 5: WriteOp("fisubr")
-			  | 6: WriteOp("fidiv")
-			  | 7: WriteOp("fidivr")
+				0: WriteOp("FIADD")
+			  | 1: WriteOp("FIMUL")
+			  | 2: WriteOp("FICOM")
+			  | 3: WriteOp("FICOMP")
+			  | 4: WriteOp("FISUB")
+			  | 5: WriteOp("FISUBR")
+			  | 6: WriteOp("FIDIV")
+			  | 7: WriteOp("FIDIVR")
 			ELSE Bug(BUG)
 			END;
 			WriteFloat(SInt, base, inx, scale, disp)
-		ELSIF stat = 5 THEN WriteOp("fucompp")
+		ELSIF stat = 5 THEN WriteOp("FUCOMPP")
 		ELSE Bug(BUG)
 		END
 	END Float2;
@@ -1650,18 +1762,18 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN
 			CASE stat OF
-				0: WriteOp("fild")
-			  | 2: WriteOp("fist")
-			  | 3: WriteOp("fistp")
-			  | 5: WriteOp("fld")
-			  | 7: WriteOp("fstp")
+				0: WriteOp("FILD")
+			  | 2: WriteOp("FIST")
+			  | 3: WriteOp("FISTP")
+			  | 5: WriteOp("FLD")
+			  | 7: WriteOp("FSTP")
 			ELSE Bug(BUG)
 			END;
 			IF (stat = 5) OR (stat = 7) THEN WriteFloat(EReal, base, inx, scale, disp)
 			ELSE WriteFloat(SInt, base, inx, scale, disp)
 			END
-		ELSIF base = 2 THEN WriteOp("fclex")
-		ELSIF base = 3 THEN WriteOp("finit")
+		ELSIF base = 2 THEN WriteOp("FCLEX")
+		ELSIF base = 3 THEN WriteOp("FINIT")
 		ELSE Bug(BUG)
 		END
 	END Float3;
@@ -1673,25 +1785,25 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN
 			CASE stat OF
-				0: WriteOp("fadd")
-			  | 1: WriteOp("fmul")
-			  | 2: WriteOp("fcom")
-			  | 3: WriteOp("fcomp")
-			  | 4: WriteOp("fsub")
-			  | 5: WriteOp("fsubr")
-			  | 6: WriteOp("fdiv")
-			  | 7: WriteOp("fdivr")
+				0: WriteOp("FADD")
+			  | 1: WriteOp("FMUL")
+			  | 2: WriteOp("FCOM")
+			  | 3: WriteOp("FCOMP")
+			  | 4: WriteOp("FSUB")
+			  | 5: WriteOp("FSUBR")
+			  | 6: WriteOp("FDIV")
+			  | 7: WriteOp("FDIVR")
 			ELSE Bug(BUG)
 			END;
 			WriteFloat(LReal, base, inx, scale, disp)
 		ELSE
 			CASE stat OF
-				0: WriteOp("fadd")
-			  | 1: WriteOp("fmul")
-			  | 4: WriteOp("fsubr")
-			  | 5: WriteOp("fsub")
-			  | 6: WriteOp("fdivr")
-			  | 7: WriteOp("fdiv")
+				0: WriteOp("FADD")
+			  | 1: WriteOp("FMUL")
+			  | 4: WriteOp("FSUBR")
+			  | 5: WriteOp("FSUB")
+			  | 6: WriteOp("FDIVR")
+			  | 7: WriteOp("FDIV")
 			ELSE Bug(BUG)
 			END;
 			WriteFReg(base); Write(","); WriteFReg(0)
@@ -1705,12 +1817,12 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN (* memory *)
 			CASE stat OF
-				0: WriteOp("fld")
-			  | 2: WriteOp("fst")
-			  | 3: WriteOp("fstp")
-			  | 4: WriteOp("frstor")
-			  | 6: WriteOp("fsave")
-			  | 7: WriteOp("fstsw")
+				0: WriteOp("FLD")
+			  | 2: WriteOp("FST")
+			  | 3: WriteOp("FSTP")
+			  | 4: WriteOp("FRSTOR")
+			  | 6: WriteOp("FSAVE")
+			  | 7: WriteOp("FSTSW")
 			ELSE Bug(BUG)
 			END;
 			IF (stat = 4) OR (stat = 6) THEN
@@ -1722,11 +1834,11 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			END
 		ELSE
 			CASE stat OF
-				0: WriteOp("ffree")
-			  | 2: WriteOp("fst")
-			  | 3: WriteOp("fstp")
-			  | 4: WriteOp("fucom")
-			  | 5: WriteOp("fucomp")
+				0: WriteOp("FFREE")
+			  | 2: WriteOp("FST")
+			  | 3: WriteOp("FSTP")
+			  | 4: WriteOp("FUCOM")
+			  | 5: WriteOp("FUCOMP")
 			ELSE Bug(BUG)
 			END;
 			WriteFReg(base)
@@ -1740,26 +1852,26 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN (* memory *)
 			CASE stat OF
-				0: WriteOp("fiadd")
-			  | 1: WriteOp("fimul")
-			  | 2: WriteOp("ficom")
-			  | 3: WriteOp("ficomp")
-			  | 4: WriteOp("fisub")
-			  | 5: WriteOp("fisubr")
-			  | 6: WriteOp("fidiv")
-			  | 7: WriteOp("fidivr")
+				0: WriteOp("FIADD")
+			  | 1: WriteOp("FIMUL")
+			  | 2: WriteOp("FICOM")
+			  | 3: WriteOp("FICOMP")
+			  | 4: WriteOp("FISUB")
+			  | 5: WriteOp("FISUBR")
+			  | 6: WriteOp("FIDIV")
+			  | 7: WriteOp("FIDIVR")
 			ELSE Bug(BUG)
 			END;
 			WriteFloat(WInt, base, inx, scale, disp)
 		ELSE
 			CASE stat OF
-				0: WriteOp("faddp")
-			  | 1: WriteOp("fmulp")
-			  | 3: WriteOp("fcompp")
-			  | 4: WriteOp("fsubrp")
-			  | 5: WriteOp("fsubp")
-			  | 6: WriteOp("fdivrp")
-			  | 7: WriteOp("fdivp")
+				0: WriteOp("FADDP")
+			  | 1: WriteOp("FMULP")
+			  | 3: WriteOp("FCOMPP")
+			  | 4: WriteOp("FSUBRP")
+			  | 5: WriteOp("FSUBP")
+			  | 6: WriteOp("FDIVRP")
+			  | 7: WriteOp("FDIVP")
 			ELSE Bug(BUG)
 			END;
 			IF stat # 3 THEN
@@ -1775,18 +1887,18 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		ModRm(mode, stat, base, inx, scale, disp);
 		IF mode # Reg THEN (* memory *)
 			CASE stat OF
-				0, 5: WriteOp("fild")
-			  | 2: WriteOp("fist")
-			  | 3, 7: WriteOp("fistp")
-			  | 4: WriteOp("fbld")
-			  | 6: WriteOp("fbstp")
+				0, 5: WriteOp("FILD")
+			  | 2: WriteOp("FIST")
+			  | 3, 7: WriteOp("FISTP")
+			  | 4: WriteOp("FBLD")
+			  | 6: WriteOp("FBSTP")
 			ELSE Bug(BUG)
 			END;
 			IF (stat = 4) OR (stat = 6) THEN WriteFloat(Decimal, base, inx, scale, disp)
 			ELSIF (stat = 5) OR (stat = 7) THEN WriteFloat(LInt, base, inx, scale, disp)
 			ELSE WriteFloat(WInt, base, inx, scale, disp)
 			END
-		ELSIF stat = 4 THEN WriteOp("fstsw"); WriteString("ax")
+		ELSIF stat = 4 THEN WriteOp("FSTSW"); WriteString("AX")
 		ELSE Bug(BUG)
 		END
 	END Float7;
@@ -1811,30 +1923,9 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		END
 	END Prefix;
 
-	PROCEDURE Dump (size: LONGINT);
-		VAR op, pe: INTEGER;
+	PROCEDURE IA32Decoder(VAR PC: LONGINT; VAR r: Files.Rider; VAR w: Texts.Writer); (* ignore params *)
+	VAR op, pe: INTEGER;
 	BEGIN
-		pc:= 0; pe := 0; target := {};  OpPos := OpPosC; RMPos := RMPosC;
-		IF compilable THEN  DEC(OpPos, OffPos);  DEC(RMPos, OffPos)  END;
-		WHILE pc < size DO
-			IF target # {} THEN
-				Tab(70);  Write(";");
-				IF i486 IN target THEN WriteString(" i486") END;
-				IF Pentium IN target THEN WriteString(" Pentium") END;
-				IF PPro IN target THEN WriteString(" PPro") END;
-				IF Priv IN target THEN WriteString(" privileged") END;
-				target := {}
-			END;
-			IF pc # 0 THEN WriteLn END;
-			adrPrefix:= FALSE; opPrefix:= FALSE; prefix:= none; w := 0;
-			IF (pe # nofPE) & (pc >= PE[pe].point) THEN
-				WriteLn; Texts.SetFont(W, titleFont);
-				WriteString("PROCEDURE "); WriteString(PE[pe].name); 
-				IF pc # PE[pe].point THEN WriteString(" adr = "); WriteWHex(PE[pe].point) END;	(* should not happen *)
-				WriteLn; Texts.SetFont(W, defaultFont); INC(pe)
-			END;
-			suppressOut := compilable;
-			Tab(PCpos); WriteWHex(pc); Write("H"); Write(":"); Tab(HexPos);
 			GetByte(op);
 			Prefix(op);
 			WriteByte(op); Write(" ");
@@ -1857,19 +1948,19 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				  | 20H..25H:
 						And(op)
 				  | 27H:
-						WriteOp("daa")
+						WriteOp("DAA")
 				  | 28H..2DH:
 						Sub(op)
 				  | 2FH:
-						WriteOp("das")
+						WriteOp("DAS")
 				  | 30H..35H:
 						Xor(op)
 				  | 37H:
-						WriteOp("aaa")
+						WriteOp("AAA")
 				  | 38H..3DH:
 						Cmp(op)
 				  | 3FH:
-						WriteOp("aas")
+						WriteOp("AAS")
 				ELSE Bug(BUG)
 				END
 			ELSIF op < 80H THEN
@@ -1909,21 +2000,21 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				  | 8FH, 9DH:
 						Pop(op)
 				  | 90H:
-						WriteOp("nop")
+						WriteOp("NOP")
 				  | 98H:
-						IF opPrefix THEN WriteOp("cbw") ELSE WriteOp("cwde") END
+						IF opPrefix THEN WriteOp("CBW") ELSE WriteOp("CWDE") END
 				  | 99H:
-						IF opPrefix THEN WriteOp("cwd") ELSE WriteOp("cdq") END
+						IF opPrefix THEN WriteOp("CWD") ELSE WriteOp("CDQ") END
 				  | 9AH:
 						Call(op)
 				  | 9BH:
-						WriteOp("wait")
+						WriteOp("WAIT")
 				  | 9CH:
 						Push(op)
 				  | 9EH:
-						WriteOp("sahf")
+						WriteOp("SAHF")
 				  | 9FH:
-						WriteOp("lahf")
+						WriteOp("LAHF")
 				  | 0A4H..0A5H:
 						Movs(op)
 				  | 0A6H..0A7H:
@@ -1953,21 +2044,21 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				  | 0C8H:
 						Enter(op)
 				  | 0C9H:
-						WriteOp("leave")
+						WriteOp("LEAVE")
 				  | 0CCH..0CDH:
 						Int(op)
 				  | 0CEH:
-						WriteOp("into")
+						WriteOp("INTO")
 				  | 0CFH:
-						WriteOp("iret")
+						WriteOp("IRET")
 				  | 0D0H..0D3H:
 						Grp2(op)
 				  | 0D4H:
-						WriteOp("aam")
+						WriteOp("AAM")
 				  | 0D5H:
-						WriteOp("aad")
+						WriteOp("AAD")
 				  | 0D7H:
-						WriteOp("xlat")
+						WriteOp("XLAT")
 				  | 0D8H:
 						Float0(op)
 				  | 0D9H, 0D6H:
@@ -1993,29 +2084,29 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				  | 0E9H..0EBH:
 						Jmp(op)
 				  | 0F0H:
-						WriteOp("Lock")
+						WriteOp("LOCK")
 				  | 0F2H:
-						WriteOp("repne")
+						WriteOp("REPNE")
 				  | 0F3H:
-						WriteOp("rep")
+						WriteOp("REP")
 				  | 0F4H:
-						WriteOp("hlt"); INCL(target, Priv)
+						WriteOp("HLT"); INCL(target, Priv)
 				  | 0F5H:
-						WriteOp("cmc")
+						WriteOp("CMC")
 				  | 0F6H..0F7H:
 						Grp3(op)
 				  | 0F8H:
-						WriteOp("clc")
+						WriteOp("CLC")
 				  | 0F9H:
-						WriteOp("stc")
+						WriteOp("STC")
 				  | 0FAH:
-						WriteOp("cli")
+						WriteOp("CLI")
 				  | 0FBH:
-						WriteOp("sti")
+						WriteOp("STI")
 				  | 0FCH:
-						WriteOp("cld")
+						WriteOp("CLD")
 				  | 0FDH:
-						WriteOp("std")
+						WriteOp("STD")
 				  | 0FEH:
 						Grp4(op)
 				  | 0FFH:
@@ -2024,13 +2115,44 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				END
 			ELSE Bug(BUG)			
 			END
+	END IA32Decoder;
+
+	PROCEDURE Dump (size: LONGINT);
+		VAR op, pe: INTEGER;
+	BEGIN
+		pc:= 0; pe := 0; target := {};  OpPos := OpPosC; RMPos := RMPosC;
+		IF compilable THEN  DEC(OpPos, OffPos);  DEC(RMPos, OffPos)  END;
+		WHILE pc < size DO
+			IF target # {} THEN
+				Tab(70);  Write(";");
+				IF i486 IN target THEN WriteString(" i486") END;
+				IF Pentium IN target THEN WriteString(" Pentium") END;
+				IF PPro IN target THEN WriteString(" PPro") END;
+				IF Priv IN target THEN WriteString(" privileged") END;
+				IF MMX IN target THEN WriteString(" MMX") END;
+				target := {}
+			END;
+			IF pc # 0 THEN WriteLn END;
+			IF (op # 0F0H) & (op # 0F2H) & (op # 0F3H) THEN	(*LOCK/REP/REPNE don't clear prefix*)
+				adrPrefix:= FALSE; opPrefix:= FALSE; prefix:= none; w := 0
+			END;
+			IF (pe # nofPE) & (pc >= PE[pe].point) THEN
+				WriteLn; Texts.SetFont(W, titleFont);
+				WriteString("PROCEDURE "); WriteString(PE[pe].name); 
+				IF pc # PE[pe].point THEN WriteString(" adr = "); WriteWHex(PE[pe].point) END;	(* should not happen *)
+				WriteLn; Texts.SetFont(W, defaultFont); INC(pe)
+			END;
+			suppressOut := compilable OR noOutput;
+			Tab(PCpos); WriteWHex(pc); Write("H"); Write(":"); Tab(HexPos);
+			decoder(pc, R, W)
 		END;
 		IF target # {} THEN
 			Tab(60);  Write(";");
 			IF i486 IN target THEN WriteString(" i486") END;
 			IF Pentium IN target THEN WriteString(" Pentium") END;
 			IF PPro IN target THEN WriteString(" PPro") END;
-			IF Priv IN target THEN WriteString(" privileged") END
+			IF Priv IN target THEN WriteString(" privileged") END;
+				IF MMX IN target THEN WriteString(" MMX") END;
 		END;
 	END Dump;
 
@@ -2038,7 +2160,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR 
 			offs, dim, i: LONGINT;
 			name: ARRAY 64 OF CHAR;
-			b, typeForm: CHAR;
+			b, par, sl, lev: CHAR;
 			old: ProcArray;
 			
 			PROCEDURE GetName(VAR name: ARRAY OF CHAR);
@@ -2051,11 +2173,46 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				UNTIL name[i-1] = 0X
 			END GetName;
 
+			PROCEDURE Type(long: BOOLEAN);
+			BEGIN
+				IF b > 80X THEN
+					WriteString("ARRAY ");
+					IF dim # 0 THEN  WriteDisp(dim); WriteString(" "); END;
+					WriteString("OF ");
+					b := CHR(ORD(b) MOD 10H)
+				END;
+				CASE b OF
+					 0X: WriteString("")
+				  | 1X: WriteString("BYTE  ")
+				  | 2X: WriteString("BOOLEAN  ")
+				  | 3X: WriteString("CHAR  ")
+				  | 4X: WriteString("SHORTINT  ")
+				  | 5X: WriteString("INTEGER  ")
+				  | 6X: WriteString("LONGINT  ")
+				  | 7X: WriteString("REAL  ")
+				  | 8X: WriteString("LONGREAL  ")
+				  | 9X: WriteString("SET  ")
+				  | 0DX: WriteString("POINTER  ")
+				  | 0EX: WriteString("PROCEDURE  ")
+				  | 0FX: WriteString("STRING ")
+				  | 10X: WriteString("HUGEINT ")
+				  | 12X: WriteString("Static Array")
+				  | 14X: WriteString("Dynamic Array")
+				  | 15X: WriteString("Open Array")
+				  | 16X: WriteString("RECORD")
+				  | 1DX: WriteString("POINTER TO RECORD")
+				ELSE Bug(BUG)
+				END;
+				IF long & (ORD(b) IN {16H, 1DH}) THEN
+					WriteString(" ["); WriteDisp(dim); WriteString("]  ")
+				END;
+			END Type;
+
 	BEGIN
 		Next(b);
 		nofPE := 0; pc := 0;
 		WHILE pc < size-1 DO
-			IF b # 0F8X THEN
+			IF (b # 0F8X) & (b # 0F9X) THEN
 				WriteString("wrong sign!"); WriteByte(ORD(b)); WriteLn;
 				RETURN
 			ELSE
@@ -2065,48 +2222,31 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 					FOR i := 0 TO LEN(old)-1 DO PE[i] := old[i] END
 				END;
 				GetNum(PE[nofPE].point); 
-				GetName(PE[nofPE].name);
-				WriteString(PE[nofPE].name); WriteString("   "); Texts.WriteHex(W, PE[nofPE].point); WriteLn;
+				IF b = 0F9X THEN	(*extended information*)
+					Next(par); Next(b); Next(lev); Next(sl);
+					GetName(PE[nofPE].name);
+					WriteString(PE[nofPE].name); WriteString("   "); WriteDWord(PE[nofPE].point);
+					WriteString(" : "); Type(FALSE);
+					WriteString("  par="); WriteDisp(ORD(par));
+					WriteString("  lev="); WriteDisp(ORD(lev));
+					WriteString("  sl="); WriteDisp(ORD(sl));
+					WriteLn;
+				ELSE
+					GetName(PE[nofPE].name);
+					WriteString(PE[nofPE].name); WriteString("   "); WriteDWord(PE[nofPE].point); WriteLn;
+				END;
 				INC(nofPE); Next(b);
-				WHILE (b >= 1X) & (b <= 4X) DO
-					Next(typeForm);
-					IF typeForm > 80X THEN GetNum(dim) ELSE dim := -1 END;
+				WHILE (b = 1X) OR (b = 3X) DO
+					IF b = 3X THEN WriteString("VAR  ") ELSE WriteString("     ") END;
+					Next(b);
+					IF b > 10X THEN  GetNum(dim) END;
 					GetNum(offs); GetName(name);
-					Tab(Pos1);
-					IF b < 3X THEN WriteString("     ")
-					ELSE WriteString("VAR  ")
-					END;
 					WriteString(name); WriteString(": ");
-					IF (b = 2X) OR (b = 4X) THEN WriteString("ARRAY OF ")
-					ELSIF typeForm >= 10X THEN
-						WriteString("ARRAY ");
-						IF typeForm > 80X THEN
-							IF dim # 0 THEN WriteDisp(dim); WriteString(" ") END
-						ELSE
-							WriteDisp(1 + ORD(typeForm) DIV 10H);
-							WriteString(" ")
-						END;
-						WriteString("OF ")
-					END;
-					CASE CHR(ORD(typeForm) MOD 16) OF
-						1X: WriteString("BYTE  ")
-					  | 2X: WriteString("BOOLEAN  ")
-					  | 3X: WriteString("CHAR  ")
-					  | 4X: WriteString("SHORTINT  ")
-					  | 5X: WriteString("INTEGER  ")
-					  | 6X: WriteString("LONGINT  ")
-					  | 7X: WriteString("REAL  ")
-					  | 8X: WriteString("LONGREAL  ")
-					  | 9X: WriteString("SET  ")
-					  | 0DX: WriteString("POINTER  ")
-					  | 0EX: WriteString("PROCEDURE  ")
-					  | 0FX: WriteString("STRING ")
-					ELSE Bug(BUG)
-					END;
+					Type(TRUE);
 					WriteDisp(offs);
 					WriteLn;
-					Next(b)
-				END
+					Next(b);
+				END;
 			END
 		END
 	END Reference;
@@ -2115,6 +2255,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		VAR b: CHAR;
 	BEGIN
 		Next(b); Texts.SetFont(W, titleFont); WriteString(str);
+		IF memory THEN WriteDWHex(ReadAdr-1) ELSE WriteDWHex(Files.Pos(R)-1) END;
 		IF b = ch THEN WriteLn ELSE WriteString(" wrong sign! "); WriteByte(ORD(b)); WriteLn END;
 		Texts.SetFont(W, defaultFont)
 	END Check;
@@ -2130,33 +2271,54 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	END DumpData;
 
 	PROCEDURE ReadExport;
+		VAR count: LONGINT; name: ARRAY 64 OF CHAR;
 		PROCEDURE LoadScope (level: LONGINT);
-			VAR	adr, fp, off: LONGINT; exp: INTEGER;
+			VAR	adr, fp, off, i, len: LONGINT; exp: INTEGER; check: POINTER TO ARRAY OF LONGINT;
 		BEGIN
-			Tab(4+SHORT(level*4)); WriteString("level "); WriteDisp(level);
-			Files.ReadBytes (R, exp, 2);
-			WriteString(" (exp="); WriteDisp(exp); Write(")"); WriteLn;
+			Files.ReadBytes (R, exp, 2);  WriteString(" cnt = ");  WriteDisp(exp);
 			Files.ReadNum (R, fp);
+			len := 0;
+			IF fp # 0 THEN NEW(check, exp) END;
 			WHILE fp # 0 DO
 				IF fp = 1 THEN
 					Files.ReadNum (R, off);
-					Tab(4+SHORT(level*4)); WriteString("record tdadr "); WriteDisp(off); WriteLn;
-					IF off >= 0 THEN LoadScope (level+1(*1*)) END
+					IF off >= 0 THEN
+						WriteString(" TD(");  INC(count);  WriteDisp(count);  WriteString(") ");  WriteDWHex(off);
+						LoadScope (level+1(*1*)) 
+					ELSE
+						WriteString(" TD(");  WriteDisp(-off);  Write(")")	(*already exported*)
+					END
 				ELSE
-					Tab(4+SHORT(level*4)); WriteDWHex(fp);
+					WriteLn; Tab(4+SHORT(level*4)); WriteDWHex(fp);
 					IF level = 0 THEN
 						Files.ReadNum (R, adr);
-						WriteString(" -> "); WriteDisp(adr)
-					END;
-					WriteLn
+						IF adr > 0 THEN  WriteString(" P ")  ELSIF adr = 0 THEN  WriteString(" T ")  ELSE  WriteString(" V ")  END;
+						WriteDWHex(adr);
+						i := 0;
+						WHILE i # len DO
+							IF check[i] = fp THEN
+								WriteString(" Duplicate FP");
+								Files.GetName(Files.Base(R), name);
+								Out.String(name); 
+								Out.String(" - Duplicate FP");
+								Out.Hex(fp); Out.Ln;
+								i := len
+							ELSE
+								INC(i)
+							END
+						END;
+						check[len] := fp; INC(len)
+					END
 				END;
 				Files.ReadNum (R, fp)
-			END;
+			END
 		END LoadScope;
 		
 	BEGIN
 		Check (88X, "Export:");
+		Tab(4);
 		LoadScope (0);
+		WriteLn;
 	END ReadExport;
 	
 	PROCEDURE ReadUse;
@@ -2178,14 +2340,22 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			Files.ReadNum (R, fp);
 			WHILE fp # 0 DO
 				IF fp = 1 THEN Files.ReadNum (R, link);
+					WriteString(" TD "); WriteDWHex(link);
 					IF tmpErr THEN CheckUse (-1)
 					ELSE CheckUse (1)
 					END
 				ELSE
 					GetString (name);
+					WriteLn; Tab(4);  Write("[");  WriteDWHex(fp);  Write("]");
 					IF level >= 0 THEN tmpErr := FALSE;
-						IF level = 0 THEN Files.ReadNum (R, link) END;
-					END
+						IF level = 0 THEN
+							Files.ReadNum (R, link);
+							Tab(16);
+							IF link >= 0 THEN Write("V") ELSE Write("P") END;
+							Tab(18); WriteWHex(link)
+						END;
+					END;
+					Tab(24); WriteString(name);
 				END;
 				Files.ReadNum (R, fp)
 			END
@@ -2194,13 +2364,17 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	BEGIN
 		Check (8AX, "Use:");
 		GetString (name);
-		WHILE (name # "") DO CheckUse (0); GetString (name) END
+		WHILE (name # "") DO 
+			Tab(2); WriteString("Module  "); WriteString(name);
+			CheckUse (0); GetString (name);
+			WriteLn
+		END
 	END ReadUse;
 
 	PROCEDURE WriteProc(pc: LONGINT);
 	VAR i: LONGINT;
 	BEGIN
-		i := 0;  WHILE (i # nofPE) & (pc # PE[i].point) DO INC(i) END;
+		i := 0;  WHILE (i < nofPE) & (pc # PE[i].point) DO INC(i) END;
 		IF i # nofPE THEN WriteString(PE[i].name) END
 	END WriteProc;
 	
@@ -2209,19 +2383,20 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			f: Files.File;
 			byte, version, i, tag: INTEGER;
 			word, dword, nofVarEntries, nofEntries, nofCmds, nofPtrs, notTypes, nofImports,
-			nofVarConsLinks, nofLinks, conssize, codesize, nofTypes, refSize, j, ptrs, newMths, refPos: LONGINT;
+			nofVarConsLinks, nofLinks, conssize, codesize, nofTypes, refSize, j, ptrs, mths, inhMths, newMths, refPos: LONGINT;
 			symSize: LONGINT;
 			name: ARRAY 32 OF CHAR;
 			ch: CHAR;
-			pos: LONGINT;
+			pos, filepos: LONGINT;
 			data: ARRAY 16 OF CHAR;
 			entry: EntryArray;
+			flags: SET;
 	BEGIN
-		f := Files.Old(objName);
-		IF f = NIL THEN
-			T := NIL
-		ELSE
-			NEW(T); Texts.Open(T, "");
+		T := NIL; f := Files.Old(objName);
+		IF f # NIL THEN
+			IF ~noOutput THEN
+				NEW(T); Texts.Open(T, "")
+			END;
 			Files.Set(R, f, 0);
 			Texts.SetFont(W, titleFont);
 			suppressH := TRUE;
@@ -2231,9 +2406,14 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				Texts.SetFont(W, defaultFont);
 				WriteString("  Version:         "); GetByte(version); WriteByte(version);
 				WriteLn;
-				Files.ReadNum (R, symSize); Files.Set (R, Files.Base (R), Files.Pos (R) + symSize);	(* skip symbol file *)
+				Files.ReadNum (R, symSize);
+				pos := Files.Pos (R) + symSize;
+				IF version = 0B0H THEN Files.ReadSet(R, flags) END;
+				Files.Set (R, Files.Base (R), pos);	(* skip symbol file *)
 			ELSE
-				WriteString ("  tag not supported or wrong file type!"); WriteLn; Texts.Append (T, W.buf); RETURN
+				WriteString ("  tag not supported or wrong file type!"); WriteLn;
+				IF T # NIL THEN Texts.Append (T, W.buf) END;
+				RETURN
 			END;
 			WriteString(refSizeStr); GetDWord(refSize); WriteDWHex(refSize); WriteLn;
 			WriteString(nofEntriesStr); GetWord(nofEntries); WriteWHex(nofEntries); WriteLn;
@@ -2252,14 +2432,24 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				Next(name[i]);
 				INC(i)
 			UNTIL name[i-1] = 0X;
-			WriteString(name); WriteLn; WriteLn;
-			Texts.Append(T, W.buf);
+			WriteString(name); WriteLn;
+			IF version = 0B0H THEN
+				WriteString("Compilation flags: ");
+				FOR i := 0 TO 31 DO
+					IF i IN flags THEN WriteString(FlagName[i]) END
+				END;
+				WriteLn
+			END;
+			WriteLn;
+			IF T # NIL THEN Texts.Append(T, W.buf) END;
 		(* skip to reference block *)
 			pos := Files.Pos(R);  Files.Set(R, f, Files.Length(f)-refSize);
 			Check(8CX, "Reference:");
 			Reference (refSize);
 			Files.Set(R, f, pos);
-			pos := T.len;  Texts.Append(T, W.buf);
+			IF T # NIL THEN
+				pos := T.len;  Texts.Append(T, W.buf)
+			END;
 		(* entry block *)
 			Check(82X, EntriesStr);
 			i:= 0; NEW(entry, nofEntries);
@@ -2273,13 +2463,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			Check(83X, CommandsStr);
 			i:= 0;
 			WHILE i < nofCmds DO
-				Tab(Pos1);
-				Next(ch);
+				Tab(Pos1); Next(ch); j := 0;
 				WHILE ch # 0X DO
-					Write(ch); Next(ch)
+					name[j] := ch; INC(j); Next(ch)
 				END;
-				Tab(column + 4); GetWord(word); WriteWHex(word); 
-				WriteString(" "); WriteProc(word); WriteLn;
+				name[j] := 0X;
+				Tab(Pos1); GetWord(word); WriteWHex(word); 
+				Tab(Pos1+5); WriteString(name); WriteLn;
 				INC(i)
 			END;
 			WriteLn;
@@ -2287,7 +2477,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			Check(84X, PointersStr);
 			i:= 0;
 			WHILE i < nofPtrs DO
-				Tab(Pos1); GetDWord(dword); WriteDWHex(dword); WriteLn;
+				Tab(Pos1); GetDWord(dword); WriteDWHex(dword); WriteInt(dword); WriteLn;
 				INC(i)
 			END;
 			WriteLn;
@@ -2295,13 +2485,13 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			Check(85X, "Imports:");
 			i:= 0;
 			WHILE i < nofImports DO
-				Tab(Pos1); 
+				INC(i);
+				Tab(Pos1);  WriteByte(i);  Tab(HexPos);
 				Next(ch);
 				WHILE ch # 0X DO
 					Write(ch); Next(ch)
 				END;
-				WriteLn;
-				INC(i)
+				WriteLn
 			END;
 			WriteLn;
 		(* VarConsLink block *)
@@ -2350,7 +2540,9 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			ReadExport; WriteLn;
 		(* Code block *)
 			Check(89X, CodeStr);
+			filepos := Files.Pos(R);
 			suppressH := FALSE; Dump(codesize); suppressH := TRUE; WriteLn; WriteLn;
+			Files.Set(R, f, filepos + codesize); (* if the wrong decoder is installed, the file position might be invalid *)
 		(* Use Block *)
 			ReadUse; WriteLn;
 		(* type block *)
@@ -2362,9 +2554,10 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 				WriteString("  basetypMod: "); GetWord(word); WriteWHex(word);
 				WriteString("  basetypEntry: "); GetDWord(dword); WriteDWHex(dword);
 				WriteLn;
-				WriteString("  nofMths: "); GetWord(word); WriteWHex(word); 
-				WriteString("  nofInhMths: "); GetWord(word); WriteWHex(word);
+				WriteString("  nofMths: "); GetWord(mths); WriteWHex(mths); 
+				WriteString("  nofInhMths: "); GetWord(inhMths); WriteWHex(inhMths);
 				WriteString("  nofnewMths: "); GetWord(newMths); WriteWHex(newMths);
+				WriteString("  nofovrMths: "); WriteWHex(newMths - (mths - inhMths));
 				WriteString("  nofPtrs: "); GetWord(ptrs); WriteWHex(ptrs);
 				WriteLn; WriteString("  ");
 				Next(ch);
@@ -2391,7 +2584,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			END;
 			WriteLn;
 		(* output *)
-			Texts.Insert(T, pos, W.buf);
+			IF T # NIL THEN Texts.Insert(T, pos, W.buf) END;
 			Files.Set(R, NIL, 0)
 		END
 	END DecodeObjFile;
@@ -2466,6 +2659,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 	END DumpType;
 	
 	
+(*
 	PROCEDURE DecodeModule* (objName : ARRAY OF CHAR; VAR T : Texts.Text);
 		VAR i, j, pos: LONGINT; mod: Modules.Module;
 			codesize, refsize, datasize, constsize: LONGINT;
@@ -2506,7 +2700,8 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 		i:= 0;
 		WHILE i < LEN(mod.entries) DO
 			Tab(Pos1); WriteDWHex(mod.entries[i]); 
-			WriteString(" "); WriteProc(mod.entries[i]); WriteLn;
+			WriteString(" "); WriteDWHex(mod.entries[i] - SYSTEM.ADR(mod.code[0]));
+			WriteString(" "); WriteProc(mod.entries[i] - SYSTEM.ADR(mod.code[0])); WriteLn;
 			INC(i)
 		END;
 		WriteLn;
@@ -2562,6 +2757,7 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 
 		Texts.Insert(T, pos, W.buf)
 	END DecodeModule;
+*)
 
 	(** Decoder.Decode Module	Decodes the object file of Module *)
 	PROCEDURE Decode*;
@@ -2570,30 +2766,37 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 			name, suf: ARRAY 32 OF CHAR;
 			ch: CHAR;
 			S: Texts.Scanner;
-			beg, end, time: LONGINT;
+			beg, end, start, time: LONGINT;
 			T: Texts.Text;
 	BEGIN
-		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
-		memory := FALSE; compilable := FALSE;
+		Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
+		start := Texts.Pos(S); Texts.Scan(S);
+		memory := FALSE; compilable := FALSE; raw := FALSE; noOutput := FALSE;
 		WHILE (S.class = Texts.Char) & (S.c = "\") DO	(* get options *)
 			Texts.Scan (S);
 			i := 0;
 			WHILE S.s[i] # 0X DO
 				IF (S.s[i] = "m") THEN memory := TRUE
 				ELSIF (S.s[i] = "c") THEN compilable := TRUE
+				ELSIF (S.s[i] = "n") THEN noOutput := TRUE
+				ELSIF (S.s[i] = "r") THEN raw := TRUE
 				ELSE Out.String("Unsupported option "); Out.Char(S.s[i]); Out.Ln
 				END;
 				INC(i)
 			END;
-			Texts.Scan(S)
+			start := Texts.Pos(S); Texts.Scan(S)
 		END;
+		suppressH := FALSE; suppressOut := noOutput;
 		IF (S.class = Texts.Char) & (S.c = "^") THEN
 			Oberon.GetSelection(T, beg, end, time);
 			IF (T = NIL) OR (time <= 0) THEN S.class := Texts.Inval
-			ELSE Texts.OpenScanner(S, T, beg); Texts.Scan(S)
+			ELSE Texts.OpenScanner(S, T, beg); start := Texts.Pos(S); Texts.Scan(S)
 			END
+		ELSE
+			end := MAX(LONGINT)
 		END;
-		IF S.class = Texts.Name THEN i := 0; ch := S.s[0];  j := MAX(LONGINT);
+		WHILE (S.class = Texts.Name) & (start <= end) DO
+			i := 0; ch := S.s[0];  j := MAX(LONGINT);
 			WHILE ("A" <= CAP(ch)) & (CAP(ch) <= "Z") OR ("0" <= ch) & (ch <= "9") OR (ch = ".") DO
 				IF ch = "." THEN j := i END;
 				name[i] := ch; INC(i); ch := S.s[i]
@@ -2608,21 +2811,35 @@ MODULE Decoder;	(** non-portable *) (* NM 2.3.93 / 26.10.93 *)
 					Strings.Append (name, objSuffix)
 				END
 			END;
-			Texts.Scan(S); 
-			IF S.class = Texts.Int THEN breakpos:= S.i
-			ELSE breakpos:= -1
+			start := Texts.Pos(S); Texts.Scan(S); 
+			IF S.class = Texts.Int THEN
+				breakpos:= S.i; start := Texts.Pos(S); Texts.Scan(S)
+			ELSE
+				breakpos:= -1
 			END;
-			IF memory THEN DecodeModule(name, T) ELSE DecodeObjFile(name, T) END;
+			IF memory THEN HALT(99) (*DecodeModule(name, T)*)
+			ELSE DecodeObjFile(name, T)
+			END;
 			IF T # NIL THEN
 				name[i+1] := "D"; name[i+2] := "e"; name[i+3] := "c";
 				Oberon.OpenText(name, T, 600, 300);
 				breakpos := -1
 			ELSE
-				Out.String("Decoder error: ");Out.String(name); Out.String(" doesn't exist"); Out.Ln;
+				IF Files.Old(name) = NIL THEN
+					Out.String("Decoder error: "); Out.String(name); Out.String(" does not exist"); Out.Ln;
+					S.class := Texts.Inval
+				END
 			END;
 			T := NIL
 		END
 	END Decode;
+	
+	PROCEDURE DecodeThis*(dest: Texts.Text; VAR code: ARRAY OF CHAR);
+	BEGIN
+		memory := TRUE; ReadAdr := SYSTEM.ADR(code[0]); suppressH := FALSE;
+		Dump(LEN(code));
+		Texts.Append(dest, W.buf)
+	END DecodeThis;
 
 (* ======================================================================================== *)
 (* Returns the frame that is at X, Y on the display. u, v contain the relative coordinates inside this frame *)
@@ -2690,7 +2907,7 @@ BEGIN
 	Oberon.GetSelection(ftext, fbeg, fend, ftime);
 	IF ftime >= 0 THEN
 		Texts.OpenScanner(S1, ftext, fbeg); Texts.Scan(S1); line := S1.line;
-		WHILE (S1.class # Texts.Int) & (S1.line = line) DO Texts.Scan(S1) END
+		WHILE ~(S1.class IN {Texts.Int, Texts.Inval}) & (S1.line = line) DO Texts.Scan(S1) END
 	ELSE
 		S1.class := Texts.Inval
 	END;
@@ -2717,13 +2934,19 @@ BEGIN
 	END
 END Find;
 
+(* SetObjSuffix - changes the expected suffix of an object file *)
+PROCEDURE SetObjSuffix*(suffix: ARRAY OF CHAR);
+BEGIN
+	COPY(suffix, objSuffix)
+END SetObjSuffix;
+
 PROCEDURE SetSuffix*;	(* suffix *)
 VAR S: Texts.Scanner;
 BEGIN
 	Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Texts.Scan(S);
 	IF S.class IN {Texts.Name, Texts.String} THEN
-		COPY(S.s, objSuffix);
+		SetObjSuffix(S.s);
 		Out.String("Object file suffix set to ");
 		Out.String(objSuffix)
 	ELSE
@@ -2732,14 +2955,49 @@ BEGIN
 	Out.Ln
 END SetSuffix;
 
+PROCEDURE InstallDecoder*(decodeHandler: DecodeHandler; suffix: ARRAY OF CHAR);
 BEGIN
-	COPY(Modules.extension, objSuffix);
-	(*Out.String("Decoder  NM / pjm / prk"); Out.Ln;*)
+	IF (decodeHandler = NIL) THEN InstallIA32Decoder
+	ELSE decoder := decodeHandler; SetObjSuffix(suffix)
+	END
+END InstallDecoder;
+
+(* ActiveDecoder - returns the currently installed decoder plugin *)
+PROCEDURE ActiveDecoder*(): DecodeHandler;
+BEGIN RETURN decoder
+END ActiveDecoder;
+
+PROCEDURE InstallIA32Decoder*;
+BEGIN
+	InstallDecoder(IA32Decoder, Modules.extension);
+	Out.String("Intel IA32 Decoder Plugin installed"); Out.Ln
+END InstallIA32Decoder;		
+
+BEGIN
+	FlagName[0] := "IndexCheck ";
+	FlagName[1] := "OverflowCheck ";
+	FlagName[2] := "expl. NIL Check ";
+	FlagName[3] := "TypeCheck ";
+	FlagName[5] := "PtrInit ";
+	FlagName[6] := "Assert ";
+	FlagName[20] := "FullStackInit ";
+	FlagName[30] := "ExportDefinitions ";
+	FlagName[31] := "UseDefinitions";
+	(*Out.String("Decoder  NM / pjm / prk 08.11.01"); Out.Ln;*)
 	breakpos := -1; suppressH := FALSE; suppressOut := FALSE;
 	NEW(PE, 32);
-	Texts.OpenWriter(W);  defaultFont := Fonts.This("Courier10.Scn.Fnt"); titleFont := Fonts.This("Oberon12b.Scn.Fnt")
+	Texts.OpenWriter(W);  defaultFont := Fonts.This("Courier10.Scn.Fnt"); titleFont := Fonts.This("Oberon12b.Scn.Fnt");
+	InstallIA32Decoder
 END Decoder.
+
+System.Free Decoder ~
 
 Decoder.Decode ^
 Decoder.Decode \m ^
+Decoder.Decode \c ^
+Decoder.Decode \n ^
 Decoder.SetSuffix .Obx
+
+SoftRISC32.Obx
+
+Decoder.Decode \n SoftBase.Obx SoftRISC32.Obx SoftRISC32Test.Obx ~

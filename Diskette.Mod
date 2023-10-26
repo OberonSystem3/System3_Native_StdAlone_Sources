@@ -1,21 +1,9 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
+MODULE Diskette;	(** non-portable *) (*JG 11.8.94/pjm *)
 
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Diskette;	(** non-portable *) (*JG 11.8.94/pjm 4.7.95 *)
-
-  IMPORT SYSTEM, Diskette0, Files, Input, Oberon, Modules;
+  IMPORT SYSTEM, Disks, Files, Oberon, Modules;
 
 (* driver functionality factored out to Diskette0 for re-use in Oberon-0 *)
 
@@ -78,48 +66,66 @@ MODULE Diskette;	(** non-portable *) (*JG 11.8.94/pjm 4.7.95 *)
 
     EntryHandler* = PROCEDURE (name: ARRAY OF CHAR; date, time, size: LONGINT);
 
+    DiskBuffer = ARRAY MAX(LONGINT) OF CHAR;
+	
 VAR
 	res*: INTEGER;
 	drive*: SHORTINT;
+	open: BOOLEAN;
 	vol: Volume;
-	
-	offtask: Oberon.Task;
+	device: Disks.Device;
 
-(* MotorOff - Switch off motor *)
-
-PROCEDURE MotorOff(me: Oberon.Task);
+PROCEDURE OpenDiskette;
+VAR dev: Disks.DeviceTable; name: Disks.Name; i, res: LONGINT;
 BEGIN
-	Diskette0.StopMotor(drive);
-	Oberon.Remove(offtask);  offtask := NIL
-END MotorOff;
-
-(* SetupMotorTask - Arrange to stop the motor in time *)
-
-PROCEDURE SetupMotorTask;
-BEGIN
-	IF offtask = NIL THEN
-		NEW(offtask);  offtask.safe := FALSE;  offtask.handle := MotorOff;  Oberon.Install(offtask)
+	ASSERT(~open);
+	Disks.GetRegistered(dev);
+	name := "Diskette#"; name[8] := CHR(ORD("0") + drive);
+	FOR i := 0 TO LEN(dev)-1 DO
+		IF dev[i].name = name THEN
+			Disks.Open(dev[i], res);
+			IF res = Disks.Ok THEN
+				ASSERT(~(Disks.Mounted IN dev[i].table[0].flags));
+				INCL(dev[i].table[0].flags, Disks.Mounted);
+				device := dev[i]; open := TRUE; RETURN
+			END
+		END
 	END;
-	offtask.time := Input.Time() + 3*Input.TimeUnit;	(* switch off after 3s *)
-END SetupMotorTask;
+	HALT(99)	(* Diskettes module not loaded *)
+END OpenDiskette;
 
-PROCEDURE GetSectors*(start, num: INTEGER;  VAR buf: ARRAY OF SYSTEM.BYTE;  ofs: LONGINT);
+PROCEDURE CloseDiskette;
+VAR res: LONGINT;
 BEGIN
-	SetupMotorTask;
-	Diskette0.GetSectors(drive, start, num, buf, ofs)
+	ASSERT(open);
+	EXCL(device.table[0].flags, Disks.Mounted);
+	Disks.Close(device, res);	(* ignore res *)
+	device := NIL; open := FALSE
+END CloseDiskette;
+
+PROCEDURE GetSectors(start, num: INTEGER;  VAR buf: ARRAY OF SYSTEM.BYTE;  ofs: LONGINT);
+VAR r: LONGINT;
+BEGIN
+	(*Diskette0.GetSectors(drive, start, num, buf, ofs)*)
+	device.transfer(device, Disks.Read, start, num, SYSTEM.VAL(DiskBuffer, buf), ofs, r);
+	ASSERT(r = Disks.Ok)
 END GetSectors;
 
-PROCEDURE PutSectors*(start, num: INTEGER;  VAR buf: ARRAY OF SYSTEM.BYTE;  ofs: LONGINT);
+PROCEDURE PutSectors(start, num: INTEGER;  VAR buf: ARRAY OF SYSTEM.BYTE;  ofs: LONGINT);
+VAR r: LONGINT;
 BEGIN
-	SetupMotorTask;
-	Diskette0.PutSectors(drive, start, num, buf, ofs)
+	(*Diskette0.PutSectors(drive, start, num, buf, ofs)*)
+	device.transfer(device, Disks.Write, start, num, SYSTEM.VAL(DiskBuffer, buf), ofs, r);
+	ASSERT(r = Disks.Ok)
 END PutSectors;
 
 (* -- driver end -- *)
 
-  PROCEDURE Open* (secPerTrack, nofHeads: INTEGER);
+(*
+  PROCEDURE Open (secPerTrack, nofHeads: INTEGER);
   BEGIN vol.secPerTrack := secPerTrack; vol.nofHeads := nofHeads
   END Open;
+*)
 
   (*Volume management*)
 
@@ -161,13 +167,12 @@ END PutSectors;
   END Blocks;
 
   PROCEDURE Locate (name: ARRAY OF CHAR; VAR f: File);
-    VAR s: ARRAY 32 OF CHAR;
   BEGIN f := vol.dir.prev; 
     WHILE f.name > name DO f := f.prev END
   END Locate;
 
   PROCEDURE ReadFAT;
-    VAR n: LONGINT; i, j, n0, n1, off: INTEGER;
+    VAR n: LONGINT; i, j, n0, n1: INTEGER;
       buf: ARRAY maxFATSize OF CHAR;
   BEGIN 
     GetSectors(vol.FATStart, vol.secPerFAT, buf, 0);
@@ -184,7 +189,7 @@ END PutSectors;
   END ReadFAT;
 
   PROCEDURE WriteFAT;
-    VAR n: LONGINT; i, j, n0, n1, off: INTEGER;
+    VAR n: LONGINT; i, j, n0, n1: INTEGER;
       buf: ARRAY maxFATSize OF CHAR;
   BEGIN
     buf[0] := vol.mediaDesc; buf[1] := 0FFX; buf[2] := 0FFX;
@@ -258,7 +263,7 @@ END PutSectors;
 
   PROCEDURE InitOberonVol* (name: ARRAY OF CHAR);
     VAR i: INTEGER;
-  BEGIN GetVolDesc;
+  BEGIN OpenDiskette; GetVolDesc;
     COPY(name, vol.name); vol.code := "o"; 
     NEW(vol.dir); vol.dir.name[0] := 0X;
     Oberon.GetClock(vol.dir.time, vol.dir.date); vol.dir.size := 0;
@@ -266,7 +271,7 @@ END PutSectors;
     vol.FAT[0] := 4095; vol.FAT[1] := 4095; i := 2;
     REPEAT vol.FAT[i] := 0; vol.FAT[i+1] := 0; i := i+2 UNTIL i >= vol.nofBlocks;
     WriteFAT; WriteOberonDir;
-    vol := NIL
+    vol := NIL; CloseDiskette
   END InitOberonVol;
 
   (*DOS format support*)
@@ -354,7 +359,7 @@ END PutSectors;
 
   PROCEDURE InitDOSVol* (name: ARRAY OF CHAR);
     VAR i: INTEGER;
-  BEGIN GetVolDesc;
+  BEGIN OpenDiskette; GetVolDesc;
     COPY(name, vol.name); vol.code := 0X;
     NEW(vol.dir); vol.dir.name[0] := 0X; vol.dir.attributes := 28X; (*archive & volume*)
     Oberon.GetClock(vol.dir.time, vol.dir.date); vol.dir.size := 0;
@@ -362,12 +367,13 @@ END PutSectors;
     vol.FAT[0] := 4095; vol.FAT[1] := 4095; i := 2;
     REPEAT vol.FAT[i] := 0; vol.FAT[i+1] := 0; i := i+2 UNTIL i >= vol.nofBlocks;
     WriteFAT; WriteDOSDir;
-    vol := NIL
+    vol := NIL; CloseDiskette
   END InitDOSVol;
 
   PROCEDURE OpenVol* (VAR freeEntries, freeSpace: INTEGER);
-    VAR f, g: File; buf: ARRAY maxEntries OF FileDesc;
-  BEGIN GetVolDesc;
+    VAR buf: ARRAY maxEntries OF FileDesc;
+  BEGIN OpenDiskette;
+    GetVolDesc;
     vol.freeEntries := vol.nofEntries;
     vol.freeBlocks := vol.nofBlocks - 2;
     GetSectors(vol.dirStart, 1, buf, 0);
@@ -389,7 +395,7 @@ END PutSectors;
     IF vol.modified THEN WriteFAT;
       IF vol.code = "o" THEN WriteOberonDir ELSE WriteDOSDir END
     END;
-    vol := NIL
+    vol := NIL; CloseDiskette
   END CloseVol;
 
   (*File management*)
@@ -452,7 +458,7 @@ END PutSectors;
   END deleteFile;
 
   PROCEDURE addFile (f: Files.File; g, h: File);
-    VAR Rf: Files.Rider; remSize: LONGINT; off, i, j, k: INTEGER;
+    VAR Rf: Files.Rider; remSize: LONGINT; i, j: INTEGER;
       buf: ARRAY maxBlockSize OF CHAR;
   BEGIN
     IF h.size # 0 THEN remSize := h.size;
@@ -475,7 +481,7 @@ END PutSectors;
 
   PROCEDURE ReadFile* (name, oname: ARRAY OF CHAR);
     VAR f: File; g: Files.File; nname: ARRAY 32 OF CHAR;
-  BEGIN
+  BEGIN ASSERT(open);
     NormName(name, nname); Locate(nname, f);
     IF f.name = nname THEN
       g := Files.New(oname); readFile(f, g); Files.Register(g); res := 0
@@ -486,7 +492,7 @@ END PutSectors;
   PROCEDURE WriteFile* (oname, name: ARRAY OF CHAR);
     VAR f: Files.File; g, h: File; size: LONGINT; need: INTEGER;
       nname: ARRAY 32 OF CHAR;
-  BEGIN
+  BEGIN ASSERT(open);
     res := 0; f := Files.Old(oname);
     IF f # NIL THEN size := Files.Length(f);
       NormName(name, nname); Locate(nname, g);
@@ -517,7 +523,7 @@ END PutSectors;
 
   PROCEDURE DeleteFile* (name: ARRAY OF CHAR);
     VAR g: File; nname: ARRAY 32 OF CHAR;
-  BEGIN
+  BEGIN ASSERT(open);
     NormName(name, nname); Locate(nname, g);
     IF g.name = nname THEN deleteFile(g);
       INC(vol.freeEntries);
@@ -530,7 +536,7 @@ END PutSectors;
 
   PROCEDURE Enumerate* (proc: EntryHandler);
     VAR f: File;
-  BEGIN
+  BEGIN ASSERT(open);
     proc(vol.name, vol.dir.date, vol.dir.time, 0);
     f := vol.dir.next;
     WHILE f # vol.dir DO
@@ -538,12 +544,12 @@ END PutSectors;
     END
   END Enumerate;
 
-PROCEDURE *Cleanup;
+PROCEDURE Cleanup;
 BEGIN
-	IF offtask # NIL THEN MotorOff(offtask) END
+	IF open THEN CloseDiskette END
 END Cleanup;
 
-BEGIN drive := 0;  offtask := NIL;  Modules.InstallTermHandler(Cleanup)
+BEGIN drive := 0;  Modules.InstallTermHandler(Cleanup)
 END Diskette.
 
 System.Free Backup Diskette ~

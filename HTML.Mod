@@ -1,22 +1,10 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE HTML;	(** portable *) (* jm 26.8.94 *)
 
 IMPORT
-	Files, Objects, Texts, Oberon, Fonts, Out;
+	Files, Objects, Texts, Oberon, Out;
 
 CONST
 (* possible values of the variable typ denoting the paragraph type *)
@@ -30,8 +18,8 @@ CONST
 
 	tab = 09X;
 	
-	DocHeader = TRUE;	(* include HTML 2.0 document header comment *)
-	BodyColor = FALSE;	(* set body color - Netscape-specific *)
+	DocHeader = TRUE;	(* include document header comment *)
+	BodyColor = TRUE;	(* set body color - HTML 4-specific *)
 
 VAR
 	out: Files.Rider;
@@ -65,7 +53,7 @@ BEGIN
 END MatchFont;
 
 (* Delimit a paragraph: begins at lastnl and ends at end *)
-PROCEDURE GetPara(VAR R: Texts.Reader; VAR beg, end: LONGINT; VAR typ: SHORTINT);
+PROCEDURE GetPara(T: Texts.Text; VAR R: Texts.Reader; VAR beg, end: LONGINT; VAR typ: SHORTINT);
 VAR ch, firstch: CHAR; firstfnt: Objects.Library; firstcol: INTEGER; lastnl: LONGINT;
 BEGIN
 	beg := Texts.Pos(R); end := beg; lastnl := beg;
@@ -87,7 +75,8 @@ BEGIN
 				end := Texts.Pos(R)-1;
 				Texts.Read(R, ch);
 				WHILE ~R.eot & (ch = " ") OR (ch = tab) DO Texts.Read(R, ch) END;
-				IF ch = 0DX THEN EXIT END;
+				IF ch = "*" THEN Texts.OpenReader(R, T, Texts.Pos(R)-1); EXIT END;
+				IF ch = 0DX THEN EXIT END
 			END
 		END;
 		IF firstcol = 1 THEN (* red *) typ := title
@@ -109,22 +98,30 @@ BEGIN
 		WHILE beg < end DO
 			IF R.lib # lastlib THEN
 				IF MatchFont(R.lib.name, "12i") THEN
-					IF ~italic THEN S("<I>"); italic := TRUE END
+					IF ~italic THEN S("<i>"); italic := TRUE END
 				ELSE
-					IF italic THEN S("</I>"); italic := FALSE END
+					IF italic THEN S("</i>"); italic := FALSE END
 				END;
 				lastlib := R.lib
 			END;
 			IF ch = "ü" THEN S("&uuml;")
 			ELSIF ch = "Ü" THEN S("&Uuml;")
+			ELSIF ch = "ù" THEN S("&ugrave;")
 			ELSIF ch = "ä" THEN S("&auml;")
 			ELSIF ch = "Ä" THEN S("&Auml;")
-			ELSIF ch = "ö" THEN S("&ouml;")
-			ELSIF ch = "Ö" THEN S("&Ouml;")
+			ELSIF ch = "á" THEN S("&aacute;")
+			ELSIF ch = "à" THEN S("&agrave;")
+			ELSIF ch = "ë" THEN S("&euml;")
 			ELSIF ch = "é" THEN S("&eacute;")
 			ELSIF ch = "è" THEN S("&egrave;")
+			ELSIF ch = "ö" THEN S("&ouml;")
+			ELSIF ch = "Ö" THEN S("&Ouml;")
+			ELSIF ch = "ò" THEN S("&ograve;")
+			ELSIF ch = "ï" THEN S("&iuml;")
+			ELSIF ch = "ì" THEN S("&igrave;")
 			ELSIF ch = 0DX THEN C(" "); C(sep)
-			ELSIF (ch >= " ") OR (ch = tab) OR (ch = "-") THEN
+			ELSIF ch = tab THEN S("&nbsp; &nbsp; &nbsp;")
+			ELSIF (ch >= " ") OR (ch = "-") THEN
 				C(ch)
 			END;
 			Texts.Read(R, ch);
@@ -155,9 +152,9 @@ BEGIN col := -1; pos := beg; anchor := "";
 				Texts.Read(R, ch)
 			END;
 			anchor[apos] := 0X;
-			S("<A HREF="); C(22X); S(anchor); C(22X); C(">");
+			S("<a href="); C(22X); S(anchor); C(22X); C(">");
 			WriteStretch(T, beg, lstart); beg := pos+1;
-			S("</A>")
+			S("</a>")
 		ELSE INC(pos); Texts.Read(R, ch)
 		END
 	END;
@@ -185,11 +182,11 @@ VAR R: Texts.Reader; beg, end, nbeg, nend: LONGINT; typ, ntyp: SHORTINT; body: B
 
 	PROCEDURE StartBody;
 	BEGIN
-		S("</HEAD>"); L;
+		S("</head>"); L;
 		IF BodyColor THEN
-			S("<BODY BGCOLOR="); C(22X); S("#FFFFFF"); C(22X); S(">"); L
+			S("<body BGCOLOR="); C(22X); S("#FFFFFF"); C(22X); S(">"); L
 		ELSE
-			S("<BODY>"); L
+			S("<body>"); L
 		END;
 		body := TRUE
 	END StartBody;
@@ -197,13 +194,13 @@ VAR R: Texts.Reader; beg, end, nbeg, nend: LONGINT; typ, ntyp: SHORTINT; body: B
 BEGIN
 	italic := FALSE; body := FALSE;
 	Texts.OpenReader(R, T, start);
-	GetPara(R, beg, end, typ);
+	GetPara(T, R, beg, end, typ);
 	IF DocHeader THEN
-		S("<!DOCTYPE HTML PUBLIC "); C(22X); S("-//IETF//DTD HTML 2.0//EN"); C(22X); S(">"); L
+		S("<!DOCTYPE HTML PUBLIC "); C(22X); S("-//W3C//DTD HTML 4.01 Transitional//EN"); C(22X); S(">"); L
 	END;
-	S("<HTML>"); L;
-	S("<HEAD>"); L;
-	S("<TITLE>");
+	S("<html>"); L;
+	S("<head>"); L;
+	S("<title>");
 	IF typ = title THEN
 		GetPrefix(T, beg, end, filename); (* Skip that file name, discarding it *)
 		WritePara(T, beg, end);
@@ -211,53 +208,55 @@ BEGIN
 	ELSE
 		S("Untitled")
 	END;
-	S("</TITLE>"); L;
+	S("</title>"); L;
+	S('<meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">'); L;
 	WHILE ~R.eot DO
 		IF ~body & (typ # title) THEN StartBody END; (* first non-title paragraph starts body *)
-		GetPara(R, nbeg, nend, ntyp);
+		GetPara(T, R, nbeg, nend, ntyp);
 		IF body & (ntyp = title) THEN ntyp := para END; (* treat a title paragraph in body like normal *)
-		IF typ = bullet THEN S("<LI>"); INC(beg)
-		ELSIF typ = heading THEN S("<H2>")
+		IF typ = bullet THEN S("<li>"); INC(beg)
+		ELSIF typ = heading THEN S("<h2>")
 		ELSE (* skip *)
 		END;
-		IF typ = line THEN S("<HR>") (* Horizontal Ruler *)
+		IF typ = line THEN S("<hr>") (* Horizontal Ruler *)
 		(*ELSIF typ = title THEN*) (* skip *)
 		ELSE
 			WritePara(T, beg, end); (* write previous *)
 			IF typ = pre THEN C(0DX) END
 		END;
-		IF typ = heading THEN S("</H2>") END;
+		IF typ = heading THEN S("</h2>") END;
 		IF beg # end THEN L END;
 		
 		(* List *)
 		IF (ntyp = bullet) & (typ # bullet) THEN (* open list *)
-			S("<UL>"); L
+			S("<ul>"); L
 		ELSIF (ntyp # bullet) & (typ = bullet) THEN (* close list *)
-			S("</UL>"); L
+			S("</ul>"); L
 		END;
 		
 		(* Pre-formatted text *)
 		IF (ntyp = pre) & (typ # pre) THEN (* start pre-formatted text *)
-			S("<PRE>")
+			IF ~body THEN StartBody END;
+			S("<pre>")
 		ELSIF (ntyp # pre) & (typ = pre) THEN
-			S("</PRE>"); L
+			S("</pre>"); L
 		END;
 		
 		(* Separate 2 consecutive "normal" paragraphs with a paragraph break, except two preformatteds *)
-		IF (ntyp = para) & (typ = para) THEN S("<P>"); L END;
+		IF (ntyp = para) & (typ = para) THEN S("<p>"); L END;
 		
 		end := nend; beg := nbeg; typ := ntyp
 	END;
 	IF ~body & (typ # title) THEN StartBody END;
 	WritePara(T, beg, end); (* write previous *)
 	IF (typ = bullet) THEN (* close list *)
-		S("</UL>"); L
+		S("</ul>"); L
 	END;
 	IF (typ = pre) THEN
-		S("</PRE>"); L
+		S("</pre>"); L
 	END;
-	S("</BODY>"); L;
-	S("</HTML>"); L
+	S("</body>"); L;
+	S("</html>"); L
 END ConvertText;
 
 (** Show a preview of the HTML text in a text viewer - Processes ONLY one text! *) 
@@ -306,7 +305,7 @@ PROCEDURE Compile*;
 		IF T.len > 0 THEN
 		(* Get the file name from the source text, at the beginning i.e. pos 0 *)
 			Texts.OpenReader(R, T, 0);
-			GetPara(R, beg, end, typ);
+			GetPara(T, R, beg, end, typ);
 			IF typ = title THEN
 				GetPrefix(T, beg, end, filename)
 			END;
@@ -357,9 +356,8 @@ END Compile;
 
 END HTML.
 
+System.Free HTML ~
+
 HTML.Compile ^	HTML.Compile *
 
 HTML.Show ^		HTML.Show *		HTML.Show @
-
-HTML.Compile Native.Text ~
-EditTools.OpenUnix Native.html

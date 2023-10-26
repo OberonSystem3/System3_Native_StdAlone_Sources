@@ -1,4 +1,7 @@
-MODULE GfxPrinter;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxPrinter; (** portable *)	(* eos   *)
 
 	(**
 		Raster contexts rendering to Oberon printer
@@ -6,14 +9,18 @@ MODULE GfxPrinter;	(** eos   **)
 	
 	(*
 		10.12.98 - first version; derived from GfxDev
+		25.8.99 - replaced GfxMaps with Images/GfxImages
+		10.8.99 - scratched SetPoint, added Close method
+		13.02.2000 - new get/set clip methods
+		30.03.2000 - use font as metric if printer metric is NIL
 	*)
 	
 	IMPORT
-		Display, Fonts, Printer, GfxMatrix, GfxMaps, GfxRegions, GfxFonts, Gfx, GfxRaster;
+		Display, Fonts, Printer, Images, GfxMatrix, GfxImages, GfxRegions, GfxFonts, Gfx, GfxRaster;
 		
 	
 	CONST
-		R = GfxMaps.R; G = GfxMaps.G; B = GfxMaps.B; A = GfxMaps.A;
+		R = Images.r; G = Images.g; B = Images.b; A = Images.a;
 		
 	
 	TYPE
@@ -28,12 +35,14 @@ MODULE GfxPrinter;	(** eos   **)
 		RegData = RECORD (GfxRegions.EnumData)
 			pc: Context;
 			dx, dy: INTEGER;
-			map: GfxMaps.Map;
+			img: Images.Image;
+			col: Images.Pixel;
 		END;
 		
 	
 	VAR
 		Methods: Gfx.Methods;
+		White: Images.Pixel;
 		
 	
 	(*--- Rendering ---*)
@@ -54,60 +63,22 @@ MODULE GfxPrinter;	(** eos   **)
 		END
 	END Color;
 	
-	PROCEDURE CopyImage (llx, lly, urx, ury: INTEGER; VAR data: GfxRegions.EnumData);
-		VAR col: Gfx.Color; y, x, len: INTEGER; pix: GfxMaps.Pixel;
-	BEGIN
-		WITH data: RegData DO
-			col.r := -1; col.g := -1; col.b := -1;
-			y := lly;
-			WHILE y < ury DO
-				x := llx; len := 0;
-				WHILE x + len < urx DO
-					GfxMaps.Get(data.map, x - data.dx + len, y - data.dy, pix, GfxMaps.SrcCopy);
-					IF pix[A] # 0X THEN	(* pixel visible; already blended *)
-						IF (ORD(pix[R]) = col.r) & (ORD(pix[G]) = col.g) & (ORD(pix[B]) = col.b) THEN	(* same color as last pixel *)
-							INC(len)
-						ELSE
-							IF len > 0 THEN
-								UseColor(data.pc, col);
-								Printer.ReplConst(x, y, len, 1);
-								INC(x, len)
-							END;
-							col.r := ORD(pix[R]); col.g := ORD(pix[G]); col.b := ORD(pix[B]);
-							len := 1
-						END
-					ELSIF len > 0 THEN
-						UseColor(data.pc, col);
-						Printer.ReplConst(x, y, len, 1);
-						INC(x, len); len := 0
-					ELSE
-						INC(x)
-					END
-				END;
-				IF len > 0 THEN
-					UseColor(data.pc, col);
-					Printer.ReplConst(x, y, len, 1)
-				END;
-				INC(y)
-			END
-		END
-	END CopyImage;
-	
 	PROCEDURE Tile (llx, lly, urx, ury: INTEGER; VAR data: GfxRegions.EnumData);
-		VAR mw, mh, mx, my, y, x, len: INTEGER; col: Gfx.Color; white, buf: GfxMaps.Pixel;
+		VAR mw, mh, mx, my, y, x, len, r, g, b, a: INTEGER; col: Gfx.Color; bit, adr: LONGINT; pix: Images.Pixel;
 	BEGIN
 		WITH data: RegData DO
-			mw := data.map.width; mh := data.map.height;
+			mw := data.img.width; mh := data.img.height;
 			col.r := -1; col.g := -1; col.b := -1;
-			white[R] := 0FFX; white[G] := 0FFX; white[B] := 0FFX; white[A] := 0FFX;
 			y := lly; my := (lly - data.dy) MOD mh;
 			WHILE y < ury DO
 				x := llx; mx := (llx - data.dx) MOD mw; len := 0;
+				bit := mx * data.img.fmt.bpp; adr := data.img.adr + my * data.img.bpr + bit DIV 8; bit := bit MOD 8;
 				WHILE x + len < urx DO
-					buf := white;
-					GfxMaps.Get(data.map, mx, my, buf, GfxMaps.SrcCopy);
-					IF buf[A] # 0X THEN
-						IF (col.r = ORD(buf[R])) & (col.g = ORD(buf[G])) & (col.b = ORD(buf[B])) THEN
+					pix := data.col;
+					data.img.fmt.unpack(data.img.fmt, adr, bit, pix);
+					IF pix[A] # 0X THEN	(* pixel visible *)
+						Images.GetRGBA(pix, r, g, b, a);
+						IF (r = col.r) & (g = col.g) & (b = col.b) THEN	(* same color as last pixel *)
 							INC(len)
 						ELSE
 							IF len > 0 THEN
@@ -115,7 +86,7 @@ MODULE GfxPrinter;	(** eos   **)
 								Printer.ReplConst(x, y, len, 1);
 								INC(x, len)
 							END;
-							col.r := ORD(buf[R]); col.g := ORD(buf[G]); col.b := ORD(buf[B]);
+							col.r := r; col.g := g; col.b := b;
 							len := 1
 						END
 					ELSE
@@ -126,7 +97,12 @@ MODULE GfxPrinter;	(** eos   **)
 						END;
 						INC(x)
 					END;
-					mx := (mx + 1) MOD mw
+					INC(mx);
+					IF mx = mw THEN
+						mx := 0; adr := data.img.adr + my * data.img.bpr; bit := 0
+					ELSE
+						bit := bit + data.img.fmt.bpp; INC(adr, bit DIV 8); bit := bit MOD 8
+					END
 				END;
 				IF len > 0 THEN
 					UseColor(data.pc, col);
@@ -138,7 +114,7 @@ MODULE GfxPrinter;	(** eos   **)
 	END Tile;
 	
 	PROCEDURE Dot (rc: GfxRaster.Context; x, y: LONGINT);
-		VAR pc: Context; px, py: INTEGER; pix: GfxMaps.Pixel; col: Gfx.Color;
+		VAR pc: Context; mode: Images.Mode; px, py: INTEGER; pix: Images.Pixel; col: Gfx.Color;
 	BEGIN
 		IF (rc.clipState = GfxRaster.In) OR
 			(rc.clipState = GfxRaster.InOut) & GfxRegions.RectInside(SHORT(x), SHORT(y), SHORT(x+1), SHORT(y+1), rc.clipReg)
@@ -148,11 +124,11 @@ MODULE GfxPrinter;	(** eos   **)
 				UseColor(pc, pc.col);
 				Printer.ReplConst(SHORT(x), SHORT(y), 1, 1)
 			ELSE
-				pc.pat.map.fmt.col := pc.col;
-				px := SHORT(x - ENTIER(pc.orgX + pc.pat.px + 0.5)) MOD pc.pat.map.width;
-				py := SHORT(y - ENTIER(pc.orgY + pc.pat.py + 0.5)) MOD pc.pat.map.height;
-				pix[R] := 0FFX; pix[G] := 0FFX; pix[B] := 0FFX; pix[A] := 0FFX;
-				GfxMaps.GetPixels(pc.pat.map, px, py, 1, GfxMaps.PixelFormat, pix, GfxMaps.SrcAlpha);
+				px := SHORT(x - ENTIER(pc.orgX + pc.pat.px + 0.5)) MOD pc.pat.img.width;
+				py := SHORT(y - ENTIER(pc.orgY + pc.pat.py + 0.5)) MOD pc.pat.img.height;
+				Images.InitModeColor(mode, Images.srcOverDst, pc.col.r, pc.col.g, pc.col.b);
+				pix := White;
+				Images.GetPixels(pc.pat.img, px, py, 1, Images.PixelFormat, pix, mode);
 				IF pix[A] # 0X THEN
 					col.r := ORD(pix[R]); col.g := ORD(pix[G]); col.b := ORD(pix[B]);
 					UseColor(pc, col);
@@ -176,10 +152,10 @@ MODULE GfxPrinter;	(** eos   **)
 					GfxRegions.Enumerate(pc.clipReg, SHORT(llx), SHORT(lly), SHORT(urx), SHORT(ury), Color, data)
 				END
 			ELSE
-				pc.pat.map.fmt.col := pc.col;
+				Images.SetRGB(data.col, pc.col.r, pc.col.g, pc.col.b);
 				data.dx := SHORT(ENTIER(pc.orgX + pc.pat.px + 0.5));
 				data.dy := SHORT(ENTIER(pc.orgY + pc.pat.py + 0.5));
-				data.map := pc.pat.map; data.pc := pc;
+				data.img := pc.pat.img; data.pc := pc;
 				GfxRegions.Enumerate(pc.clipReg, SHORT(llx), SHORT(lly), SHORT(urx), SHORT(ury), Tile, data)
 			END
 		END
@@ -223,6 +199,7 @@ MODULE GfxPrinter;	(** eos   **)
 			pc := ctxt(Context);
 			GfxMatrix.Apply(pc.ctm, x, y, u, v);
 			metric := Printer.GetMetric(font.rfont);
+			IF metric = NIL THEN metric := font.rfont END;
 			i := 0; aw := 0;
 			WHILE str[i] # 0X DO
 				Fonts.GetChar(metric, str[i], dx, bx, by, w, h, pat);
@@ -243,83 +220,72 @@ MODULE GfxPrinter;	(** eos   **)
 		END
 	END Show;
 	
-	PROCEDURE Erase (ctxt: Gfx.Context);
-		VAR pc: Context; col: Gfx.Color; pat: Gfx.Pattern; data: RegData;
-	BEGIN
-		pc := ctxt(Context);
-		col := pc.col; pat := pc.pat; pc.col := Gfx.White; pc.pat := NIL;
-		data.pc := pc;
-		GfxRegions.Enumerate(pc.defClip, pc.defClip.llx, pc.defClip.lly, pc.defClip.urx, pc.defClip.ury, Color, data);
-		pc.col := col; pc.pat := pat
-	END Erase;
-	
-	PROCEDURE Image (ctxt: Gfx.Context; x, y: REAL; map: GfxMaps.Map; VAR filter: GfxMaps.Filter);
+	PROCEDURE Image (ctxt: Gfx.Context; x, y: REAL; img: Images.Image; VAR filter: GfxImages.Filter);
 		VAR
-			pc: Context; m: GfxMatrix.Matrix; dx, dy, x0, y0, x1, y1, j, i: INTEGER; llx, lly, urx, ury: REAL; tmp: GfxMaps.Map;
-			blend: GfxMaps.BlendProc; col: GfxMaps.Color; spix, dpix: GfxMaps.Pixel; data: RegData;
+			pc: Context; tmp: Images.Image; m: GfxMatrix.Matrix; dx, dy, x0, y0, x1, y1, op, j, i: INTEGER; llx, lly, urx, ury: REAL;
+			col: Gfx.Color; mode: Images.Mode; pix: Images.Pixel; p: LONGINT; data: RegData;
 	BEGIN
 		pc := ctxt(Context); tmp := NIL;
 		GfxMatrix.Translate(pc.ctm, x, y, m);
 		dx := SHORT(ENTIER(m[2, 0])); m[2, 0] := m[2, 0] - dx;
 		dy := SHORT(ENTIER(m[2, 1])); m[2, 1] := m[2, 1] - dy;
-		IF (filter.hshift # GfxMaps.NoFilter.hshift) & (0.1 < m[2, 0]) & (m[2, 0] < 0.9) OR
-			(filter.vshift # GfxMaps.NoFilter.vshift) & (0.1 < m[2, 1]) & (m[2, 1] < 0.9) OR
+		IF (filter.hshift # GfxImages.NoFilter.hshift) & (0.1 < m[2, 0]) & (m[2, 0] < 0.9) OR
+			(filter.vshift # GfxImages.NoFilter.vshift) & (0.1 < m[2, 1]) & (m[2, 1] < 0.9) OR
 			GfxMatrix.Scaled(m) OR
 			GfxMatrix.Rotated(m)
 		THEN	(* transform to intermediate map *)
-			GfxMatrix.ApplyToRect(m, 0, 0, map.width, map.height, llx, lly, urx, ury);
+			GfxMatrix.ApplyToRect(m, 0, 0, img.width, img.height, llx, lly, urx, ury);
 			x0 := SHORT(ENTIER(llx)); y0 := SHORT(ENTIER(lly));
 			x1 := -SHORT(ENTIER(-urx)); y1 := -SHORT(ENTIER(-ury));
 			GfxRegions.ClipRect(x0, y0, x1, y1, pc.clipReg.llx - dx, pc.clipReg.lly - dy, pc.clipReg.urx - dx, pc.clipReg.ury - dy);
-			NEW(tmp); GfxMaps.Create(tmp, x1 - x0, y1 - y0, GfxMaps.BGRA32);
+			NEW(tmp); Images.Create(tmp, x1 - x0, y1 - y0, Images.BGRA8888);
 			
 			m[2, 0] := m[2, 0] - x0; m[2, 1] := m[2, 1] - y0;
-			blend := filter.blend; filter.blend := GfxMaps.SrcCopyProc;
-			col := map.fmt.col; map.fmt.col := pc.fillCol;
-			GfxMaps.Transform(map, tmp, m, filter);
-			filter.blend := blend; map.fmt.col := col;
-			map := tmp; INC(dx, x0); INC(dy, y0)
+			op := filter.op; col.r := ORD(filter.col[R]); col.g := ORD(filter.col[G]); col.b := ORD(filter.col[B]);
+			Images.InitModeColor(filter, Images.srcCopy, pc.fillCol.r, pc.fillCol.g, pc.fillCol.b);
+			GfxImages.Transform(img, tmp, m, filter);
+			Images.InitModeColor(filter, op, col.r, col.g, col.b);
+			img := tmp; INC(dx, x0); INC(dy, y0)
 		END;
 		
-		IF blend # GfxMaps.SrcCopy.blend THEN	(* blend with background color *)
-			IF tmp = NIL THEN	(* need intermediate map to blend *)
-				NEW(tmp); GfxMaps.Create(tmp, map.width, map.height, GfxMaps.BGRA32);
-				col := map.fmt.col; map.fmt.col := pc.fillCol;
-				GfxMaps.Copy(map, tmp, 0, 0, map.width, map.height, 0, 0, GfxMaps.SrcCopy);
-				map.fmt.col := col;
-				map := tmp
+		IF filter.op # Images.srcCopy THEN	(* blend with background color *)
+			IF tmp = NIL THEN	(* need intermediate image to blend *)
+				NEW(tmp); Images.Create(tmp, img.width, img.height, Images.BGRA8888);
+				Images.InitModeColor(mode, Images.srcCopy, pc.fillCol.r, pc.fillCol.g, pc.fillCol.b);
+				Images.Copy(img, tmp, 0, 0, img.width, img.height, 0, 0, mode);
+				img := tmp
 			END;
-			dpix[R] := 0FFX; dpix[G] := 0FFX; dpix[B] := 0FFX; dpix[A] := 0FFX;
+			Images.Bind(filter, Images.BGRA8888, Images.BGRA8888);
+			NEW(tmp); Images.InitBuf(tmp, 1, 1, Images.BGRA8888, 0, 0, pix);
 			j := 0;
-			WHILE j < map.height DO
-				i := 0;
-				WHILE i < map.width DO
-					GfxMaps.Get(map, i, j, spix, GfxMaps.SrcCopy);
-					IF spix[A] # 0X THEN	(* ignore pixels with zero alpha (not part of transformed image) *)
-						filter.blend(filter, spix, dpix, spix);
-						GfxMaps.Put(map, i, j, spix, GfxMaps.SrcCopy)
+			WHILE j < img.height DO
+				i := 0; p := j * img.bpr;
+				WHILE i < img.width DO
+					IF img.mem[p + A] # 0X THEN	(* ignore pixels with zero alpha (not part of transformed image) *)
+						pix := White;	(* substitute white background *)
+						filter.transfer(filter, img.adr + p, 0, tmp.adr, 0, 1);
+						img.mem[p] := pix[0]; img.mem[p+1] := pix[1]; img.mem[p+2] := pix[2]; img.mem[p+3] := pix[3]
 					END;
-					INC(i)
+					INC(i); INC(p, 4)
 				END;
 				INC(j)
 			END
 		END;
 		
 		(* display visible parts *)
-		col := map.fmt.col; map.fmt.col := pc.fillCol;
-		data.pc := pc; data.map := map; data.dx := dx; data.dy := dy;
-		GfxRegions.Enumerate(pc.clipReg, dx, dy, dx + map.width, dy + map.height, CopyImage, data);
-		map.fmt.col := col
+		Images.SetRGB(data.col, pc.fillCol.r, pc.fillCol.g, pc.fillCol.b);
+		data.pc := pc; data.img := img; data.dx := dx; data.dy := dy;
+		GfxRegions.Enumerate(pc.clipReg, dx, dy, dx + img.width, dy + img.height, Tile, data)
 	END Image;
 	
-	PROCEDURE NewPattern (ctxt: Gfx.Context; map: GfxMaps.Map; px, py: REAL): Gfx.Pattern;
+	PROCEDURE NewPattern (ctxt: Gfx.Context; img: Images.Image; px, py: REAL): Gfx.Pattern;
 		VAR scale: REAL; pat: Gfx.Pattern; w, h: INTEGER;
 	BEGIN
 		scale := 10000/Printer.Unit;
 		NEW(pat); pat.px := scale * px; pat.py := scale * py;
-		w := -SHORT(ENTIER(-scale * map.width)); h := -SHORT(ENTIER(-scale * map.height));
-		NEW(pat.map); GfxMaps.Create(pat.map, w, h, map.fmt);
-		GfxMaps.Scale(map, pat.map, scale, scale, 0, 0, GfxMaps.LinearFilter);
+		w := -SHORT(ENTIER(-scale * img.width)); h := -SHORT(ENTIER(-scale * img.height));
+		NEW(pat.img); Images.Create(pat.img, w, h, img.fmt);
+		GfxImages.Scale(img, pat.img, scale, scale, 0, 0, GfxImages.LinearFilter);
 		RETURN pat
 	END NewPattern;
 	
@@ -331,21 +297,20 @@ MODULE GfxPrinter;	(** eos   **)
 		do.resetCTM := ResetCTM; do.setCTM := Gfx.DefSetCTM; do.translate := Gfx.DefTranslate;
 		do.scale := Gfx.DefScale; do.rotate := Gfx.DefRotate; do.concat := Gfx.DefConcat;
 		do.resetClip := ResetClip; do.getClipRect := GfxRaster.GetClipRect;
-		do.saveClip := GfxRaster.SaveClip; do.restoreClip := GfxRaster.RestoreClip;
+		do.getClip := GfxRaster.GetClip; do.setClip := GfxRaster.SetClip;
 		do.setStrokeColor := Gfx.DefSetStrokeColor; do.setStrokePattern := Gfx.DefSetStrokePattern;
 		do.setFillColor := Gfx.DefSetFillColor; do.setFillPattern := Gfx.DefSetFillPattern;
 		do.setLineWidth := Gfx.DefSetLineWidth; do.setDashPattern := Gfx.DefSetDashPattern;
 		do.setCapStyle := Gfx.DefSetCapStyle; do.setJoinStyle := Gfx.DefSetJoinStyle;
-		do.setStyleLimit := Gfx.DefSetStyleLimit;
-		do.setPoint := Gfx.DefSetPoint; do.setFlatness := Gfx.DefSetFlatness;
+		do.setStyleLimit := Gfx.DefSetStyleLimit; do.setFlatness := Gfx.DefSetFlatness;
 		do.setFont := Gfx.DefSetFont; do.getWidth := Gfx.DefGetStringWidth;
 		do.begin := GfxRaster.Begin; do.end := GfxRaster.End;
-		do.enter := GfxRaster.Enter; do.exit := GfxRaster.Exit;
+		do.enter := GfxRaster.Enter; do.exit := GfxRaster.Exit; do.close := GfxRaster.Close;
 		do.line := GfxRaster.Line; do.arc := GfxRaster.Arc; do.bezier := GfxRaster.Bezier;
 		do.show := Show;
 		do.flatten := Gfx.DefFlatten; do.outline := Gfx.DefOutline;
 		do.render := GfxRaster.Render;
-		do.erase := Erase; do.rect := GfxRaster.Rect; do.ellipse := GfxRaster.Ellipse;
+		do.rect := GfxRaster.Rect; do.ellipse := GfxRaster.Ellipse;
 		do.image := Image; do.newPattern := NewPattern;
 	END InitMethods;
 	
@@ -384,5 +349,6 @@ MODULE GfxPrinter;	(** eos   **)
 	
 
 BEGIN
-	InitMethods
+	InitMethods;
+	White[0] := 0FFX; White[1] := 0FFX; White[2] := 0FFX; White[3] := 0FFX
 END GfxPrinter.

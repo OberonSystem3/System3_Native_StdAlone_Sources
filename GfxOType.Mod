@@ -1,11 +1,18 @@
-MODULE GfxOType;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxOType; (** portable *)	(* eos   *)
 
 	(**
 		Support for OpenType fonts within the Gfx library (optional)
 	**)
 	
+	(*
+		22.06.2000 - fixed bug in Open (ignored style)/eos
+	*)
+	
 	IMPORT
-		Math, Display, Strings, GfxMatrix, GfxMaps, GfxPaths, GfxFonts, OType;
+		Math, Display, Strings, Images, GfxMatrix, GfxPaths, GfxFonts, OType;
 		
 	
 	TYPE
@@ -27,7 +34,7 @@ MODULE GfxOType;	(** eos   **)
 		
 		(* raster enumeration *)
 		RasterData = RECORD (OType.RasterData)
-			map: GfxMaps.Map;
+			map: Images.Image;
 		END;
 		
 	
@@ -62,7 +69,7 @@ MODULE GfxOType;	(** eos   **)
 	BEGIN
 		font := NIL;
 		COPY(family, name); Strings.Append(name, style);
-		fam := OType.Open(family);
+		fam := OType.Open(name);
 		IF fam # NIL THEN
 			NEW(glyph); OType.InitGlyph(glyph, fam);
 			font := OpenInstance(fam, glyph, ptsize, mat)
@@ -102,15 +109,15 @@ MODULE GfxOType;	(** eos   **)
 	END GetWidth;
 	
 	PROCEDURE FillRect (llx, lly, urx, ury, opacity: INTEGER; VAR data: OType.RasterData0);
-		VAR alpha: GfxMaps.Pixel;
+		VAR alpha: Images.Pixel;
 	BEGIN
 		WITH data: RasterData DO
-			alpha[GfxMaps.A] := CHR(opacity);
-			GfxMaps.Fill(data.map, llx, lly, urx, ury, alpha, GfxMaps.SrcCopy)
+			alpha[Images.a] := CHR(opacity);
+			Images.Fill(data.map, llx, lly, urx, ury, alpha, Images.SrcCopy)
 		END
 	END FillRect;
 	
-	PROCEDURE GetMap (gfont: GfxFonts.Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
+	PROCEDURE GetMap (gfont: GfxFonts.Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
 		VAR font: Font; num: INTEGER; mode: SET; data: RasterData;
 	BEGIN
 		font := gfont(Font);
@@ -123,8 +130,8 @@ MODULE GfxOType;	(** eos   **)
 			x := font.glyph.hbx; y := font.glyph.hby; dx := font.glyph.awx; dy := font.glyph.awy;
 			IF font.glyph.rw * font.glyph.rh > 0 THEN
 				NEW(map);
-				IF font.inst.useGrey THEN GfxMaps.Create(map, font.glyph.rw, font.glyph.rh, GfxMaps.A8)
-				ELSE GfxMaps.Create(map, font.glyph.rw, font.glyph.rh, GfxMaps.A1)
+				IF font.inst.useGrey THEN Images.Create(map, font.glyph.rw, font.glyph.rh, Images.A8)
+				ELSE Images.Create(map, font.glyph.rw, font.glyph.rh, Images.A1)
 				END;
 				data.rect := FillRect; data.map := map;
 				OType.EnumRaster(font.glyph, data)

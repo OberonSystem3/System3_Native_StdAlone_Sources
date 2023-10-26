@@ -1,18 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Browser;	(** portable, except where noted *)
 	IMPORT
@@ -185,12 +172,14 @@ MODULE Browser;	(** portable, except where noted *)
 						Ch(" "); Title; Str(obj.name); Normal; 
 						IF obj.mode=XProc THEN Ch("*") END;
 						Signature(obj.typ, obj.link);
+(*
 						IF	obj.mode=CProc	THEN	ext:=obj.conval.ext; m:=ORD(ext^[0]); i:=1; Ch(" ");
 							WHILE	i <= m	DO	Hex(ORD(ext^[i])); Ch("H");
 								IF	i < m	THEN	Str(", ")	END;
 								INC(i)
 							END
 						END
+*)
 				END;
 				Ch(";"); Ln
 			END;
@@ -245,7 +234,8 @@ MODULE Browser;	(** portable, except where noted *)
 	END Append;
 	
 	PROCEDURE GetModule(name: OPS.Name): OPT.Object;
-	VAR  found: BOOLEAN; i, j: LONGINT; ch0, ch1: CHAR; iname: OPS.Name; F: Files.File; R: Files.Rider;
+	VAR  found: BOOLEAN; i, j: LONGINT; ch0, ch1: CHAR; F: Files.File; R: Files.Rider;
+			iname: ARRAY 256 OF CHAR;
 	BEGIN
 		COPY(Modules.extension, OPM.extension);
 		found:=FALSE; i:=0; ch0:=name[0];
@@ -254,21 +244,30 @@ MODULE Browser;	(** portable, except where noted *)
 		WHILE (OPM.extension[j] # 0X) & (i < 32) DO
 			iname[i] := OPM.extension[j];  INC(i);  INC(j)
 		END;
+		iname[i] := 0X;
 		IF OPM.extension[j] = 0X THEN
 			F := Files.Old(iname); Files.Set(R, F, 0); found := F # NIL;
 			IF	found	THEN	Files.Read(R, ch0); Files.Read(R, ch1);
-				found := (ch0=0BBX) & (ch1=0AFX)
+				found := (ch0=0BBX) & (ch1=OPM.OFnative)
 			END;
 			Files.Close(F);
 			
-			IF found THEN
+			IF F = NIL THEN
+				Str(iname); Str(" does not exist"); Ln; Texts.Append(Oberon.Log, W.buf)
+			ELSIF ~found THEN
+				Str(iname); Str(" is not an object file"); Ln; Texts.Append(Oberon.Log, W.buf)
+			ELSE
+				OPM.outputPath := "";
 				IF	incr	THEN	OPT.Close; incr:=FALSE	END;
-				OPM.Init({}, Source, Null); OPS.Init; OPT.Init(dum, {});
+				OPM.Init({}, {}, Source, Oberon.Log); OPS.Init; OPT.Init(dum);
 				OPT.OpenScope(0, NIL);
 				OPT.Import(name, name, dum); OPT.CloseScope;
 				OPV.AssignEntries(OPT.modules[1].publics, TRUE);
+				OPM.outputPath := "!";
 				RETURN OPT.modules[1].right
 			END
+		ELSE
+			Str(iname); Str(" name too long"); Ln; Texts.Append(Oberon.Log, W.buf)
 		END;
 		RETURN NIL
 	END GetModule;
@@ -293,7 +292,9 @@ MODULE Browser;	(** portable, except where noted *)
 				Oberon.OpenText(vname, T, Display.Width DIV 2, 200);
 				Str("DEFINITION "); Title; Str(name); Normal; Ch(";"); Ln; Ln; Texts.Append(T, W.buf);
 				Scope; Ln; Str("END "); Str(name); Ch("."); Texts.Append(T, W.buf)
-			END;
+			END
+		ELSE
+			Str("Browser: module name expected"); Ln; Texts.Append(Oberon.Log, W.buf)
 		END
 	END ShowDef;
 	

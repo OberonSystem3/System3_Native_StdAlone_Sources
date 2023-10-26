@@ -1,4 +1,7 @@
-MODULE Gfx;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE Gfx; (** portable *)	(* eos   *)
 
 	(**
 		High-level, device independent, yet efficient 2D-graphics
@@ -17,18 +20,36 @@ MODULE Gfx;	(** eos   **)
 			standard colors
 		9.12.98 - adaptation to new GfxMaps
 		10.3.99 - separate dash pattern into on/off arrays
+		13.5.99 - remodeled cap and join styles
+		13.5.99 - eliminated 'erase'
+		2.6.99 - bugfix in GetStrokeOutline and GetDashOutline (forgot to consume GfxPaths.Exit after subpath)
+		8.6.99 - made GetPolyOutline automatically close open subpaths
+		25.8.99 - use GfxImages instead of GfxMaps
+		6.10.99 - save and restore graphics state, MoveTo and Close
+		13.02.2000 - added ClipArea, replaced SaveClip/RestoreClip by GetClip/SetClip, fine-grained SaveState semantics
+		26.02.2000 - allow font change within path
+		27.02.2000 - added DrawArc
+		29.03.2000 - made default flatness 1/2
 	*)
 	
 	IMPORT
-		Math, Texts, Oberon, GfxMatrix, GfxMaps, GfxPaths, GfxFonts;
+		Math, Texts, Oberon, GfxMatrix, GfxImages, GfxPaths, GfxFonts;
 		
 	
 	CONST
-		Version = "Gfx 1.30/eos 20.4.99";
+		Version = "Gfx 1.74/eos 22.06.2000";
 		
 		Record* = 0; Fill* = 1; Clip* = 2; Stroke* = 3; EvenOdd* = 4;	(** drawing mode elements **)
 		InPath* = 5; InSubpath* = 6;	(** context state **)
 		MaxDashPatSize* = 8;	(** maximal number of dash entries **)
+		NoJoin* = 0; MiterJoin* = 1; BevelJoin* = 2; RoundJoin* = 3;	(** join styles **)
+		NoCap* = 0; ButtCap* = 1; SquareCap* = 2; RoundCap* = 3;	(** cap styles **)
+		
+		(** state elements **)
+		fillColPat* = 0; strokeColPat* = 1; lineWidth* = 2; dashPat* = 3; capStyle* = 4; joinStyle* = 5; styleLimit* = 6;
+		flatness* = 7; font* = 8; ctm* = 9; clip* = 10;
+		strokeAttr* = {strokeColPat..styleLimit};
+		attr* = {fillColPat..font}; all* = attr + {ctm, clip};
 		
 	
 	TYPE
@@ -36,38 +57,24 @@ MODULE Gfx;	(** eos   **)
 		Context* = POINTER TO ContextDesc;
 		
 		(** color type **)
-		Color* = GfxMaps.Color;
+		Color* = RECORD
+			r*, g*, b*: INTEGER;
+		END;
 		
 		(** fill patterns **)
 		Pattern* = POINTER TO PatternDesc;
 		PatternDesc* = RECORD
-			map*: GfxMaps.Map;	(** replicated image map **)
+			img*: GfxImages.Image;	(** replicated image map **)
 			px*, py*: REAL;	(** pinpoint coordinates **)
 		END;
 		
-		(** line join styles **)
-		JoinStyle* = PROCEDURE (ctxt: Context; cx, cy, idx, idy, odx, ody, hx, hy: REAL; parts: SET; path: GfxPaths.Path);
-			(**
-				when called:
-					- the path corner point is at (cx, cy), incoming direction is (idx, idy), outgoing direction is (odx, ody)
-					- idx * ody > idy * odx, i.e. the path executes a left turn
-					- (hx, hy) is the vector pointing from (cx, cy) to the outermost vertex of a potential miter join
-					- if parts = {0}, a new outline subpath must be begun, ending at (cx + ody, cy - odx)
-					- if parts = {1}, the current outline subpath, beginning at (cx + idy, cy - idx), must be ended
-					- if parts = {0, 1}, lines, arcs, and beziers should be appended to the outline subpath, leading it
-					  from (cx + idy, cy - idx) to (cx + ody, cy - odx)
-					- the distance from any point on the outline to the original path mustn't exceed 0.5*width*styleLimit
-			**)
+		(** line join and cap styles **)
+		JoinStyle* = SHORTINT;
+		CapStyle* = SHORTINT;
 		
-		(** line cap styles **)
-		CapStyle* = PROCEDURE (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path; VAR dx0, dy0: REAL);
-			(**
-				when called:
-				- the path end point is at (x, y), the (normalized to width) direction of the path is (dx, dy)
-				- the current point of the outline path is at (x - dy, y + dx)
-				- lines, arcs, and beziers should lead the outline path to (x + dy, y - dx)
-				- the initial direction vector of the cap must be returned in (dx0, dy0)
-			**)
+		(** abstract clip areas **)
+		ClipArea* = POINTER TO ClipAreaDesc;
+		ClipAreaDesc* = RECORD END;
 		
 		(** context methods **)
 		Methods* = POINTER TO MethodBlock;
@@ -86,8 +93,8 @@ MODULE Gfx;	(** eos   **)
 			(** clipping **)
 			resetClip*: PROCEDURE (ctxt: Context);
 			getClipRect*: PROCEDURE (ctxt: Context; VAR llx, lly, urx, ury: REAL);
-			saveClip*: PROCEDURE (ctxt: Context);
-			restoreClip*: PROCEDURE (ctxt: Context);
+			getClip*: PROCEDURE (ctxt: Context): ClipArea;
+			setClip*: PROCEDURE (ctxt: Context; clip: ClipArea);
 			
 			(** graphics state **)
 			setStrokeColor*: PROCEDURE (ctxt: Context; color: Color);
@@ -99,7 +106,6 @@ MODULE Gfx;	(** eos   **)
 			setCapStyle*: PROCEDURE (ctxt: Context; style: CapStyle);
 			setJoinStyle*: PROCEDURE (ctxt: Context; style: JoinStyle);
 			setStyleLimit*: PROCEDURE (ctxt: Context; limit: REAL);
-			setPoint*: PROCEDURE (ctxt: Context; x, y: REAL);
 			setFlatness*: PROCEDURE (ctxt: Context; flatness: REAL);
 			setFont*: PROCEDURE (ctxt: Context; font: GfxFonts.Font);
 			getWidth*: PROCEDURE (ctxt: Context; VAR str: ARRAY OF CHAR; VAR dx, dy: REAL);
@@ -109,6 +115,7 @@ MODULE Gfx;	(** eos   **)
 			end*: PROCEDURE (ctxt: Context);
 			enter*: PROCEDURE (ctxt: Context; x, y, dx, dy: REAL);
 			exit*: PROCEDURE (ctxt: Context; dx, dy: REAL);
+			close*: PROCEDURE (ctxt: Context);
 			line*: PROCEDURE (ctxt: Context; x, y: REAL);
 			arc*: PROCEDURE (ctxt: Context; x, y, x0, y0, x1, y1, x2, y2: REAL);
 			bezier*: PROCEDURE (ctxt: Context; x, y, x1, y1, x2, y2: REAL);
@@ -118,18 +125,20 @@ MODULE Gfx;	(** eos   **)
 			render*: PROCEDURE (ctxt: Context; mode: SET);
 			
 			(** painting operators (potential for optimization) **)
-			erase*: PROCEDURE (ctxt: Context);
 			rect*: PROCEDURE (ctxt: Context; x0, y0, x1, y1: REAL);
 			ellipse*: PROCEDURE (ctxt: Context; x, y, rx, ry: REAL);
 			
 			(** images and patterns **)
-			image*: PROCEDURE (ctxt: Context; x, y: REAL; map: GfxMaps.Map; VAR filter: GfxMaps.Filter);
-			newPattern*: PROCEDURE (ctxt: Context; map: GfxMaps.Map; px, py: REAL): Pattern;
+			image*: PROCEDURE (ctxt: Context; x, y: REAL; img: GfxImages.Image; VAR filter: GfxImages.Filter);
+			newPattern*: PROCEDURE (ctxt: Context; img: GfxImages.Image; px, py: REAL): Pattern;
 		END;
 		
 		(** graphics context (continued) **)
 		ContextDesc* = RECORD
 			do*: Methods;	(** methods associated with context **)
+			mode*: SET;	(** current drawing mode **)
+			path*: GfxPaths.Path;	(** current path in device coordinates (updated only if mode contains the 'Record' flag) **)
+			cpx*, cpy*: REAL;	(** current point in user coordinates **)
 			ctm*: GfxMatrix.Matrix;	(** current transformation matrix **)
 			cam*: GfxMatrix.Matrix;	(** current attribute matrix (frozen ctm while inside path) **)
 			strokeCol*, fillCol*: Color;	(** current stroke and fill color **)
@@ -142,11 +151,22 @@ MODULE Gfx;	(** eos   **)
 			capStyle*: CapStyle;	(** line cap style **)
 			joinStyle*: JoinStyle;	(** line join style **)
 			styleLimit*: REAL;	(** determines area that may be rendered to by styles **)
-			mode*: SET;	(** current drawing mode **)
-			path*: GfxPaths.Path;	(** current path in device coordinates (updated only if mode contains the 'Record' flag) **)
-			cpx*, cpy*: REAL;	(** current point in user coordinates **)
 			flatness*: REAL;	(** current flatness tolerance (in device coordinates) **)
 			font*: GfxFonts.Font;	(** current font **)
+		END;
+		
+		(** graphics state **)
+		State* = RECORD
+			saved: SET;
+			strokeCol, fillCol: Color; strokePat, fillPat: Pattern;
+			lineWidth: REAL;
+			dashPatOn, dashPatOff: ARRAY MaxDashPatSize OF REAL;
+			dashPatLen: LONGINT; dashPhase: REAL;
+			capStyle: CapStyle; joinStyle: JoinStyle; styleLimit: REAL;
+			flatness: REAL;
+			font: GfxFonts.Font;
+			ctm: GfxMatrix.Matrix;
+			clip: ClipArea;
 		END;
 		
 		PathData = RECORD (GfxPaths.EnumData)
@@ -171,35 +191,8 @@ MODULE Gfx;	(** eos   **)
 		ctxt.do.reset(ctxt)
 	END Reset;
 	
-	(** deep copy of context **)
-	PROCEDURE CopyContext* (from, to: Context);
-		VAR n: LONGINT;
-	BEGIN
-		to.do := from.do;
-		to.ctm := from.ctm; to.cam := from.cam;
-		to.strokeCol := from.strokeCol; to.strokePat := from.strokePat; to.fillCol := from.fillCol; to.fillPat := from.fillPat;
-		to.lineWidth := from.lineWidth; to.dashPatLen := from.dashPatLen;
-		IF from.dashPatLen > 0 THEN
-			n := 0;
-			WHILE n < from.dashPatLen DO
-				to.dashPatOn[n] := from.dashPatOn[n]; to.dashPatOff[n] := from.dashPatOff[n]; INC(n)
-			END;
-			to.dashPhase := from.dashPhase; to.dashPeriod := from.dashPeriod
-		END;
-		to.capStyle := from.capStyle; to.joinStyle := from.joinStyle; to.styleLimit := from.styleLimit;
-		to.mode := from.mode;
-		IF from.path = NIL THEN
-			to.path := NIL
-		ELSE
-			NEW(to.path); GfxPaths.Copy(from.path, to.path)
-		END;
-		to.cpx := from.cpx; to.cpy := from.cpy;
-		to.flatness := from.flatness;
-		to.font := from.font
-	END CopyContext;
-	
 	(** initialize context values to defaults **)
-	PROCEDURE InitContextValues* (ctxt: Context);
+	PROCEDURE Init* (ctxt: Context);
 	BEGIN
 		ctxt.ctm := GfxMatrix.Identity; ctxt.cam := ctxt.ctm;
 		ctxt.strokeCol := Black; ctxt.strokePat := NIL;
@@ -210,9 +203,77 @@ MODULE Gfx;	(** eos   **)
 		ctxt.mode := {};
 		ctxt.path := NIL;
 		ctxt.cpx := 0; ctxt.cpy := 0;
-		ctxt.flatness := 1;
+		ctxt.flatness := 0.5;
 		ctxt.font := GfxFonts.Default
-	END InitContextValues;
+	END Init;
+	
+	(** save and restore graphics state **)
+	PROCEDURE Save* (ctxt: Context; elems: SET; VAR state: State);
+		VAR i: LONGINT;
+	BEGIN
+		state.saved := elems;
+		state.strokeCol := ctxt.strokeCol; state.strokePat := ctxt.strokePat;
+		state.fillCol := ctxt.fillCol; state.fillPat := ctxt.fillPat;
+		state.lineWidth := ctxt.lineWidth;
+		IF dashPat IN elems THEN
+			state.dashPatLen := ctxt.dashPatLen; state.dashPhase := ctxt.dashPhase;
+			i := 0;
+			WHILE i < ctxt.dashPatLen DO
+				state.dashPatOn[i] := ctxt.dashPatOn[i]; state.dashPatOff[i] := ctxt.dashPatOff[i]; INC(i)
+			END
+		END;
+		state.capStyle := ctxt.capStyle; state.joinStyle := ctxt.joinStyle; state.styleLimit := ctxt.styleLimit;
+		state.flatness := ctxt.flatness;
+		state.font := ctxt.font;
+		IF ctm IN elems THEN
+			state.ctm := ctxt.ctm
+		END;
+		IF clip IN elems THEN
+			state.clip := ctxt.do.getClip(ctxt)
+		END
+	END Save;
+	
+	PROCEDURE Restore* (ctxt: Context; state: State);
+		VAR do: Methods;
+	BEGIN
+		ASSERT(~(InPath IN ctxt.mode), 100);
+		do := ctxt.do;
+		IF strokeColPat IN state.saved THEN
+			do.setStrokeColor(ctxt, state.strokeCol);
+			do.setStrokePattern(ctxt, state.strokePat)
+		END;
+		IF fillColPat IN state.saved THEN
+			do.setFillColor(ctxt, state.fillCol);
+			do.setFillPattern(ctxt, state.fillPat)
+		END;
+		IF lineWidth IN state.saved THEN
+			do.setLineWidth(ctxt, state.lineWidth)
+		END;
+		IF dashPat IN state.saved THEN
+			do.setDashPattern(ctxt, state.dashPatOn, state.dashPatOff, state.dashPatLen, state.dashPhase)
+		END;
+		IF capStyle IN state.saved THEN
+			do.setCapStyle(ctxt, state.capStyle)
+		END;
+		IF joinStyle IN state.saved THEN
+			do.setJoinStyle(ctxt, state.joinStyle)
+		END;
+		IF styleLimit IN state.saved THEN
+			do.setStyleLimit(ctxt, state.styleLimit)
+		END;
+		IF flatness IN state.saved THEN
+			do.setFlatness(ctxt, state.flatness)
+		END;
+		IF font IN state.saved THEN
+			do.setFont(ctxt, state.font)
+		END;
+		IF ctm IN state.saved THEN
+			do.setCTM(ctxt, state.ctm)
+		END;
+		IF clip IN state.saved THEN
+			do.setClip(ctxt, state.clip)
+		END
+	END Restore;
 	
 	
 	(**--- Coordinate System ---**)
@@ -284,17 +345,17 @@ MODULE Gfx;	(** eos   **)
 		ctxt.do.getClipRect(ctxt, llx, lly, urx, ury)
 	END GetClipRect;
 	
-	(** temporarily save current clipping path **)
-	PROCEDURE SaveClip* (ctxt: Context);
+	(** get current clipping area **)
+	PROCEDURE GetClip* (ctxt: Context): ClipArea;
 	BEGIN
-		ctxt.do.saveClip(ctxt)
-	END SaveClip;
+		RETURN ctxt.do.getClip(ctxt)
+	END GetClip;
 	
 	(** restore saved clipping path **)
-	PROCEDURE RestoreClip* (ctxt: Context);
+	PROCEDURE SetClip* (ctxt: Context; clip: ClipArea);
 	BEGIN
-		ctxt.do.restoreClip(ctxt)
-	END RestoreClip;
+		ctxt.do.setClip(ctxt, clip)
+	END SetClip;
 	
 	
 	(**--- Graphics State ---**)
@@ -362,7 +423,7 @@ MODULE Gfx;	(** eos   **)
 	PROCEDURE SetCapStyle* (ctxt: Context; style: CapStyle);
 	BEGIN
 		ASSERT(~(InPath IN ctxt.mode), 100);
-		ASSERT(style # NIL, 101);
+		ASSERT((NoCap <= style) & (style <= RoundCap), 101);
 		ctxt.do.setCapStyle(ctxt, style)
 	END SetCapStyle;
 	
@@ -370,7 +431,7 @@ MODULE Gfx;	(** eos   **)
 	PROCEDURE SetJoinStyle* (ctxt: Context; style: JoinStyle);
 	BEGIN
 		ASSERT(~(InPath IN ctxt.mode), 100);
-		ASSERT(style # NIL, 101);
+		ASSERT((NoJoin <= style) & (style <= RoundJoin), 101);
 		ctxt.do.setJoinStyle(ctxt, style)
 	END SetJoinStyle;
 	
@@ -381,12 +442,6 @@ MODULE Gfx;	(** eos   **)
 		ctxt.do.setStyleLimit(ctxt, limit)
 	END SetStyleLimit;
 	
-	(** set current point **)
-	PROCEDURE SetPoint* (ctxt: Context; x, y: REAL);
-	BEGIN
-		ctxt.do.setPoint(ctxt, x, y)
-	END SetPoint;
-	
 	(** set flatness parameter **)
 	PROCEDURE SetFlatness* (ctxt: Context; flatness: REAL);
 	BEGIN
@@ -396,8 +451,7 @@ MODULE Gfx;	(** eos   **)
 	(** set current font **)
 	PROCEDURE SetFont* (ctxt: Context; font: GfxFonts.Font);
 	BEGIN
-		ASSERT(~(InPath IN ctxt.mode), 100);
-		ASSERT(font # NIL, 101);
+		ASSERT(font # NIL, 100);
 		ctxt.do.setFont(ctxt, font)
 	END SetFont;
 	
@@ -405,7 +459,6 @@ MODULE Gfx;	(** eos   **)
 	PROCEDURE SetFontName* (ctxt: Context; fontname: ARRAY OF CHAR; size: INTEGER);
 		VAR font: GfxFonts.Font;
 	BEGIN
-		ASSERT(~(InPath IN ctxt.mode), 100);
 		font := GfxFonts.OpenSize(fontname, size);
 		IF font = NIL THEN font := GfxFonts.Default END;
 		ctxt.do.setFont(ctxt, font)
@@ -428,30 +481,34 @@ MODULE Gfx;	(** eos   **)
 		INCL(ctxt.mode, InPath)
 	END Begin;
 	
-	(** end current path **)
+	(** exit current subpath (if open) and end current path **)
 	PROCEDURE End* (ctxt: Context);
 	BEGIN
-		ASSERT((InPath IN ctxt.mode) & ~(InSubpath IN ctxt.mode), 100);
+		ASSERT(InPath IN ctxt.mode, 100);
+		IF InSubpath IN ctxt.mode THEN ctxt.do.exit(ctxt, 0, 0) END;
 		ctxt.do.end(ctxt);
 		EXCL(ctxt.mode, InPath)
 	END End;
 	
-	(** start subpath, i.e. a sequence of connected segments **)
+	(** end current subpath (if open) and begin new subpath **)
+	PROCEDURE MoveTo* (ctxt: Context; x, y: REAL);
+	BEGIN
+		ASSERT(InPath IN ctxt.mode, 100);
+		IF InSubpath IN ctxt.mode THEN ctxt.do.exit(ctxt, 0, 0) END;
+		ctxt.do.enter(ctxt, x, y, 0, 0);
+		INCL(ctxt.mode, InSubpath)
+	END MoveTo;
+	
+	(** start subpath at inner point **)
 	PROCEDURE Enter* (ctxt: Context; x, y, dx, dy: REAL);
 	BEGIN
-		ASSERT((InPath IN ctxt.mode) & ~(InSubpath IN ctxt.mode), 100);
+		ASSERT(InPath IN ctxt.mode, 100);
+		IF InSubpath IN ctxt.mode THEN ctxt.do.exit(ctxt, 0, 0) END;
 		ctxt.do.enter(ctxt, x, y, dx, dy);
 		INCL(ctxt.mode, InSubpath)
 	END Enter;
 	
-	PROCEDURE Enter0* (ctxt: Context; x, y: REAL);
-	BEGIN
-		ASSERT((InPath IN ctxt.mode) & ~(InSubpath IN ctxt.mode), 100);
-		ctxt.do.enter(ctxt, x, y, 0, 0);
-		INCL(ctxt.mode, InSubpath)
-	END Enter0;
-	
-	(** end subpath **)
+	(** end subpath at inner point **)
 	PROCEDURE Exit* (ctxt: Context; dx, dy: REAL);
 	BEGIN
 		ASSERT(InSubpath IN ctxt.mode, 100);
@@ -459,12 +516,13 @@ MODULE Gfx;	(** eos   **)
 		EXCL(ctxt.mode, InSubpath)
 	END Exit;
 	
-	PROCEDURE Exit0* (ctxt: Context);
+	(** close current subpath **)
+	PROCEDURE Close* (ctxt: Context);
 	BEGIN
 		ASSERT(InSubpath IN ctxt.mode, 100);
-		ctxt.do.exit(ctxt, 0, 0);
+		ctxt.do.close(ctxt);
 		EXCL(ctxt.mode, InSubpath)
-	END Exit0;
+	END Close;
 	
 	(** append line to current path **)
 	PROCEDURE LineTo* (ctxt: Context; x, y: REAL);
@@ -490,14 +548,16 @@ MODULE Gfx;	(** eos   **)
 	(** append character outlines to current path at given point; advance current point to position after last character **)
 	PROCEDURE ShowAt* (ctxt: Context; x, y: REAL; str: ARRAY OF CHAR);
 	BEGIN
-		ASSERT((InPath IN ctxt.mode) & ~(InSubpath IN ctxt.mode), 100);
+		ASSERT(InPath IN ctxt.mode, 100);
+		IF InSubpath IN ctxt.mode THEN ctxt.do.exit(ctxt, 0, 0) END;
 		ctxt.do.show(ctxt, x, y, str)
 	END ShowAt;
 	
 	(** append character outlines to current path at current point; advance current point to position after last character **)
 	PROCEDURE Show* (ctxt: Context; str: ARRAY OF CHAR);
 	BEGIN
-		ASSERT((InPath IN ctxt.mode) & ~(InSubpath IN ctxt.mode), 100);
+		ASSERT(InPath IN ctxt.mode, 100);
+		IF InSubpath IN ctxt.mode THEN ctxt.do.exit(ctxt, 0, 0) END;
 		ctxt.do.show(ctxt, ctxt.cpx, ctxt.cpy, str)
 	END Show;
 	
@@ -531,6 +591,123 @@ MODULE Gfx;	(** eos   **)
 		data.path := path;
 		GfxPaths.EnumFlattened(ctxt.path, ctxt.flatness, EnumPathElem, data)
 	END GetFlattenedPath;
+	
+	
+	(**--- Cap Styles ---**)
+	
+	PROCEDURE EnterCapStyle* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path);
+	BEGIN
+		IF ctxt.capStyle = ButtCap THEN
+			GfxPaths.AddEnter(path, x, y, dy, -dx);
+			GfxPaths.AddLine(path, x + dy, y - dx)
+		ELSIF ctxt.capStyle = SquareCap THEN
+			GfxPaths.AddEnter(path, x - dx, y - dy, dy, -dx);
+			GfxPaths.AddLine(path, x - dx + dy, y - dy - dx);
+			GfxPaths.AddLine(path, x + dy, y - dx)
+		ELSIF ctxt.capStyle = RoundCap THEN
+			GfxPaths.AddEnter(path, x - dx, y - dy, dy, -dx);
+			GfxPaths.AddArc(path, x + dy, y - dx, x, y, x - dx, y - dy, x + dy, y - dx)
+		ELSE
+			GfxPaths.AddEnter(path, x + dy, y - dx, 0, 0)
+		END
+	END EnterCapStyle;
+	
+	PROCEDURE AddCapStyle* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path);
+	BEGIN
+		IF ctxt.capStyle = ButtCap THEN
+			GfxPaths.AddLine(path, x + dy, y - dx)
+		ELSIF ctxt.capStyle = SquareCap THEN
+			GfxPaths.AddLine(path, x - dx - dy, y - dy + dx);
+			GfxPaths.AddLine(path, x - dx + dy, y - dy - dx);
+			GfxPaths.AddLine(path, x + dy, y - dx)
+		ELSIF ctxt.capStyle = RoundCap THEN
+			GfxPaths.AddArc(path, x + dy, y - dx, x, y, x - dy, y + dx, x - dx, y - dy)
+		ELSE
+			GfxPaths.AddExit(path, 0, 0);
+			GfxPaths.AddEnter(path, x + dy, y - dx, 0, 0)
+		END
+	END AddCapStyle;
+	
+	PROCEDURE ExitCapStyle* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path);
+	BEGIN
+		IF ctxt.capStyle = ButtCap THEN
+			GfxPaths.AddLine(path, x, y);
+			GfxPaths.AddExit(path, dy, -dx)
+		ELSIF ctxt.capStyle = SquareCap THEN
+			GfxPaths.AddLine(path, x - dx - dy, y - dy + dx);
+			GfxPaths.AddLine(path, x - dx, y - dy);
+			GfxPaths.AddExit(path, dy, -dx)
+		ELSIF ctxt.capStyle = RoundCap THEN
+			GfxPaths.AddArc(path, x - dx, y - dy, x, y, x - dy, y + dx, x - dx, y - dy);
+			GfxPaths.AddExit(path, dy, -dx)
+		ELSE
+			GfxPaths.AddExit(path, 0, 0)
+		END
+	END ExitCapStyle;
+	
+	
+	(**--- Join Styles ---**)
+	
+	(** return if half axis vector (in device coordinates) exceeds style limit **)
+	PROCEDURE ExceedsLimit* (ctxt: Context; hx, hy: REAL): BOOLEAN;
+		VAR limit: REAL;
+	BEGIN
+		GfxMatrix.ApplyToDist(ctxt.cam, 0.5*ctxt.lineWidth * ctxt.styleLimit, limit);
+		RETURN hx * hx + hy * hy > limit * limit
+	END ExceedsLimit;
+	
+	PROCEDURE EnterJoinStyle* (ctxt: Context; x, y, idx, idy, hx, hy, odx, ody: REAL; path: GfxPaths.Path);
+		VAR ix, iy, t: REAL;
+	BEGIN
+		IF (ctxt.joinStyle = BevelJoin) OR (ctxt.joinStyle = MiterJoin) & ExceedsLimit(ctxt, hx, hy) THEN
+			GfxPaths.IntersectLines(x, y, hx, hy, x + ody, y - odx, -hy, hx, ix, iy);
+			GfxPaths.AddEnter(path, ix, iy, -hy, hx);
+			GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = MiterJoin THEN
+			GfxPaths.AddEnter(path, x + hx, y + hy, idx, idy);
+			GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = RoundJoin THEN
+			t := Math.sqrt((odx * odx + ody * ody)/(hx * hx + hy * hy));
+			GfxPaths.AddEnter(path, x + t * hx, y + t * hy, -hy, hx);
+			GfxPaths.AddArc(path, x + ody, y - odx, x, y, x - odx, y - ody, x + ody, y - odx)
+		ELSE
+			GfxPaths.AddEnter(path, x + ody, y - odx, 0, 0)
+		END
+	END EnterJoinStyle;
+	
+	PROCEDURE AddJoinStyle* (ctxt: Context; x, y, idx, idy, hx, hy, odx, ody: REAL; path: GfxPaths.Path);
+	BEGIN
+		IF (ctxt.joinStyle = BevelJoin) OR (ctxt.joinStyle = MiterJoin) & ExceedsLimit(ctxt, hx, hy) THEN
+			GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = MiterJoin THEN
+			GfxPaths.AddLine(path, x + hx, y + hy);
+			GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = RoundJoin THEN
+			GfxPaths.AddArc(path, x + ody, y - odx, x, y, x - odx, y - ody, x + ody, y - odx)
+		ELSE
+			GfxPaths.AddExit(path, 0, 0);
+			GfxPaths.AddEnter(path, x + ody, y - odx, 0, 0)
+		END
+	END AddJoinStyle;
+	
+	PROCEDURE ExitJoinStyle* (ctxt: Context; x, y, idx, idy, hx, hy, odx, ody: REAL; path: GfxPaths.Path);
+		VAR ix, iy, t: REAL;
+	BEGIN
+		IF (ctxt.joinStyle = BevelJoin) OR (ctxt.joinStyle = MiterJoin) & ExceedsLimit(ctxt, hx, hy) THEN
+			GfxPaths.IntersectLines(x, y, hx, hy, x + idy, y - idx, -hy, hx, ix, iy);
+			GfxPaths.AddLine(path, ix, iy);
+			GfxPaths.AddExit(path, -hy, hx)
+		ELSIF ctxt.joinStyle = MiterJoin THEN
+			GfxPaths.AddLine(path, x + hx, y + hy);
+			GfxPaths.AddExit(path, odx, ody)
+		ELSIF ctxt.joinStyle = RoundJoin THEN
+			t := Math.sqrt((odx * odx + ody * ody)/(hx * hx + hy * hy));
+			GfxPaths.AddArc(path, x + t * hx, y + t * hy, x, y, x - idx, y - idy, x + idy, y - idx);
+			GfxPaths.AddExit(path, -hy, hx)
+		ELSE
+			GfxPaths.AddExit(path, 0, 0)
+		END
+	END ExitJoinStyle;
 	
 	
 	(**--- Path Outline ---**)
@@ -567,25 +744,73 @@ MODULE Gfx;	(** eos   **)
 		END
 	END GetHalfAxisVector;
 	
-	PROCEDURE GetPolyOutline (ctxt: Context; VAR x, y: ARRAY OF REAL; n: LONGINT; dxi, dyi, dxo, dyo: REAL; dst: GfxPaths.Path);
-		VAR width, odx, ody, dx0, dy0, idx, idy, hx, hy, dx1, dy1: REAL; i, j: LONGINT;
+	PROCEDURE AddEnterJoinStyle (ctxt: Context; x, y, hx, hy, odx, ody: REAL; path: GfxPaths.Path);
+		VAR ix, iy, t: REAL;
 	BEGIN
+		IF (ctxt.joinStyle = BevelJoin) OR (ctxt.joinStyle = MiterJoin) & ExceedsLimit(ctxt, hx, hy) THEN
+			GfxPaths.IntersectLines(x, y, hx, hy, x + ody, y - odx, -hy, hx, ix, iy);
+			GfxPaths.AddLine(path, ix, iy); GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = MiterJoin THEN
+			GfxPaths.AddLine(path, x + hx, y + hy); GfxPaths.AddLine(path, x + ody, y - odx)
+		ELSIF ctxt.joinStyle = RoundJoin THEN
+			t := Math.sqrt((odx * odx + ody * ody)/(hx * hx + hy * hy));
+			GfxPaths.AddLine(path, x + t * hx, y + t * hy);
+			GfxPaths.AddArc(path, x + ody, y - odx, x, y, x - odx, y - ody, x + ody, y - odx)
+		ELSE
+			GfxPaths.AddLine(path, x + ody, y - odx)
+		END
+	END AddEnterJoinStyle;
+	
+	PROCEDURE AddExitJoinStyle (ctxt: Context; x, y, idx, idy, hx, hy: REAL; path: GfxPaths.Path);
+		VAR ix, iy, t: REAL;
+	BEGIN
+		IF (ctxt.joinStyle = BevelJoin) OR (ctxt.joinStyle = MiterJoin) & ExceedsLimit(ctxt, hx, hy) THEN
+			GfxPaths.IntersectLines(x, y, hx, hy, x + idy, y - idx, -hy, hx, ix, iy);
+			GfxPaths.AddLine(path, ix, iy)
+		ELSIF ctxt.joinStyle = MiterJoin THEN
+			GfxPaths.AddLine(path, x + hx, y + hy)
+		ELSIF ctxt.joinStyle = RoundJoin THEN
+			t := Math.sqrt((idx * idx + idy * idy)/(hx * hx + hy * hy));
+			GfxPaths.AddArc(path, x + t * hx, y + t * hy, x, y, x - idx, y - idy, x + idy, y - idx)
+		END;
+		GfxPaths.AddLine(path, x - hx, y - hy)
+	END AddExitJoinStyle;
+	
+	PROCEDURE GetPolyOutline (ctxt: Context; VAR x, y: ARRAY OF REAL; n: LONGINT; dxi, dyi, dxo, dyo: REAL; dst: GfxPaths.Path);
+		VAR closed: BOOLEAN; width, odx, ody, idx, idy, hx, hy: REAL; i, j: LONGINT;
+	BEGIN
+		closed := (x[n] = x[0]) & (y[n] = y[0]);
 		GfxMatrix.ApplyToDist(ctxt.cam, 0.5*ctxt.lineWidth, width);
 		GetNormVector(x[1] - x[0], y[1] - y[0], width, odx, ody);
 		IF (dxi = 0) & (dyi = 0) THEN
-			GfxPaths.AddEnter(dst, x[0] - ody, y[0] + odx, x[0] - x[1], y[0] - y[1]);
-			ctxt.capStyle(ctxt, x[0], y[0], odx, ody, dst, dx0, dy0);
+			EnterCapStyle(ctxt, x[0], y[0], odx, ody, dst)
 		ELSE
 			GetNormVector(dxi, dyi, width, idx, idy);
 			GetHalfAxisVector(idx, idy, odx, ody, hx, hy);
 			IF (hx = 0) & (hy = 0) THEN	(* collinear vectors *)
-				GfxPaths.AddEnter(dst, x[0] + ody, y[0] - odx, dxi, dyi)
+				IF closed THEN
+					GfxPaths.AddEnter(dst, x[0] + ody, y[0] - odx, dxi, dyi)
+				ELSE
+					GfxPaths.AddEnter(dst, x[0] - ody, y[0] + odx, ody, -odx);
+					GfxPaths.AddLine(dst, x[0] + ody, y[0] - odx)
+				END
 			ELSIF idx * ody > idy * odx THEN	(* starts with left turn *)
-				ctxt.joinStyle(ctxt, x[0], y[0], idx, idy, odx, ody, hx, hy, {0}, dst)
+				IF closed THEN
+					EnterJoinStyle(ctxt, x[0], y[0], idx, idy, hx, hy, odx, ody, dst)
+				ELSE
+					GfxPaths.AddEnter(dst, x[0] - hx, y[0] - hy, ody, -odx);
+					AddEnterJoinStyle(ctxt, x[0], y[0], hx, hy, odx, ody, dst)
+				END
 			ELSE
-				GfxPaths.AddEnter(dst, x[0] - hx, y[0] - hy, dxi, dyi)
+				IF closed THEN
+					GfxPaths.AddEnter(dst, x[0] - hx, y[0] - hy, dxi, dyi)
+				ELSE
+					GfxPaths.AddEnter(dst, x[0] + hx, y[0] + hy, -hx, -hy);
+					GfxPaths.AddLine(dst, x[0] - hx, y[0] - hy)
+				END
 			END
 		END;
+		
 		i := 1; j := 2;
 		WHILE j <= n DO
 			idx := odx; idy := ody;
@@ -595,33 +820,46 @@ MODULE Gfx;	(** eos   **)
 				GfxPaths.AddLine(dst, x[i] + idy, y[i] - idx)
 			ELSIF idx * ody > idy * odx THEN	(* left turn => outer join *)
 				GfxPaths.AddLine(dst, x[i] + idy, y[i] - idx);
-				ctxt.joinStyle(ctxt, x[i], y[i], idx, idy, odx, ody, hx, hy, {0, 1}, dst)
+				AddJoinStyle(ctxt, x[i], y[i], idx, idy, hx, hy, odx, ody, dst)
 			ELSE	(* right turn => inner join *)
 				GfxPaths.AddLine(dst, x[i] - hx, y[i] - hy)
 			END;
 			i := j; INC(j)
 		END;
+		
 		idx := odx; idy := ody;
 		IF (dxo = 0) & (dyo = 0) THEN
 			GfxPaths.AddLine(dst, x[n] + ody, y[n] - odx);
-			ctxt.capStyle(ctxt, x[n], y[n], -odx, -ody, dst, dx1, dy1)
+			AddCapStyle(ctxt, x[n], y[n], -odx, -ody, dst)
 		ELSE
+			GfxPaths.AddLine(dst, x[n] + idy, y[n] - idx);
 			GetNormVector(dxo, dyo, width, odx, ody);
 			GetHalfAxisVector(idx, idy, odx, ody, hx, hy);
 			IF (hx = 0) & (hy = 0) THEN	(* collinear vectors *)
-				GfxPaths.AddLine(dst, x[n] + idy, y[n] - idx);
-				GfxPaths.AddExit(dst, odx, ody);
-				GfxPaths.AddEnter(dst, x[n] - idy, y[n] + idx, -dxo, -dyo)
+				IF closed THEN
+					GfxPaths.AddExit(dst, odx, ody);
+					GfxPaths.AddEnter(dst, x[n] - idy, y[n] + idx, -dxo, -dyo)
+				ELSE
+					GfxPaths.AddLine(dst, x[n] - idy, y[n] + idx)
+				END
 			ELSIF idx * ody > idy * odx THEN	(* ends in left turn *)
-				GfxPaths.AddLine(dst, x[n] + idy, y[n] - idx);
-				ctxt.joinStyle(ctxt, x[n], y[n], idx, idy, odx, ody, hx, hy, {1}, dst);
-				GfxPaths.AddEnter(dst, x[n] - hx, y[n] - hy, -dxo, -dyo)
+				IF closed THEN
+					ExitJoinStyle(ctxt, x[n], y[n], idx, idy, hx, hy, odx, ody, dst);
+					GfxPaths.AddEnter(dst, x[n] - hx, y[n] - hy, -dxo, -dyo)
+				ELSE
+					AddExitJoinStyle(ctxt, x[n], y[n], idx, idy, hx, hy, dst)
+				END
 			ELSE
 				GfxPaths.AddLine(dst, x[n] - hx, y[n] - hy);
-				GfxPaths.AddExit(dst, dxo, dyo);
-				ctxt.joinStyle(ctxt, x[n], y[n], -odx, -ody, -idx, -idy, -hx, -hy, {0}, dst)
+				IF closed THEN
+					GfxPaths.AddExit(dst, dxo, dyo);
+					EnterJoinStyle(ctxt, x[n], y[n], -odx, -ody, -hx, -hy, -idx, -idy, dst)
+				ELSE
+					AddEnterJoinStyle(ctxt, x[n], y[n], -hx, -hy, -idx, -idy, dst)
+				END
 			END
 		END;
+		
 		odx := -idx; ody := -idy;
 		i := n-1; j := n-2;
 		WHILE j >= 0 DO
@@ -632,28 +870,41 @@ MODULE Gfx;	(** eos   **)
 				GfxPaths.AddLine(dst, x[i] + idy, y[i] - idx)
 			ELSIF idx * ody > idy * odx THEN	(* left turn => outer join *)
 				GfxPaths.AddLine(dst, x[i] + idy, y[i] - idx);
-				ctxt.joinStyle(ctxt, x[i], y[i], idx, idy, odx, ody, hx, hy, {0, 1}, dst)
+				AddJoinStyle(ctxt, x[i], y[i], idx, idy, hx, hy, odx, ody, dst)
 			ELSE	(* right turn => inner join *)
 				GfxPaths.AddLine(dst, x[i] - hx, y[i] - hy)
 			END;
 			i := j; DEC(j)
 		END;
+		
 		IF (dxi = 0) & (dyi = 0) THEN
 			GfxPaths.AddLine(dst, x[0] + ody, y[0] - odx);
-			GfxPaths.AddExit(dst, dx0, dy0)
+			ExitCapStyle(ctxt, x[0], y[0], -odx, -ody, dst)
 		ELSE
 			idx := odx; idy := ody;
 			GetNormVector(-dxi, -dyi, width, odx, ody);
 			GetHalfAxisVector(idx, idy, odx, ody, hx, hy);
+			GfxPaths.AddLine(dst, x[0] + idy, y[0] - idx);
 			IF (hx = 0) & (hy = 0) THEN	(* collinear vectors *)
-				GfxPaths.AddLine(dst, x[0] + idy, y[0] - idx);
-				GfxPaths.AddExit(dst, -dxi, -dyi)
+				IF closed THEN
+					GfxPaths.AddExit(dst, -dxi, -dyi)
+				ELSE
+					GfxPaths.AddExit(dst, -idy, idx)
+				END
 			ELSIF idx * ody > idy * odx THEN	(* left turn *)
-				GfxPaths.AddLine(dst, x[0] + idy, y[0] - idx);
-				ctxt.joinStyle(ctxt, x[0], y[0], idx, idy, odx, ody, hx, hy, {1}, dst)
+				IF closed THEN
+					ExitJoinStyle(ctxt, x[0], y[0], idx, idy, hx, hy, odx, ody, dst)
+				ELSE
+					AddExitJoinStyle(ctxt, x[0], y[0], idx, idy, hx, hy, dst);
+					GfxPaths.AddExit(dst, -idx, -idy)
+				END
 			ELSE
 				GfxPaths.AddLine(dst, x[0] - hx, y[0] - hy);
-				GfxPaths.AddExit(dst, -dxi, -dyi)
+				IF closed THEN
+					GfxPaths.AddExit(dst, -dxi, -dyi)
+				ELSE
+					GfxPaths.AddExit(dst, hx, hy)
+				END
 			END
 		END
 	END GetPolyOutline;
@@ -680,7 +931,8 @@ MODULE Gfx;	(** eos   **)
 		END;
 		IF n > 0 THEN
 			GetPolyOutline(ctxt, x, y, n, dxi, dyi, scan.dx, scan.dy, dst)
-		END
+		END;
+		GfxPaths.Scan(scan)
 	END GetStrokeOutline;
 	
 	(** get offset values and pattern index of visible and invisible dash part at start of subpath (in device space) **)
@@ -704,7 +956,7 @@ MODULE Gfx;	(** eos   **)
 	
 	PROCEDURE GetDashOutline (ctxt: Context; VAR scan: GfxPaths.Scanner; dst: GfxPaths.Path);
 		VAR
-			width, cx, cy, dx, dy, beg, end, next, offset, len, cos, sin, wdx, wdy, endOff, dash, nx, ny, dx0, dy0, dx1, dy1: REAL;
+			width, cx, cy, dx, dy, beg, end, next, offset, len, cos, sin, wdx, wdy, endOff, dash, nx, ny: REAL;
 			index: LONGINT; dscan: GfxPaths.Scanner;
 	BEGIN
 		GfxMatrix.ApplyToDist(ctxt.cam, 0.5*ctxt.lineWidth, width);
@@ -764,12 +1016,11 @@ MODULE Gfx;	(** eos   **)
 							GfxPaths.AddLine(dst, nx, ny);
 							GfxPaths.AddExit(dst, 0, 0)
 						ELSE
-							GfxPaths.AddEnter(dst, cx - wdy, cy + wdx, nx - cx, ny - cy);
-							ctxt.capStyle(ctxt, cx, cy, wdx, wdy, dst, dx0, dy0);
+							EnterCapStyle(ctxt, cx, cy, wdx, wdy, dst);
 							GfxPaths.AddLine(dst, nx + wdy, ny - wdx);
-							ctxt.capStyle(ctxt, nx, ny, -wdx, -wdy, dst, dx1, dy1);
+							AddCapStyle(ctxt, nx, ny, -wdx, -wdy, dst);
 							GfxPaths.AddLine(dst, cx - wdy, cy + wdx);
-							GfxPaths.AddExit(dst, dx0, dy0)
+							ExitCapStyle(ctxt, cx, cy, wdx, wdy, dst)
 						END
 					END
 				UNTIL next >= endOff;
@@ -796,7 +1047,8 @@ MODULE Gfx;	(** eos   **)
 				GfxPaths.Open(dscan, DashPath, 0);
 				GetStrokeOutline(ctxt, dscan, dst)
 			END
-		END
+		END;
+		GfxPaths.Scan(scan)
 	END GetDashOutline;
 	
 	(** store outline/dashes of current path in specified path **)
@@ -816,6 +1068,9 @@ MODULE Gfx;	(** eos   **)
 		END
 	END GetOutline;
 	
+	
+	(**--- Drawing Operations ---**)
+	
 	(** draw current path in requested mode **)
 	PROCEDURE Render* (ctxt: Context; mode: SET);
 	BEGIN
@@ -825,15 +1080,6 @@ MODULE Gfx;	(** eos   **)
 			ctxt.do.render(ctxt, mode)
 		END
 	END Render;
-	
-	
-	(**--- Drawing Operations ---**)
-	
-	(** erase whole context (irrespective of current clip area) **)
-	PROCEDURE Erase* (ctxt: Context);
-	BEGIN
-		ctxt.do.erase(ctxt)
-	END Erase;
 	
 	(** draw given path in requested mode **)
 	PROCEDURE DrawPath* (ctxt: Context; path: GfxPaths.Path; mode: SET);
@@ -869,6 +1115,22 @@ MODULE Gfx;	(** eos   **)
 		ctxt.do.exit(ctxt, 0, 0);
 		ctxt.do.end(ctxt)
 	END DrawLine;
+	
+	(** draw arc in requested mode (start and end angle in radians; negative radius for clockwise arc) **)
+	PROCEDURE DrawArc* (ctxt: Context; x, y, r, start, end: REAL; mode: SET);
+		VAR x1, y1, x2, y2: REAL;
+	BEGIN
+		ASSERT(~(InPath IN ctxt.mode), 100);
+		ASSERT(mode * {Fill, Clip, EvenOdd} = {}, 101);
+		IF r > 0 THEN x1 := x + r; y1 := y; x2 := x; y2 := y + r
+		ELSIF r < 0 THEN r := -r; x1 := x; y1 := y + r; x2 := x + r; y2 := y
+		ELSE RETURN
+		END;
+		ctxt.do.begin(ctxt, mode);
+		ctxt.do.enter(ctxt, x + r * Math.cos(start), y + r * Math.sin(start), 0, 0);
+		ctxt.do.arc(ctxt, x + r * Math.cos(end), y + r * Math.sin(end), x, y, x1, y1, x2, y2);
+		ctxt.do.end(ctxt)
+	END DrawArc;
 	
 	(** draw rectangle in requested mode **)
 	PROCEDURE DrawRect* (ctxt: Context; x0, y0, x1, y1: REAL; mode: SET);
@@ -918,118 +1180,24 @@ MODULE Gfx;	(** eos   **)
 	
 	(**--- Images and Patterns ---**)
 	
-	(** draw image map at given point **)
-	PROCEDURE DrawImageAt* (ctxt: Context; x, y: REAL; map: GfxMaps.Map; VAR filter: GfxMaps.Filter);
+	(** draw image at given point **)
+	PROCEDURE DrawImageAt* (ctxt: Context; x, y: REAL; img: GfxImages.Image; VAR filter: GfxImages.Filter);
 	BEGIN
-		ctxt.do.image(ctxt, x, y, map, filter)
+		ctxt.do.image(ctxt, x, y, img, filter)
 	END DrawImageAt;
 	
-	(** draw image map at current point **)
-	PROCEDURE DrawImage* (ctxt: Context; map: GfxMaps.Map; VAR filter: GfxMaps.Filter);
-	BEGIN
-		ctxt.do.image(ctxt, ctxt.cpx, ctxt.cpy, map, filter)
-	END DrawImage;
-	
 	(** return new pattern **)
-	PROCEDURE NewPattern* (ctxt: Context; map: GfxMaps.Map; px, py: REAL): Pattern;
+	PROCEDURE NewPattern* (ctxt: Context; img: GfxImages.Image; px, py: REAL): Pattern;
 	BEGIN
-		RETURN ctxt.do.newPattern(ctxt, map, px, py)
+		RETURN ctxt.do.newPattern(ctxt, img, px, py)
 	END NewPattern;
-	
-	
-	(**--- Predefined Join Styles ---**)
-	
-	(** connect outer corner points with a line **)
-	PROCEDURE BevelJoin* (ctxt: Context; cx, cy, idx, idy, odx, ody, hx, hy: REAL; parts: SET; path: GfxPaths.Path);
-		VAR ix, iy: REAL;
-	BEGIN
-		IF (hx # 0) OR (hy # 0) THEN
-			IF parts = {0} THEN	(* start new subpath in the middle of the bevel line *)
-				GfxPaths.IntersectLines(cx, cy, hx, hy, cx + ody, cy - odx, -hy, hx, ix, iy);
-				GfxPaths.AddEnter(path, ix, iy, -hy, hx);
-				GfxPaths.AddLine(path, cx + ody, cy - odx)
-			ELSIF parts = {1} THEN	(* end current subpath in the middle of the bevel line *)
-				GfxPaths.IntersectLines(cx, cy, hx, hy, cx + idy, cy - idx, -hy, hx, ix, iy);
-				GfxPaths.AddLine(path, ix, iy);
-				GfxPaths.AddExit(path, -hy, hx)
-			ELSE	(* draw full bevel line *)
-				GfxPaths.AddLine(path, cx + ody, cy - odx)
-			END
-		END
-	END BevelJoin;
-	
-	(** connect outer corner points with a circular arc **)
-	PROCEDURE RoundJoin* (ctxt: Context; cx, cy, idx, idy, odx, ody, hx, hy: REAL; parts: SET; path: GfxPaths.Path);
-		VAR t: REAL;
-	BEGIN
-		IF (hx # 0) OR (hy # 0) THEN
-			IF parts = {0} THEN
-				t := Math.sqrt((odx * odx + ody * ody)/(hx * hx + hy * hy));
-				GfxPaths.AddEnter(path, cx + t * hx, cy + t * hy, -hy, hx);
-				GfxPaths.AddArc(path, cx + ody, cy - odx, cx, cy, cx - odx, cy - ody, cx + ody, cy - odx)
-			ELSIF parts = {1} THEN
-				t := Math.sqrt((odx * odx + ody * ody)/(hx * hx + hy * hy));
-				GfxPaths.AddArc(path, cx + t * hx, cy + t * hy, cx, cy, cx + idy, cy - idx, cx + idx, cy + idy);
-				GfxPaths.AddExit(path, -hy, hx)
-			ELSE
-				GfxPaths.AddArc(path, cx + ody, cy - odx, cx, cy, cx + idy, cy - idx, cx + idx, cy + idy)
-			END
-		END
-	END RoundJoin;
-	
-	(** connect outer corner points by extending their tangent vectors until they meet **)
-	PROCEDURE MiterJoin* (ctxt: Context; cx, cy, idx, idy, odx, ody, hx, hy: REAL; parts: SET; path: GfxPaths.Path);
-		VAR limit: REAL;
-	BEGIN
-		IF (hx # 0) OR (hy # 0) THEN
-			GfxMatrix.ApplyToDist(ctxt.cam, 0.5 * ctxt.lineWidth * ctxt.styleLimit, limit);
-			IF hx * hx + hy * hy > limit * limit THEN	(* miter join extends over boundary => use bevel join *)
-				BevelJoin(ctxt, cx, cy, idx, idy, odx, ody, hx, hy, parts, path)
-			ELSIF parts = {0} THEN
-				GfxPaths.AddEnter(path, cx + hx, cy + hy, idx, idy);
-				GfxPaths.AddLine(path, cx + ody, cy - odx)
-			ELSIF parts = {1} THEN
-				GfxPaths.AddLine(path, cx + hx, cy + hy);
-				GfxPaths.AddExit(path, odx, ody)
-			ELSE
-				GfxPaths.AddLine(path, cx + hx, cy + hy);
-				GfxPaths.AddLine(path, cx + ody, cy - odx)
-			END
-		END
-	END MiterJoin;
-	
-	
-	(**--- Predefined Cap Styles ---**)
-	
-	(** connect corner points with straight line **)
-	PROCEDURE ButtCap* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path; VAR dx0, dy0: REAL);
-	BEGIN
-		GfxPaths.AddLine(path, x + dy, y - dx);
-		dx0 := dy; dy0 := -dx
-	END ButtCap;
-	
-	(** connect corner points with a semi-circular arc **)
-	PROCEDURE RoundCap* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path; VAR dx0, dy0: REAL);
-	BEGIN
-		GfxPaths.AddArc(path, x + dy, y - dx, x, y, x - dy, y + dx, x - dx, y - dy);
-		dx0 := -dx; dy0 := -dy
-	END RoundCap;
-	
-	(** connect corner points by extending their tangent vectors by half the line width and a line inbetween **)
-	PROCEDURE SquareCap* (ctxt: Context; x, y, dx, dy: REAL; path: GfxPaths.Path; VAR dx0, dy0: REAL);
-	BEGIN
-		GfxPaths.AddLine(path, x - dy - dx, y + dx - dy);
-		GfxPaths.AddLine(path, x + dy - dx, y - dx - dy);
-		GfxPaths.AddLine(path, x + dy, y - dx);
-		dx0 := -dx; dy0 := -dy
-	END SquareCap;
 	
 	
 	(**--- Default Methods ---**)
 	
 	PROCEDURE DefResetContext* (ctxt: Context);
 	BEGIN
-		InitContextValues(ctxt);
+		Init(ctxt);
 		ctxt.do.resetClip(ctxt);
 		ctxt.do.resetCTM(ctxt)
 	END DefResetContext;
@@ -1105,15 +1273,6 @@ MODULE Gfx;	(** eos   **)
 		ctxt.styleLimit := limit
 	END DefSetStyleLimit;
 	
-	PROCEDURE DefSetPoint* (ctxt: Context; x, y: REAL);
-	BEGIN
-		IF (InSubpath IN ctxt.mode) & ((x # ctxt.cpx) OR (y # ctxt.cpy)) THEN
-			ctxt.do.exit(ctxt, 0, 0);
-			ctxt.do.enter(ctxt, x, y, 0, 0)
-		END;
-		ctxt.cpx := x; ctxt.cpy := y
-	END DefSetPoint;
-	
 	PROCEDURE DefSetFlatness* (ctxt: Context; flatness: REAL);
 	BEGIN
 		ctxt.flatness := flatness
@@ -1161,10 +1320,10 @@ MODULE Gfx;	(** eos   **)
 		END
 	END DefEllipse;
 	
-	PROCEDURE DefNewPattern* (ctxt: Context; map: GfxMaps.Map; px, py: REAL): Pattern;
+	PROCEDURE DefNewPattern* (ctxt: Context; img: GfxImages.Image; px, py: REAL): Pattern;
 		VAR pat: Pattern;
 	BEGIN
-		NEW(pat); pat.map := map; pat.px := px; pat.py := py;
+		NEW(pat); pat.img := img; pat.px := px; pat.py := py;
 		RETURN pat
 	END DefNewPattern;
 	

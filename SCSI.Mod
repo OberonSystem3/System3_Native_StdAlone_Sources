@@ -1,33 +1,23 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE SCSI;	(** prk  **)
+MODULE SCSI;	(** prk **)
 (*
-	Common Interface for SCSI Drivers
-	
-	History:
-		26.01.99
-			SCSI Commands
-		21.1.99
-			Some SCSI Messages
-			Command definition
+	Based on Native Oberon module SCSI.Mod by Patrik Reali
 *)
 
-IMPORT SYSTEM, Disk, Kernel;
+
+IMPORT
+		SYSTEM, Kernel, Disks;
 
 CONST
+(** Debugging: Trace bits for "SCSIDebug" config string *)
+	TraceSense* = 0;	(** 01H *)
+	TraceDetection* = 1;	(** 02H *)
+
+(** LUN logical unit support *)
+	CheckLUNs = TRUE;
+
 (** SCSI Commands*)	(*taken from scsi.h -> "http://lxr.linux.no/source/include/scsi/scsi.h" *)
 	TestUnitReady* = 0X;
 	RezeroUnit* = 1X;
@@ -63,7 +53,7 @@ CONST
 	SearchHigh* = 30X;
 	SearchEqual* = 31X;
 	SearchLow* = 32X;
-	SetLilmits* = 33X;
+	SetLimits* = 33X;
 	PreFetch* = 34X;
 	ReadPosition* = 34X;
 	SynchronizeCache* = 35X;
@@ -129,18 +119,23 @@ CONST
 (**SCSI Sense Keys*)
 	NoSense* = 0;  RecoveredError* = 1;  NotReady* = 2;  MediumError* = 3;  HardwareError* = 4;
 	IllegalRequest* = 5;  UnitAttention* = 6;  DataProtect* = 7;
+
+(** SCSI.Command, status:  value returned by the scsi status phase *)
+	NotGood* = -1;  Good* = 0;  CheckCondition* = 2;  ConditionMet* = 4;  Busy* = 8;  Intermediate* = 10;
+	IntermediateConditionMet* = 13;  ReservationConflict* = 18;  CommandTerminated* = 22;
+	QueueFull* = 28;
+	
+(** SCSI.Command, result: additional information if status # Good *)
+	OK* = 0;  NoConnect* = 1;  BusBusy* = 2;  TimeOut* = 3;  BadTarget* = 4;  Abort* = 5;
+	Parity* = 6;  Error* = 7;  Reset* = 8;  BadIntr* = 9;  PassThrough* = 10;  SoftError* = 11;
+
+(** SCSI Device class*)
+	DirectAccess* = 0;  SequentialAccess* = 1; Printer* = 2; Processor* = 3; WriteOnce* = 4; CDRom* = 5;
+	Scanner* = 6; Optical* = 7; MediumChanger* = 8; Communication* = 9; Unknown* = 1FH;
+	
+	DiskDevices = {DirectAccess, CDRom};
 	
 TYPE
-(** SCSI Command, all driver must accept this structure *)
-	(*Command* = POINTER TO CommandDesc;*)
-	CommandDesc* = RECORD
-		status*, result*: SHORTINT; done*: BOOLEAN;			(* !!! These fields must be the first ones !!! *)
-		target*, chan*, lun*: SHORTINT;	(**destination*)
-		cmd*: LONGINT; clen*: SHORTINT;	(**command*)
-		data*,dlen*: LONGINT;	(**data*)
-		tag*: CHAR;	(*SCSI-II queued command tag*)
-	END;
-
 (** SCSI Structures for the common commands *)
 	InquiryData* = RECORD
 		deviceClass*, ISO*, ECMA*, ANSI*: SHORTINT;
@@ -148,89 +143,116 @@ TYPE
 		manufacturer*, product*, rev*: ARRAY 32 OF CHAR;
 	END;
 	
-CONST
-(** SCSI.Command, status *)
-	Good* = 0H;
-	CheckCondition* = 2H;
-	ConditionMet* = 4H;
-	Busy* = 8H;
-	Intermediate* = 0AH;
-	IntermediateConditionMet* = 0DH;
-	ReservationConflict* = 12H;
-	CommandTerminated* = 16H;
-	QueueFull* = 1CH;
-	
-	NotGood* = -1;
-	
-(** SCSI.Command, result *)
-	OK* = 0H;
-	NoConnect* = 01H;
-	BusBusy* = 02H;
-	TimeOut* = 03H;
-	BadTarget* = 04H;
-	Abort* = 05H;
-	Parity* = 06H;
-	Error* = 07H;
-	Reset* = 08H;
-	BadIntr* = 09H;
-	PassThrough* = 0AH;
-	SoftError* = 0BH;
+(** SCSI Command, all driver must accept this structure *)
+	Command* = RECORD
+		status*, result*: SHORTINT;
+		target*, chan*, lun*: SHORTINT;	(**destination*)
+		cmd*: ARRAY 12 OF CHAR;  clen*: SHORTINT;	(**command*)
+		dataAddr*, dlen*: LONGINT;	(**data*)
+		tag*: CHAR;	(*SCSI-II queued command tag*)
+	END;
 
-TYPE
-(** SCSI Driver *)
-	Driver* = POINTER TO DriverDesc;
-	SubmitProc* = PROCEDURE(d: Driver; VAR c: CommandDesc);
-	EnumProc* = PROCEDURE(d: Driver; VAR stop: BOOLEAN);
+	EnumProc* = PROCEDURE(b: Bus; VAR stop: BOOLEAN);
 	
-	DriverDesc* = RECORD
-		number*: LONGINT;
+	Bus* = OBJECT
+		VAR 
+			wide*: BOOLEAN;
+			name*: ARRAY 6 OF CHAR;	(** "SCSIx" *)
+			fullname*: ARRAY 64 OF CHAR;	(** bus adapter name *)
+			next: Bus;
 		
-		wide*: BOOLEAN;
-		name*: ARRAY 64 OF CHAR;
-		submit*: SubmitProc;
-		next: Driver;
-		
-		(*debug*: LONGINT;*)
-	END DriverDesc;
-	
-(** SCSI Device *)
-	Device* = POINTER TO DeviceDesc;
-	DeviceDesc* = RECORD
-		driver*: Driver;  target*: SHORTINT;
-		name*: ARRAY 32 OF CHAR;
-		class: SHORTINT;
+		PROCEDURE Submit*(VAR c: Command);
+		BEGIN HALT(99)
+		END Submit;
+	END Bus;
+
+
+	Disk* = POINTER TO RECORD  (Disks.Device)
+		bus*: Bus;
+		target*, lun*: SHORTINT;
 		inquiry*: InquiryData;
 		started: BOOLEAN;
-		bs*, cyls*, hds*, spt*: LONGINT;	(**drive geometry*)
-		next*: Device;
-	END DeviceDesc;
+		next*: Disk;
+	END;
+		
 
-CONST
-(** SCSI Device class*)
-	DirectAccess* = 0;  SequentialAccess* = 1; Printer* = 2; Processor* = 3; WriteOnce* = 4; CDRom* = 5;
-	Scanner* = 6; Optical* = 7; MediumChanger* = 8; Communication* = 9; Unknown* = 1FH;
-	
-	
 VAR
-	DriverList: Driver;
-	DriverCount: LONGINT;
+	busList: Bus;
+	busCount: LONGINT;
 	
-	DeviceList*: Device;
-	DeviceCache: ARRAY 4 OF Device;  DeviceCount: LONGINT;
+	diskList: Disk;
+	diskCount: LONGINT;
 	
+	deviceClassName: ARRAY 32, 20 OF CHAR;
+	trace: SET;
+	
+	
+
+	PROCEDURE Transfer*(dev: Disks.Device; op, start, num: LONGINT; VAR data: ARRAY OF CHAR; ofs: LONGINT; VAR res: LONGINT);
+	VAR  requ: Command;  str: ARRAY 32 OF CHAR;  d: Disk;
+	BEGIN
+		d := dev(Disk);
+		IF (op = Disks.Read) OR (op = Disks.Write) THEN
+			ASSERT(num < 10000H);
+			IF op = Disks.Read THEN
+				MakeCmd10(requ.cmd, Read10, d.lun, start, num, 0);
+				str := "transfer/read"
+			ELSE
+				MakeCmd10(requ.cmd, Write10, d.lun, start, num, 0);
+				str := "transfer/write"
+			END;
+			NewCmd(requ, d.target, d.lun, 10, SYSTEM.ADR(data[ofs]), num*d.blockSize);
+			SubmitAndSense(d.bus, requ, 1, str, res);
+			IF res = Good THEN
+				res := Disks.Ok
+			ELSE
+				(*use internal res*)
+			END
+		ELSE
+			res := Disks.Unsupported
+		END
+	END Transfer;
+			
+	PROCEDURE GetSize*(dev: Disks.Device; VAR size, res: LONGINT);
+	VAR  blkSize: LONGINT;  d: Disk;
+	BEGIN
+		d := dev(Disk);
+		DoReadCapacity(d.bus, d.target, d.lun, size, blkSize, res);
+		IF size # 0 THEN
+			IF d.blockSize = 0 THEN d.blockSize := blkSize ELSE  ASSERT(d.blockSize = blkSize)  END;
+			res := Disks.Ok  
+		END;
+	END GetSize;
+
+	PROCEDURE Handle*(dev: Disks.Device; VAR msg: Disks.Message; VAR res: LONGINT);
+	VAR  d: Disk;
+	BEGIN
+		d := dev(Disk);
+		IF msg IS Disks.EjectMsg THEN
+			res := Disks.Unsupported
+		ELSIF msg IS Disks.LockMsg THEN
+			PreventAllowRemoval(d, TRUE, res)
+		ELSIF msg IS Disks.UnlockMsg THEN
+			PreventAllowRemoval(d, FALSE, res)
+		ELSE
+			res := Disks.Unsupported
+		END
+	END Handle;
+
 (* Debug *)
+
 PROCEDURE DumpCmdStatus(stat, res: SHORTINT);
 BEGIN
 	CASE stat OF
-	| Good: Kernel.WriteString("Good ")
-	| CheckCondition: Kernel.WriteString("CheckCondition ")
-	| ConditionMet: Kernel.WriteString("ConditionMet ")
-	| Busy: Kernel.WriteString("Busy ")
-	| Intermediate: Kernel.WriteString("Intermediate ")
-	| IntermediateConditionMet: Kernel.WriteString("IntermediateConditionMet ")
-	| ReservationConflict: Kernel.WriteString("ReservationConflict ")
-	| CommandTerminated: Kernel.WriteString("CommandTerminated ")
-	| QueueFull: Kernel.WriteString("QueueFull ")
+	|  Good: Kernel.WriteString("Good ")
+	|  CheckCondition: Kernel.WriteString("CheckCondition ")
+	|  ConditionMet: Kernel.WriteString("ConditionMet ")
+	|  Busy: Kernel.WriteString("Busy ")
+	|  Intermediate: Kernel.WriteString("Intermediate ")
+	|  IntermediateConditionMet: Kernel.WriteString("IntermediateConditionMet ")
+	|  ReservationConflict: Kernel.WriteString("ReservationConflict ")
+	|  CommandTerminated: Kernel.WriteString("CommandTerminated ")
+	|  QueueFull: Kernel.WriteString("QueueFull ")
 	ELSE Kernel.WriteString("unk"); Kernel.WriteInt(stat, 0)
 	END;
 	CASE res OF
@@ -251,98 +273,171 @@ BEGIN
 	Kernel.WriteLn;
 END DumpCmdStatus;
 
-PROCEDURE WriteDriver(d: Driver);
-BEGIN  Kernel.WriteString("scsi"); Kernel.WriteInt(d.number, 0); Kernel.WriteString(" ")
-END WriteDriver;
+PROCEDURE WriteBus(bus: Bus);
+BEGIN	Kernel.WriteString(bus.name); Kernel.WriteString(": ")
+END WriteBus;
 
-PROCEDURE WriteDevice(d: Device);
-BEGIN
-	Kernel.WriteString("scsi"); Kernel.WriteInt(d.driver.number, 0); 
-	Kernel.WriteChar("."); Kernel.WriteInt(d.target, 0); Kernel.WriteString(" ")
-END WriteDevice;
+PROCEDURE WriteDisk(disk: Disk);
+BEGIN  Kernel.WriteString(disk.name); Kernel.WriteString(": ")
+END WriteDisk;
 
-PROCEDURE WriteDevice2(d: Driver; target: LONGINT);
-BEGIN
-	Kernel.WriteString("scsi"); Kernel.WriteInt(d.number, 0); 
-	Kernel.WriteChar("."); Kernel.WriteInt(target, 0); Kernel.WriteString(" ")
-END WriteDevice2;
+PROCEDURE WriteDisk2(bus: Bus;  target: LONGINT);
+BEGIN  Kernel.WriteString(bus.name); Kernel.WriteChar("."); Kernel.WriteInt(target, 0); Kernel.WriteString(": ")
+END WriteDisk2;
 
-PROCEDURE WriteConfig(d: Device; VAR c: InquiryData);
+PROCEDURE WriteDisk3(bus: Bus;  target, lun: LONGINT);
+BEGIN  
+	Kernel.WriteString(bus.name); Kernel.WriteChar("."); Kernel.WriteInt(target, 0); 
+	Kernel.WriteChar("."); Kernel.WriteInt(lun, 0); Kernel.WriteString(": ")
+END WriteDisk3;
+
+PROCEDURE WriteConfig(d: Disk; VAR c: InquiryData);
 BEGIN
-	WriteDevice(d); Kernel.WriteString("Inquiry: ");Kernel.WriteString("SCSI-");
-	IF c.ANSI = 0 THEN Kernel.WriteChar("1")
-	ELSIF c.ANSI = 1 THEN Kernel.WriteString("SCC")
-	ELSE Kernel.WriteInt(c.ANSI, 0)
+	WriteDisk(d); Kernel.WriteString("Inquiry: "); Kernel.WriteString("SCSI-");
+	IF c.ANSI = 0 THEN
+		Kernel.WriteChar("1")
+	ELSIF c.ANSI = 1 THEN
+		Kernel.WriteString("SCC")
+	ELSE
+		Kernel.WriteInt(c.ANSI, 0)
 	END;
-	IF c.rmb THEN Kernel.WriteString(" Removable")  END;
-	IF c.w32 THEN Kernel.WriteString(" Wide-32") END;
-	IF c.w16 THEN Kernel.WriteString(" Wide-16") END;
-	IF c.sync THEN Kernel.WriteString(" Sync") END;
+	IF c.rmb THEN Kernel.WriteString(" rmb")  END;
+	IF c.w32 THEN Kernel.WriteString(" 32bit") END;
+	IF c.w16 THEN Kernel.WriteString(" 16bit") END;
+	IF c.sync THEN Kernel.WriteString(" sync") END;
 	Kernel.WriteLn
 END WriteConfig;
 
-(** Common SCSI Commands *)
-PROCEDURE NewCmd(VAR c: CommandDesc; t, l: SHORTINT; ca, cl, da, dl: LONGINT);
+
+(** Useful SCSI Commands *)
+
+PROCEDURE MakeCmd6(VAR c: ARRAY OF CHAR;  op: CHAR;  lun, lba, len, ctrl: LONGINT);
 BEGIN
-	c.cmd := ca; c.clen := SHORT(SHORT(cl)); c.data := da; c.dlen := dl; c.target := t; c.lun := l;
-	c.chan := 0;
+	ASSERT((0 <= lun) & (lun < 8), 100);
+	ASSERT((0 <= lba) & (lba < 200000H), 101);
+	ASSERT((0 <= len) & (len < 100H), 102);
+	c[0] := op;
+	c[1] := CHR(SYSTEM.LSH(lun, 5) + SYSTEM.LSH(lba, -16));
+	c[2] := CHR(SYSTEM.LSH(lba, -8));
+	c[3] := CHR(lba);
+	c[4] := CHR(len);
+	c[5] := CHR(ctrl)
+END MakeCmd6;
+
+PROCEDURE MakeCmd10(VAR c: ARRAY OF CHAR;  op: CHAR;  lun, lba, len, ctrl: LONGINT);
+BEGIN
+	ASSERT((0 <= len) & (len < 10000H), 100);
+	c[0] := op;
+	c[1] := CHR(SYSTEM.LSH(lun, 5));
+	c[2] := CHR(SYSTEM.LSH(lba, -24));
+	c[3] := CHR(SYSTEM.LSH(lba, -16));
+	c[4] := CHR(SYSTEM.LSH(lba, -8));
+	c[5] := CHR(lba);
+	c[6] := 0X;	(*reserved*)
+	c[7] := CHR(SYSTEM.LSH(len, -8));
+	c[8] := CHR(len);
+	c[9] := CHR(ctrl)
+END MakeCmd10;
+
+PROCEDURE MakeCmd12(VAR c: ARRAY OF CHAR;  op: CHAR;  lun, lba, len, ctrl: LONGINT);
+BEGIN
+	c[0] := op;
+	c[1] := CHR(SYSTEM.LSH(lun, 5));
+	c[2] := CHR(SYSTEM.LSH(lba, -24));
+	c[3] := CHR(SYSTEM.LSH(lba, -16));
+	c[4] := CHR(SYSTEM.LSH(lba, -8));
+	c[5] := CHR(lba);
+	c[6] := CHR(SYSTEM.LSH(len, -24));
+	c[7] := CHR(SYSTEM.LSH(len, -16));
+	c[8] := CHR(SYSTEM.LSH(len, -8));
+	c[9] := CHR(len);
+	c[10] := 0X;	(*reserved*)
+	c[11] := CHR(ctrl)
+END MakeCmd12;
+
+PROCEDURE NewCmd(VAR c: Command; t, l: SHORTINT; cl, da, dl: LONGINT);
+BEGIN
+	c.clen := SHORT(SHORT(cl));  c.dataAddr := da;  c.dlen := dl;
+	c.target := t;  c.lun := l;  c.chan := 0;
 END NewCmd;
 
-PROCEDURE DoSense*(d: Driver; target, lun: SHORTINT; VAR key, code, res: LONGINT);
-VAR Cmd: CommandDesc; cmd: ARRAY 6 OF CHAR; data: ARRAY 36 OF CHAR;
+PROCEDURE DoSense*(b: Bus;  target,  lun: SHORTINT;  VAR key, code, res: LONGINT);
+VAR requ: Command; data: ARRAY 36 OF CHAR;
 BEGIN
-	cmd[0] := RequestSense; cmd[1]:= CHR(lun*32); cmd[2]:= 00X;
-	cmd[3]:= 00X; cmd[4]:= 24X; cmd[5]:= 00X;
-	NewCmd(Cmd, target, 0, SYSTEM.ADR(cmd), 6, SYSTEM.ADR(data), 36);
-	d.submit(d, Cmd);  WHILE ~Cmd.done DO END;
-	key := ORD(data[2]) MOD 16; code := 100H*ORD(data[12]) + ORD(data[13]);
-	(*WriteDevice2(d, target); Kernel.WriteString(" sense "); Kernel.WriteInt(key, 3);
-	Kernel.WriteString(" / "); Kernel.WriteHex(code, 0); Kernel.WriteLn;*)
-	res := Cmd.status
+	MakeCmd6(requ.cmd, RequestSense, lun, 0, 36, 0);
+	NewCmd(requ, target, lun, 6, SYSTEM.ADR(data), 36);
+	b.Submit(requ);
+	key := ORD(data[2]) MOD 16;
+	code := 100H*ORD(data[12]) + ORD(data[13]);
+	IF TraceSense IN trace THEN
+		WriteBus(b);  Kernel.WriteString(" RequestSense"); Kernel.WriteLn;
+		Kernel.WriteMemory(SYSTEM.ADR(data[0]), 36); Kernel.WriteLn
+	END;
+	res := requ.status
 END DoSense;
 
-PROCEDURE SubmitAndSense*(d: Device; VAR cmd: CommandDesc; maxtry: LONGINT; msg: ARRAY OF CHAR; VAR res: LONGINT);
-VAR key, code: LONGINT; dummy: BOOLEAN;
+PROCEDURE SubmitAndSense*(d: Bus;  VAR requ: Command;  maxtry: LONGINT;  msg: ARRAY OF CHAR;  VAR res: LONGINT);
+VAR key, code, kind: LONGINT; first: BOOLEAN;
 BEGIN
+	first := TRUE;
 	REPEAT
-		d.driver.submit(d.driver, cmd);  WHILE ~cmd.done DO END;
-		IF cmd.status =  CheckCondition THEN
-			WriteDevice(d); Kernel.WriteString("  "); Kernel.WriteString(msg);
-			Kernel.WriteString(" returned CheckCondition"); Kernel.WriteLn;
-			DoSense(d.driver, d.target, 0, key, code, res);
-			IF (key#0) OR (code#0) THEN
-				Kernel.WriteString("   sense -> "); Kernel.WriteInt(key, 3); Kernel.WriteHex(code, 0); Kernel.WriteLn;
+		d.Submit(requ);
+		IF requ.status =  CheckCondition THEN
+			DoSense(d, requ.target, requ.lun, key, code, res);
+			kind := ASH(code, -8);
+			IF CheckLUNs THEN WriteDisk3(d, requ.target, requ.lun) ELSE WriteDisk2(d, requ.target) END;
+			Kernel.WriteString(msg);
+			IF (key=6) & (code = 2900H) & first THEN	(*power on, ignore*)
+				Kernel.WriteString(" / power on"); Kernel.WriteLn;
+				INC(maxtry);  first := FALSE
+			ELSIF code = 0401H THEN	(*lun is in process of becoming ready*)
+				Kernel.WriteString(" / getting ready"); Kernel.WriteLn;
+				INC(maxtry);  (*skip*)
+			ELSIF kind = 3AH THEN
+				res := Disks.MediaMissing;
+				RETURN
+			ELSIF kind = 28H THEN
+				res := Disks.MediaChanged;
+				RETURN 
+			ELSIF (key#0) OR (code#0) THEN
+				Kernel.WriteString(" / sense -> "); Kernel.WriteInt(key, 3); Kernel.WriteHex(code, 0); Kernel.WriteLn;
 				res := NotGood;
 				RETURN
+			ELSE
+				Kernel.WriteString(" / no sense"); Kernel.WriteLn;
+				INC(maxtry)
 			END
-		ELSIF cmd.status # Good THEN
-			WriteDevice(d); Kernel.WriteString(": "); Kernel.WriteString(msg); 
-			Kernel.WriteString(" returned with "); DumpCmdStatus(cmd.status, cmd.result);
+		ELSIF requ.status # Good THEN
+			IF CheckLUNs THEN WriteDisk3(d, requ.target, requ.lun) ELSE WriteDisk2(d, requ.target) END;  
+			Kernel.WriteString(msg);  Kernel.WriteString(" / ");
+			DumpCmdStatus(requ.status, requ.result);
 		END;
 		DEC(maxtry);
-	UNTIL (cmd.status = Good) OR (maxtry < 0);
-	res := cmd.status
+	UNTIL (requ.status = Good) OR (maxtry <= 0);
+	res := requ.status
 END SubmitAndSense;
 
-PROCEDURE DoTestUnitReady*(d: Driver; target, lun: SHORTINT; VAR res: LONGINT);
-VAR Cmd: CommandDesc; cmd: ARRAY 6 OF CHAR;
+PROCEDURE DoTestUnitReady*(b: Bus;  target, lun: SHORTINT;  VAR res: LONGINT);
+VAR requ: Command;
 BEGIN
-	cmd[0]:= TestUnitReady; cmd[1]:= CHR(lun*32); cmd[2]:= 00X;
-	cmd[3]:= 00X; cmd[4]:= 00X; cmd[5]:= 00X;
-	NewCmd(Cmd, target, lun, SYSTEM.ADR(cmd), 6, 0, 0);
-	d.submit(d, Cmd);  WHILE ~Cmd.done DO END;
-	res := Cmd.status
+	MakeCmd6(requ.cmd, TestUnitReady, lun, 0, 0, 0);
+	NewCmd(requ, target, lun, 6, 0, 0);
+	b.Submit(requ);
+	res := requ.status
 END DoTestUnitReady;
 
-PROCEDURE DoInquiryDrive*(d: Driver; target: SHORTINT; VAR inq: InquiryData; VAR res: LONGINT);
-VAR Cmd: CommandDesc; cmd: ARRAY 6 OF CHAR; data: ARRAY 36 OF CHAR; i: LONGINT;
+PROCEDURE DoInquiry*(b: Bus;  target, lun: SHORTINT; VAR inq: InquiryData; VAR res: LONGINT);
+VAR requ: Command; data: ARRAY 36 OF CHAR; i: LONGINT;
 BEGIN
-	cmd[0]:= Inquiry; cmd[1]:= 00X; cmd[2]:= 00X;
-	cmd[3]:= 00X; cmd[4]:= 24X; cmd[5]:= 00X;
-	NewCmd(Cmd, target, 0, SYSTEM.ADR(cmd), 6, SYSTEM.ADR(data), 36);
-	d.submit(d, Cmd);  WHILE ~Cmd.done DO END;
-	res := Cmd.status;
+	MakeCmd6(requ.cmd, Inquiry, lun, 0, 36, 0);
+	NewCmd(requ, target, lun, 6, SYSTEM.ADR(data), 36);
+	b.Submit(requ);
+	res := requ.status;
 	IF res = Good THEN
+		IF TraceDetection IN trace THEN
+			WriteBus(b);  Kernel.WriteString("Inquiry"); Kernel.WriteLn;
+			Kernel.WriteMemory(SYSTEM.ADR(data[0]), 36); Kernel.WriteLn
+		END;
 		inq.deviceClass := SHORT(ORD(data[0]) MOD 32);
 		inq.rmb := 7 IN SYSTEM.VAL(SET, data[1]);
 		inq.ANSI := SHORT(ORD(data[2]) MOD 8);
@@ -359,272 +454,251 @@ BEGIN
 		i := 15;  WHILE (i >= 0) & (inq.product[i] = 20X) DO  DEC(i)  END; inq.product[i+1]:= 0X;
 		SYSTEM.MOVE(SYSTEM.ADR(data[32]), SYSTEM.ADR(inq.rev), 4);
 		i := 3;  WHILE (i >= 0) & (inq.rev[i] = 20X) DO  DEC(i)  END; inq.rev[i+1]:= 0X;
+	ELSIF TraceDetection IN trace THEN
+		IF CheckLUNs THEN WriteDisk3(b, target, lun) ELSE WriteDisk2(b, target) END;
+		Kernel.WriteString("Inquiry failed with "); DumpCmdStatus(requ.status, requ.result)
 	END
-END DoInquiryDrive;
+END DoInquiry;
 
-PROCEDURE DoStartStopUnit*(d: Device; start: BOOLEAN; VAR res: LONGINT);
-VAR	Cmd: CommandDesc; cmd: ARRAY 10 OF CHAR; data: ARRAY 16 OF CHAR;
+PROCEDURE DoStartStopUnit*(b: Bus;  target, lun: SHORTINT; start: BOOLEAN;  VAR res: LONGINT);
+VAR	requ: Command;
 BEGIN
-	NewCmd(Cmd, d.target, 0, SYSTEM.ADR(cmd), 6, SYSTEM.ADR(data), 0);
-	cmd[0]:= StartStop; cmd[1]:= 0X; cmd[2]:= 0X;
-	cmd[3]:= 0X; cmd[5]:= 0X; 
-	IF start THEN cmd[4]:= 1X ELSE cmd[4]:= 0X END;
-	d.driver.submit(d.driver, Cmd);  WHILE ~Cmd.done DO END;
-	res := Cmd.status
+	MakeCmd6(requ.cmd, StartStop, lun, 0, 0, 0);
+	IF start THEN requ.cmd[4]:= 1X ELSE requ.cmd[4]:= 0X END;
+	NewCmd(requ, target, lun, 6, 0, 0);
+	b.Submit(requ);
+	res := requ.status
 END DoStartStopUnit;
 
-(** Disk oriented commands *)
-
-PROCEDURE GetGeometry*(d: Device; VAR bs, cyls, hds, spt: LONGINT);
-VAR
-	requ: CommandDesc;
-	cmd: ARRAY 10 OF CHAR; data: ARRAY 128 OF CHAR;
-	capacity, i, temp, res: LONGINT; 
-	code, qual: LONGINT;
+PROCEDURE PreventAllowRemoval(d: Disk;  prevent: BOOLEAN;  VAR res: LONGINT);
+VAR	requ: Command;
 BEGIN
-	bs := 0; cyls := 0;  hds := 0;  spt := 0;
-	IF (d # NIL) & ~d.inquiry.rmb THEN
-			(*read capacity*)
-		NewCmd(requ, d.target, 0, SYSTEM.ADR(cmd), 10, SYSTEM.ADR(data), 16);
-		cmd[0]:= ReadCapacity; cmd[1]:= 0X; cmd[2]:= 0X;
-		cmd[3]:= 0X; cmd[4]:= 0X; cmd[5]:= 0X;
-		cmd[6]:= 0X; cmd[7]:= 0X; cmd[8]:= 0X; cmd[9]:= 0X;
-		SubmitAndSense(d, requ, 2, "GetGeometry/ReadCapacity", res);
-		IF res # Good THEN  RETURN   END;
-		capacity:=0; (*bs:=0;*)
-		FOR i := 0 TO 3 DO
-			capacity:=capacity*100H + ORD(data[i]);
-			bs:=bs*100H + ORD(data[4+i])
-		END;
-			(*get heads and cylinders*)
-		cmd[0]:= ModeSense; cmd[1]:= 0X; cmd[2]:= 04X; cmd[3]:= 0X; cmd[4]:= 80X; cmd[5]:= 0X;
-		requ.clen:= 6; requ.dlen:= 80H;
-		SubmitAndSense(d, requ, 2, "GetGeometry/ModeSense", res);
-		IF res # Good THEN  RETURN   END;
-		i := 4 + ORD(data[3]);
-		WHILE (ORD(data[i]) MOD 64 # 4) & (data[i+1] # 0X) & (i < 80H) DO  i := i + ORD(data[i+1])  END;	(*search for page 04X *)
-		IF (ORD(data[i]) MOD 64 # 4) THEN  RETURN  END;
-		cyls:= SYSTEM.LSH(LONG(ORD(data[i+2])),16) + SYSTEM.LSH(ORD(data[i+3]),8) + ORD(data[i+4]);
-		hds:= ORD(data[i+5]);
-			(*set size*)
-		temp := cyls*hds;
-		spt := capacity DIV temp;
-		IF capacity MOD temp # 0 THEN
-			temp := spt * hds;
-			cyls := capacity DIV temp;
-			IF capacity MOD temp # 0 THEN
-				temp := cyls * spt;
-				hds := capacity DIV temp
-			END
-		END
-	END
-END GetGeometry;
-
-PROCEDURE GetBlocks*(d: Device; start, num: LONGINT; VAR buf: ARRAY OF SYSTEM.BYTE; ofs: LONGINT; VAR res: LONGINT);
-VAR Cmd: CommandDesc; cmd: ARRAY 10 OF CHAR; dummy: BOOLEAN;
-BEGIN
-	ASSERT(num < 10000H);
-		(*use Read10*)
-	cmd[0] := Read10; cmd[1] := 0X;
-	cmd[2] := CHR(SYSTEM.LSH(start, -24));
-	cmd[3] := CHR(SYSTEM.LSH(start, -16));
-	cmd[4] := CHR(SYSTEM.LSH(start, -8));
-	cmd[5] := CHR(start);
-	cmd[6] := 0X;
-	cmd[7] := CHR(SYSTEM.LSH(num, -8));
-	cmd[8] := CHR(num);
-	cmd[9] := 0X;
-	NewCmd(Cmd, d.target, 0, SYSTEM.ADR(cmd), 10, SYSTEM.ADR(buf[0])+ofs, num*512);
-	SubmitAndSense(d, Cmd, 10, "GetBlocks", res);
-END GetBlocks;
-
-PROCEDURE PutBlocks*(d: Device; start, num: LONGINT; VAR buf: ARRAY OF SYSTEM.BYTE; ofs: LONGINT; VAR res: LONGINT);
-VAR Cmd: CommandDesc; cmd: ARRAY 10 OF CHAR;
-BEGIN
-	ASSERT(num < 10000H);
-		(*use Read10*)
-	cmd[0] := Write10; cmd[1] := 0X;
-	cmd[2] := CHR(SYSTEM.LSH(start, -24));
-	cmd[3] := CHR(SYSTEM.LSH(start, -16));
-	cmd[4] := CHR(SYSTEM.LSH(start, -8));
-	cmd[5] := CHR(start);
-	cmd[6] := 0X;
-	cmd[7] := CHR(SYSTEM.LSH(num, -8));
-	cmd[8] := CHR(num);
-	cmd[9] := 0X;
-	NewCmd(Cmd, d.target, 0, SYSTEM.ADR(cmd), 10, SYSTEM.ADR(buf[0])+ofs, num*512);
-	SubmitAndSense(d, Cmd, 10, "PutBlocks", res);
-END PutBlocks;
-
-PROCEDURE DiskGet*(drive, start, num: LONGINT; VAR buf: ARRAY OF SYSTEM.BYTE; ofs: LONGINT);
-VAR res: LONGINT;
-BEGIN
-	GetBlocks(DeviceCache[drive], start, num, buf, ofs, res);
-END DiskGet;
-
-PROCEDURE DiskPut*(drive, start, num: LONGINT; VAR buf: ARRAY OF SYSTEM.BYTE; ofs: LONGINT);
-VAR res: LONGINT;
-BEGIN
-	PutBlocks(DeviceCache[drive], start, num, buf, ofs, res);
-END DiskPut;
-
-PROCEDURE DiskParams*(drive: LONGINT; VAR cyls, hds, spt: LONGINT);
-BEGIN
-	IF (DeviceCache[drive] # NIL) & (DeviceCache[drive].bs = 512) THEN
-		cyls := DeviceCache[drive].cyls;
-		hds := DeviceCache[drive].hds;
-		spt := DeviceCache[drive].spt
+	IF Disks.Removable IN d.flags THEN
+		MakeCmd6(requ.cmd, AllowMediumRemoval, d.lun, 0, 0, 0);
+		IF prevent THEN  requ.cmd[4]:= 1X  ELSE  requ.cmd[4]:= 0X  END;
+		NewCmd(requ, d.target, d.lun, 6, 0, 0);
+		SubmitAndSense(d.bus, requ, 1, "PreventAllowRemoval", res)
 	ELSE
-		cyls := 0; hds := 0; spt := 0
+		res := Disks.Unsupported
 	END
-END DiskParams;
+END PreventAllowRemoval;
 
-(** Device Functions *)
-PROCEDURE IsDeviceReady(device: Device): BOOLEAN;
-VAR res, res2, key, code, cnt, t: LONGINT; d: Driver; i: SHORTINT;
+PROCEDURE DoReadCapacity*(b: Bus;  target, lun: SHORTINT;  VAR capacity, blockSize: LONGINT;  VAR res: LONGINT);
+VAR  requ: Command;  data: ARRAY 128 OF CHAR;  i: LONGINT;
 BEGIN
-	d := device.driver; i := device.target;
-	REPEAT
-		DoTestUnitReady(d, i, 0, res);
-		IF res # Good THEN  DoSense(d, i, 0, key, code, res2)  END;
-	UNTIL (res = Good) OR (key # UnitAttention) OR (code DIV 100H # 29H) (*PowerOn*);
-	
-	IF device.class # DirectAccess THEN
-		(*skip*)
-	ELSIF (res # Good) & (key = NotReady) & (code = 0400H) THEN
-		DoStartStopUnit(device, TRUE, res);
-		IF res # Good THEN
-			DoSense(d, i, 0, key, code, res);
-			WriteDevice(device); Kernel.WriteString(" not ready, not starting, with sense ");
-			Kernel.WriteInt(key, 3); Kernel.WriteHex(code, 0); Kernel.WriteLn;
-			RETURN FALSE
-		ELSE
-			device.started := TRUE
+	capacity := 0;  blockSize := 0;
+	IF (b # NIL) THEN
+		MakeCmd10(requ.cmd, ReadCapacity, lun, 0, 0, 0);
+		NewCmd(requ, target, lun, 10, SYSTEM.ADR(data), 16);
+		SubmitAndSense(b, requ, 1, "ReadCapacity", res);
+		IF res # Good THEN  RETURN   END;
+		FOR i := 0 TO 3 DO
+			capacity := capacity*100H + ORD(data[i]);
+			blockSize := blockSize*100H + ORD(data[4+i])
 		END;
-		cnt := 0;
-		REPEAT
-			t := Kernel.GetTimer();
-			WHILE Kernel.GetTimer() - t < 300 DO  END;
-			INC(cnt);
-			DoTestUnitReady(d, i, 0, res);
-			IF res # Good THEN  DoSense(d, i, 0, key, code, res2) END;
-		UNTIL (res = Good) OR (cnt = 10);
-		IF res # Good THEN
-			WriteDevice(device); Kernel.WriteString(" starting, not ready, with sense ");
-			Kernel.WriteInt(key, 3); Kernel.WriteHex(code, 0); Kernel.WriteLn;
-			RETURN FALSE
-		END;
-	END;
-	RETURN res = Good
-END IsDeviceReady;
+		INC(capacity)
+	END
+END DoReadCapacity;
 
-PROCEDURE NewDevice(d: Driver);
-VAR	i: SHORTINT;  key, code, j, k: LONGINT; data: InquiryData; device: Device; res, res2: LONGINT;
+PROCEDURE InitDisk(d: Disk);
+VAR  requ: Command;  data: ARRAY 128 OF CHAR;  end, i, res: LONGINT; 
 BEGIN
-	i := 0;
-	WHILE (i<8) OR (i<16)&d.wide DO
-		DoInquiryDrive(d, i, data, res);
-		IF res = Good THEN
-			NEW(device); device.driver := d; device.target := i; device.inquiry := data;
-			device.class := data.deviceClass;
-			j := 0;
-			WHILE data.manufacturer[j] # 0X DO  device.name[j] := data.manufacturer[j]; INC(j)  END;
-			device.name[j] := "/"; INC(j);
-			k := 0;
-			WHILE data.product[k] # 0X DO device.name[j] := data.product[k]; INC(j); INC(k) END;
-			device.name[j] := 0X;
-			device.next := DeviceList; DeviceList := device;
-WriteDevice(device); Kernel.WriteString(device.name); Kernel.WriteLn; 
-WriteConfig(device, device.inquiry);
-			IF IsDeviceReady(device) & (data.deviceClass = DirectAccess) & ~data.rmb THEN
-				GetGeometry(device, device.bs, device.cyls, device.hds, device.spt)
-			END;
-IF ~data.rmb  & (device.bs # 0) THEN
-	WriteDevice(device); Kernel.WriteString("Geometry: "); Kernel.WriteInt(device.bs, 0); Kernel.WriteString(" / "); Kernel.WriteInt(device.cyls, 0);
-	Kernel.WriteString(" / "); Kernel.WriteInt(device.hds, 0); Kernel.WriteString(" / "); Kernel.WriteInt(device.spt, 0); Kernel.WriteLn
-END;
-			IF (DeviceCount < 4) & ~data.rmb & (device.class = DirectAccess) & (device.bs=512) THEN
-				DeviceCache[DeviceCount] := device; INC(DeviceCount)
-			END
-		END;
-		INC(i)
+	MakeCmd6(requ.cmd, ModeSense, d.lun, 0, 128, 0);
+	NewCmd(requ, d.target, d.lun, 6, SYSTEM.ADR(data), 128);
+	SubmitAndSense(d.bus, requ, 1, "SenseDevice", res);
+	IF TraceDetection IN trace THEN
+		WriteBus(d.bus);  Kernel.WriteString(": ModeSense"); Kernel.WriteLn;
+		Kernel.WriteMemory(SYSTEM.ADR(data[0]), 64); Kernel.WriteLn
 	END;
-END NewDevice;
+	IF (res = Good) & (ORD(data[3]) = 8) THEN
+		d.blockSize := ORD(data[4+7]);
+		d.blockSize := d.blockSize + SYSTEM.LSH(ORD(data[4+5]), 16);
+		d.blockSize := d.blockSize + SYSTEM.LSH(ORD(data[4+6]), 8);
+	ELSE
+		Kernel.WriteString("Sense failed"); Kernel.WriteInt(res, 3); Kernel.WriteLn;
+		Kernel.WriteMemory(SYSTEM.ADR(data[0]), 128); Kernel.WriteLn;
+		d.blockSize := 0
+	END;
+END InitDisk;
 
-PROCEDURE TerminateDevice(dev: Device);
+PROCEDURE TerminateDisk(d: Disk);
 VAR  res: LONGINT;
 BEGIN
-	IF dev.started THEN
-		DoStartStopUnit(dev, FALSE, res);
-	END
-END TerminateDevice;
+	IF d.started THEN
+		DoStartStopUnit(d.bus, d.target, d.lun, FALSE, res);
+	END;
+	IF d.inquiry.deviceClass IN DiskDevices THEN  Disks.Unregister(d)  END;
+END TerminateDisk;
 
-(** Driver Functions *)
-PROCEDURE RegisterDriver*(d: Driver);
+PROCEDURE NumToChar(i: LONGINT): CHAR;
+VAR  ch: CHAR;
 BEGIN
-	d.number := DriverCount; INC(DriverCount);
-	WriteDriver(d); Kernel.WriteString(d.name); Kernel.WriteLn;
-	d.next := DriverList; DriverList := d; NewDevice(d)
-END RegisterDriver;
+	ASSERT(i >= 0);
+	IF i < 10 THEN
+		ch := CHR(i + ORD("0"))
+	ELSE
+		ch := CHR(i + (ORD("A") - 10))
+	END;
+	RETURN ch
+END NumToChar;
 
-PROCEDURE RemoveDriver*(d: Driver);
-VAR p, q: Driver; s, t: Device; i: LONGINT;
+(** SCSI Bus Handling *)
+
+PROCEDURE InitBus(bus: Bus);
+VAR  i: SHORTINT;  d: Disk;  data: InquiryData;  lun: SHORTINT; max, j, k, c, res: LONGINT;
+BEGIN
+	i := 0;
+	IF bus.wide THEN  max := 16  ELSE  max := 8  END;
+	WHILE i < max DO
+		lun := 0;
+		REPEAT
+			DoInquiry(bus, i, lun, data, res);
+			IF res = Good THEN	(*device detected*)
+				NEW(d);
+				d.transfer := Transfer;
+				d.getSize := GetSize;
+				d.handle := Handle;
+				d.name := "SCSIx.x";
+				d.name[4] := bus.name[4];  d.name[6] := NumToChar(i);
+				IF lun # 0 THEN
+					d.name[7] := "."; d.name[8] := NumToChar(lun); d.name[9] := 0X;
+				END;
+				j := 0;
+				WHILE data.manufacturer[j] # 0X DO  d.desc[j] := data.manufacturer[j]; INC(j)  END;
+				d.desc[j] := 20X; INC(j);
+				k := 0;
+				WHILE data.product[k] # 0X DO  d.desc[k+j] := data.product[k];  INC(k)  END;
+				d.desc[k+j] := 0X;
+				d.flags := {};
+				IF data.rmb THEN  INCL(d.flags, Disks.Removable)  END;
+	
+				d.bus := bus;  d.target := i; d.lun := lun; d.inquiry := data;
+				InitDisk(d);
+				
+				WriteDisk(d);
+				Kernel.WriteString(data.manufacturer);  Kernel.WriteChar(" ");
+				Kernel.WriteString(data.product);  Kernel.WriteString(" [");
+				Kernel.WriteString(deviceClassName[data.deviceClass]);  Kernel.WriteString(", ");
+				IF data.rmb THEN  Kernel.WriteString("rmb, ")  END;
+				Kernel.WriteString("bs=");  Kernel.WriteInt(d.blockSize, 0);
+				Kernel.WriteChar("]"); Kernel.WriteLn;
+	
+				IF data.deviceClass IN DiskDevices THEN  Disks.Register(d)  END;
+				d.next := diskList;  diskList := d
+			ELSIF lun = 0 THEN lun := 7 (* don't check for other luns if there is nothing under lun = 0 *)
+			END;
+			INC(lun)
+		UNTIL (lun = 8) OR ~ CheckLUNs;
+		INC(i)
+	END
+END InitBus;
+
+PROCEDURE RegisterBus*(bus: Bus);
+BEGIN
+	bus.name := "SCSIx";
+	bus.name[4] := NumToChar(busCount);  INC(busCount);
+	bus.next := busList; busList := bus;
+	InitBus(bus);
+END RegisterBus;
+
+PROCEDURE RemoveBus*(b: Bus);
+VAR p, q: Bus; s, t: Disk;
 BEGIN
 		(*remove driver from list*)
-	IF DriverList = d THEN
-		DriverList := d.next
+	IF busList = NIL THEN RETURN END;
+	IF busList = b THEN
+		busList := b.next
 	ELSE
-		q := DriverList; p := q.next;
-		WHILE (p#NIL) & (p#d) DO  q := p; p := p.next  END;
+		q := busList; p := q.next;
+		WHILE (p#NIL) & (p#b) DO  q := p; p := p.next  END;
 		IF p#NIL  THEN q.next := p.next  END
 	END;
-		(*invalidate devices*)
-	WHILE (DeviceList # NIL) & (DeviceList.driver = d) DO
-		TerminateDevice(DeviceList); DeviceList := DeviceList.next
+		(*invalidate disks*)
+	WHILE (diskList # NIL) & (diskList.bus = b) DO
+		TerminateDisk(diskList); diskList := diskList.next
 	END;
-	IF DeviceList # NIL THEN
-		s := DeviceList; t := s.next;
+	IF diskList # NIL THEN
+		s := diskList; t := s.next;
 		WHILE t # NIL DO
-			IF t.driver = d THEN  TerminateDevice(t); t := t.next; s.next := t
+			IF t.bus = b THEN  TerminateDisk(t); t := t.next; s.next := t
 			ELSE s := t; t := t.next
 			END
 		END
 	END;
-	FOR i := 0 TO DeviceCount-1 DO
-		IF (DeviceCache[i] # NIL) & (DeviceCache[i].driver = d) THEN  DeviceCache[i] := NIL  END
-	END
-END RemoveDriver;
+END RemoveBus;
 
-PROCEDURE FindDriver*(name: ARRAY OF CHAR): Driver;
-VAR p: Driver;
+PROCEDURE FindBus*(name: ARRAY OF CHAR): Bus;
+VAR p: Bus;
 BEGIN
-	p := DriverList;
+	p := busList;
 	WHILE (p # NIL) & (p.name # name) DO  p := p.next  END;
 	RETURN p
-END FindDriver;
+END FindBus;
 
-PROCEDURE EnumerateDrivers*(proc: EnumProc);
-VAR p: Driver; stop: BOOLEAN;
+PROCEDURE EnumerateBus*(proc: EnumProc);
+VAR p: Bus; stop: BOOLEAN;
 BEGIN
-	stop := FALSE; p := DriverList;
+	stop := FALSE; p := busList;
 	WHILE ~stop & (p#NIL) DO
 		proc(p, stop);
 		p := p.next
 	END
-END EnumerateDrivers;
+END EnumerateBus;
 
-(* Install the Disk upcalls. *)
+(** Install module *)
 
 PROCEDURE Install*;
 BEGIN
-	Disk.GetBlocks := DiskGet;
-	Disk.PutBlocks := DiskPut;
-	Disk.GetParams := DiskParams
 END Install;
 
+PROCEDURE Init;
+VAR  str: ARRAY 32 OF CHAR;
+
+	PROCEDURE StrToInt(s: ARRAY OF CHAR): LONGINT;
+	VAR i, j: SHORTINT;  v, sgn, m: LONGINT;
+	BEGIN
+		j := 0;  WHILE s[j] # 0X DO INC(j) END;
+		IF (j > 0) & (CAP(s[j-1]) = "H") THEN m := 16; DEC(j) ELSE m := 10 END;
+		v := 0;  i := 0;
+		IF s[i] = "-" THEN sgn := -1; INC(i) ELSE sgn := 1 END;
+		WHILE i < j DO
+			IF (s[i] >= "0") & (s[i] <= "9") THEN v := v*m + (ORD(s[i])-ORD("0"))
+			ELSIF (CAP(s[i]) >= "A") & (CAP(s[i]) <= "F") THEN v := v*m + (ORD(CAP(s[i]))-ORD("A")+10)
+			ELSE sgn := 0;  j := i
+			END;
+			INC(i)
+		END;
+		RETURN sgn*v
+	END StrToInt;
+	
 BEGIN
-	Kernel.WriteString("SCSI / 0.9.2"); Kernel.WriteLn;
-	(*NEW(Cmd);*)
-	DeviceCount := 0; DriverCount := 0;
-	DeviceCache[0] := NIL; DeviceCache[1] := NIL; DeviceCache[2] := NIL; DeviceCache[3] := NIL
+	Kernel.GetConfig("SCSIDebug", str);
+	trace := SYSTEM.VAL(SET, StrToInt(str));
+	IF CheckLUNs THEN
+		INCL(trace, TraceSense); INCL(trace, TraceDetection)
+	END;
+	IF trace # {} THEN
+		Kernel.WriteString("SCSIDebug = "); Kernel.WriteHex(SYSTEM.VAL(LONGINT, trace),0); Kernel.WriteLn
+	END;
+END Init;
+
+BEGIN
+	Kernel.WriteString("SCSI - 2.0 / prk"); Kernel.WriteLn;
+	diskCount := 0;  diskList := NIL;
+	busCount := 0;  busList := NIL;
+	Init;
+	deviceClassName[DirectAccess] := "direct-access";
+	deviceClassName[SequentialAccess] := "sequential-access";
+	deviceClassName[Printer] := "printer";
+	deviceClassName[Processor] := "processor";
+	deviceClassName[WriteOnce] := "write-once";
+	deviceClassName[CDRom] := "cd-rom";
+	deviceClassName[Scanner] := "scanner";
+	deviceClassName[Optical] := "optical";
+	deviceClassName[MediumChanger] := "medium changer";
+	deviceClassName[Communication] := "communications";
+	deviceClassName[Unknown] := "Unknown";
 END SCSI.
+
+System.Free SCSI ~
+

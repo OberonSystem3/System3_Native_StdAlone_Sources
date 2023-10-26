@@ -1,21 +1,10 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE News; (** portable *)	(* ejz,   *)
 	IMPORT BTrees, Strings, HyperDocs, Files, Objects, Texts, Display, Fonts, Display3, Oberon, NetSystem, NetTools, Gadgets,
-		Attributes, TextGadgets, TextDocs, Documents, Desktops, Links, Modules, MIME, Streams, TextStreams, Mail, Dates;
+		Attributes, TextGadgets, TextDocs, Documents, Desktops, Links, Modules, MIME, Streams, TextStreams, Mail, Dates,
+		FileDir;
 
 (** This module implements a newsreader (RFC 977, 1036) for oberon. The News-modul supports news and nntp urls.
 		The nntp host is specified in the NetSystem section of the Registry (e.g. NNTP=news.inf.ethz.ch).
@@ -248,9 +237,10 @@ MODULE News; (** portable *)	(* ejz,   *)
 		VAR
 			text: Texts.Text;
 			group: Group;
-			article, nextart: ArtNrs;
+			art: ArtNrs;
 			F: Files.File;
 			len: LONGINT;
+			name: FileDir.FileName;
 	BEGIN
 		NEW(text); Texts.Open(text, "");
 		WriteDate(W, newgDate);
@@ -274,28 +264,26 @@ MODULE News; (** portable *)	(* ejz,   *)
 				Texts.WriteString(W, group.name)
 			END;
 			Texts.WriteString(W, ": ");
-			article := group.readArtNrs;
-			WHILE article # NIL DO
-				nextart := article.next;
-				Texts.WriteInt(W, article.beg, 0);
-				IF (nextart # NIL) & (nextart.beg = (article.end+1)) THEN
-					Texts.WriteString(W, " - ");
-					Texts.WriteInt(W, nextart.end, 0);
-					nextart := nextart.next
-				ELSIF article.end > article.beg THEN
-					Texts.WriteString(W, " - ");
-					Texts.WriteInt(W, article.end, 0)
+			art := group.readArtNrs;
+			WHILE art # NIL DO
+				Texts.WriteInt(W, art.beg, 0);
+				IF art.end > art.beg THEN
+					Texts.WriteString(W, " - "); Texts.WriteInt(W, art.end, 0)
 				END;
-				article := nextart;
-				IF article # NIL THEN
-					Texts.WriteString(W, ", ")
-				END
+				art := art.next;
+				IF art # NIL THEN Texts.WriteString(W, ", ") END
 			END;
 			Texts.WriteLn(W);
 			group := group.next
 		END;
 		Texts.Append(text, W.buf);
-		F := Files.New(InitText);
+		F := Files.Old(InitText);
+		IF F # NIL THEN
+			Files.GetName(F, name)
+		ELSE
+			COPY(InitText, name)
+		END;
+		F := Files.New(name);
 		Texts.Store(text, F, 0, len);
 		Files.Register(F)
 	END storeInitText;
@@ -311,43 +299,49 @@ MODULE News; (** portable *)	(* ejz,   *)
 		storeInitText()
 	END StoreInitText;
 
+	PROCEDURE NewArtNr(nr: LONGINT): ArtNrs;
+		VAR art: ArtNrs;
+	BEGIN
+		NEW(art); art.next := NIL;
+		art.beg := nr; art.end := nr;
+		RETURN art
+	END NewArtNr;
+
 	PROCEDURE AddArtNr(group: Group; nr: LONGINT);
 		VAR prev, cur, art: ArtNrs;
 	BEGIN
-		IF group.readArtNrs = NIL THEN
-			NEW(cur);
-			cur.beg := nr;
-			cur.end := nr;
-			cur.next := NIL;
-			group.readArtNrs := cur
-		ELSE
-			prev := group.readArtNrs;
-			cur := group.readArtNrs;
-			WHILE (cur # NIL) & (cur.beg <= nr) DO
-				prev := cur;
-				cur := cur.next
-			END;
-			IF (prev.beg-1) = nr THEN
-				prev.beg := nr
-			ELSIF (prev.end+1) = nr THEN
-				prev.end := nr
-			ELSIF nr < prev.beg THEN
-				NEW(cur);
-				cur.beg := nr;
-				cur.end := nr;
-				cur.next := prev;
-				group.readArtNrs := cur
-			ELSIF nr > prev.end THEN
-				IF (cur # NIL) & (nr = (cur.beg-1)) THEN
-					cur.beg := nr
-				ELSE
-					NEW(art);
-					art.beg := nr;
-					art.end := nr;
-					prev.next := art;
-					art.next := cur
+		prev := NIL; cur := group.readArtNrs;
+		WHILE (cur # NIL) & (cur.beg <= nr) DO
+			prev := cur; cur := cur.next
+		END;
+		IF cur # NIL THEN
+			IF cur.beg = (nr+1) THEN
+				cur.beg := nr
+			ELSIF prev # NIL THEN
+				IF prev.end = (nr-1) THEN
+					prev.end := nr
+				ELSIF prev.end < nr THEN
+					art := NewArtNr(nr);
+					prev.next := art; art.next := cur
 				END
+			ELSE
+				art := NewArtNr(nr); prev := art;
+				group.readArtNrs := art; art.next := cur
+			END;
+			IF (prev # NIL) & ((prev.end+1) = cur.beg) THEN
+				prev.end := cur.end;
+				prev.next := cur.next
 			END
+		ELSIF prev # NIL THEN
+			IF prev.end = (nr-1) THEN
+				prev.end := nr
+			ELSIF prev.end < nr THEN
+				art := NewArtNr(nr);
+				prev.next := art
+			END
+		ELSE
+			art := NewArtNr(nr);
+			group.readArtNrs := art
 		END
 	END AddArtNr;
 
@@ -706,16 +700,16 @@ MODULE News; (** portable *)	(* ejz,   *)
 			Texts.WriteInt(W, beg, 1);  Texts.Write(W, "-");  Texts.WriteInt(W, end, 1);
 			IF (from #  0) & (to = 0) THEN
 				(* get 'from' newest articles *)
-				beg := end - from + 1;
+				beg := end - from + 1
 			ELSIF (from #  0) & (to # 0) THEN
 				(* from-to articles *)
-				beg := from;  end := to;
+				beg := from;  end := to
 			END;
 			(* be careful that your number range is smaller than MaxMessages  *)
-			IF (end - beg) >= MaxMessages  THEN beg := end - MaxMessages  + 1; END;
+			IF (end - beg) >= MaxMessages  THEN beg := end - MaxMessages  + 1 END;
 			Texts.WriteString(W, ", get ");  Texts.WriteInt(W, beg, 1);
 			Texts.Write(W, "-");  Texts.WriteInt(W, end, 1);
-			IF curGrpNewOnly THEN Texts.WriteString(W, " unread"); END;
+			IF curGrpNewOnly THEN Texts.WriteString(W, " unread") END;
 			Texts.WriteLn(W);
 			Texts.Append(Oberon.Log, W.buf);
 			indexM := BTrees.NewStr(Files.New(""), 0, SHORT(2*(end-beg))); BTrees.Flush(indexM);
@@ -1576,30 +1570,29 @@ MODULE News; (** portable *)	(* ejz,   *)
 			h: MIME.Header;
 			head: Texts.Text;
 			R: Texts.Reader;
-			beg: LONGINT;
+			end: LONGINT;
 			ch: CHAR;
 	BEGIN
 		NetSystem.WriteString(S.C, "POST");
 		ReadResponse(S);
 		IF S.status = 340 THEN
 			s := TextStreams.OpenReader(T, 0); 
-			MIME.ReadHeader(s, NIL, h, beg);
+			MIME.ReadHeader(s, NIL, h, end);
 			NEW(head); Texts.Open(head, "");
-			Texts.OpenReader(R, T, beg); Texts.Read(R, ch);
+			Texts.OpenReader(R, T, end); Texts.Read(R, ch);
 			IF (ch = Strings.CR) OR (ch = Strings.LF) THEN
-				WHILE (beg > 0) & ((ch = Strings.CR) OR (ch = Strings.LF)) DO
-					DEC(beg); Texts.OpenReader(R, T, beg); Texts.Read(R, ch)
+				WHILE (end > 0) & ((ch = Strings.CR) OR (ch = Strings.LF)) DO
+					DEC(end); Texts.OpenReader(R, T, end); Texts.Read(R, ch)
 				END;
-				INC(beg); IF beg > T.len THEN beg := T.len END
+				INC(end); IF end > T.len THEN end := T.len END
 			END;
-			Texts.Save(T, 0, beg, W.buf); Texts.Append(head, W.buf);
-			(*Texts.WriteLn(W);*) Texts.Append(head, W.buf);
+			Texts.Save(T, 0, end, W.buf); Texts.Append(head, W.buf);
+			Texts.OpenReader(R, T, end); Texts.Read(R, ch);
+			WHILE (ch = Strings.CR) OR (ch = Strings.LF) DO
+				Texts.Read(R, ch); INC(end)
+			END;
 			Mail.GetSetting("EMail", S.from, FALSE);
-			Texts.OpenReader(R, T, beg); Texts.Read(R, ch); DEC(beg);
-			WHILE ~R.eot & ((ch <= " ") & (R.lib IS Fonts.Font)) DO
-				Texts.Read(R, ch); INC(beg)
-			END;
-			Mail.SendText(S, head, T, beg, T.len, cont); 
+			Mail.SendText(S, head, T, end-1, T.len, cont); 
 			ReadResponse(S);
 			IF S.status = 240 THEN
 				S.res := Done; Mail.SendReplyLine(S, cont)

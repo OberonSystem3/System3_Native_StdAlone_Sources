@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Gadgets;	(** portable *) (*  , jm 18.1.95*)
 
@@ -120,7 +108,7 @@ TYPE
 	Object* = POINTER TO ObjDesc;
 	ObjDesc* = RECORD (Objects.ObjDesc)
 		attr*: Attributes.Attr;	(** Attribute list. Private variable. *)
-		link*: Links.Link;  (** Link list. Private variable. *)
+		link*: Links.Link  (** Link list. Private variable. *)
 	END;
 	
 	(** Base type of the visual gadgets *)
@@ -130,7 +118,7 @@ TYPE
 		link*: Links.Link;  (** Link list. Private variable. *)
 		state*: SET;
 		mask*: Display3.Mask;	(**  Cached display mask. Can be NIL to indicate no/invalid mask. *)
-		obj*: Objects.Object;	(** Model object, if any. *)
+		obj*: Objects.Object	(** Model object, if any. *)
 	END;
 	
 	(** Base type of the camera-view gadgets. *)
@@ -233,20 +221,14 @@ END InActiveArea;
 
 (** Returns the name of of obj. Sends an Objects.AttrMsg behind the scenes. *)
 PROCEDURE GetObjName*(obj: Objects.Object; VAR name: ARRAY OF CHAR);
-VAR A: Objects.AttrMsg;
 BEGIN
-	name[0] := 0X;
-	A.id := Objects.get; COPY("Name", A.name); A.res := -1; A.s[0] := 0X;
-	obj.handle(obj, A);
-	IF (A.res >= 0) & (A.class = Objects.String) THEN COPY(A.s, name) END
+	Attributes.GetString(obj, "Name", name)
 END GetObjName;
 
 (** Name object obj. Sends an Objects.AttrMsg behind the scenes. *)
 PROCEDURE NameObj*(obj: Objects.Object; name: ARRAY OF CHAR);
-VAR A: Objects.AttrMsg;
 BEGIN
-	A.id := Objects.set; COPY("Name", A.name); Objects.Stamp(A); A.class := Objects.String; A.res := -1; COPY(name, A.s);
-	obj.handle(obj, A);
+	Attributes.SetString(obj, "Name", name)
 END NameObj;
 
 (** Search for the object "O" in the public library "L.Lib" wherename is specified as "L.O". *)
@@ -388,7 +370,7 @@ BEGIN
 	IF (F.X # M.X) OR (F.Y # M.Y) OR (F.W # M.W) OR (F.H # M.H) THEN (* first adjust *)
 		F.X := M.X; F.Y := M.Y; F.W := M.W; F.H := M.H;
 		
-		IF F IS Frame THEN O.F := F; O.M := NIL; O.x := 0; O.y := 0; O.res := -1; O.dlink := NIL; F.handle(F, O);
+		IF F IS Frame THEN O.F := F; O.M := NIL; O.x := 0; O.y := 0; O.res := -1; O.dlink := M.dlink; F.handle(F, O);
 		END
 	END;
 	IF (M.mode = Display.display) & (F.H > 0) & (F.W >0) THEN
@@ -401,7 +383,7 @@ END Adjust;
 (** Returns the frame that is located at X, Y on the display. U, v return the relative coordinates of X, Y inside F. Behind the scenes a Display.LocateMsg is broadcast. *)
 PROCEDURE ThisFrame*(X, Y: INTEGER; VAR F: Display.Frame; VAR u, v: INTEGER);
 VAR M: Display.LocateMsg;
-BEGIN M.X := X; M.Y := Y; M.F := NIL; M.loc := NIL; Display.Broadcast(M); F := M.loc; u := M.u; v := M.v;
+BEGIN M.X := X; M.Y := Y; M.F := NIL; M.loc := NIL; Display.Broadcast(M); F := M.loc; u := M.u; v := M.v
 END ThisFrame;
 
 (** Implements standard resize handling for frames. Rubber-bands the gadget size and broadcasts a Display.ModifyMsg. *)
@@ -620,9 +602,9 @@ BEGIN
 					Display3.AdjustMask(M, v.X, v.Y, v.W, v.H)
 				END
 			END;
-			v := v.dlink;
-		END;
-	END;
+			v := v.dlink
+		END
+	END
 END MakeMask0;
 
 PROCEDURE P(x : INTEGER) : INTEGER;
@@ -676,33 +658,31 @@ BEGIN
 	ScaleMask(X, Y, M, M);
 	
 	(* add views clipping *)
-	IF dlink # NIL THEN
-		v := dlink;
-		WHILE v # NIL DO
-			IF (v IS View) & (v(View).mask # NIL) THEN
-				WITH v: View DO
-					ox := v.mask.x; oy := v.mask.y;
-					v.mask.x := v.absX; v.mask.y := v.absY + v.H - 1; (* place mask at absolute position *)
-					ScaleMask(v.absX, v.absY, v.mask, R);
-					IF Display3.Rectangular(R, x, y, w, h) THEN
-						Display3.AdjustMask(M, x, y, w, h);
-					ELSIF Display3.Visible(R, X, Y, P(G.W), P(G.H)) THEN (* frame completely visible *)
-						Display3.AdjustMask(M, X, Y, P(G.W), P(G.H));
-					ELSE (* waste memory because of overlapping *)
-						Display3.IntersectMasks(M, R, R0);
-						R0.X := M.X; R0.Y := M.Y; R0.W := M.W; R0.H := M.H; (* set new port to old port *)
-						M := R0;
-					END;
-					IF v.ClipMask # NIL THEN v.ClipMask(v, M, FALSE)
-					ELSE
-						b := v.border; b2 := b * 2;
-						Display3.AdjustMask(M, v.absX+P(b), v.absY+P(b), P(v.W-b2), P(v.H-b2))
-					END;
-					v.mask.x := ox; v.mask.y := oy
-				END
-			END;
-			v := v.dlink;
-		END
+	v := dlink;
+	WHILE v # NIL DO
+		IF (v IS View) & (v(View).mask # NIL) THEN
+			WITH v: View DO
+				ox := v.mask.x; oy := v.mask.y;
+				v.mask.x := v.absX; v.mask.y := v.absY + v.H - 1; (* place mask at absolute position *)
+				ScaleMask(v.absX, v.absY, v.mask, R);
+				IF Display3.Rectangular(R, x, y, w, h) THEN
+					Display3.AdjustMask(M, x, y, w, h);
+				ELSIF Display3.Visible(R, X, Y, P(G.W), P(G.H)) THEN (* frame completely visible *)
+					Display3.AdjustMask(M, X, Y, P(G.W), P(G.H));
+				ELSE (* waste memory because of overlapping *)
+					Display3.IntersectMasks(M, R, R0);
+					R0.X := M.X; R0.Y := M.Y; R0.W := M.W; R0.H := M.H; (* set new port to old port *)
+					M := R0;
+				END;
+				IF v.ClipMask # NIL THEN v.ClipMask(v, M, FALSE)
+				ELSE
+					b := v.border; b2 := b * 2;
+					Display3.AdjustMask(M, v.absX+P(b), v.absY+P(b), P(v.W-b2), P(v.H-b2))
+				END;
+				v.mask.x := ox; v.mask.y := oy
+			END
+		END;
+		v := v.dlink;
 	END
 END MakePrinterMask0;
 
@@ -909,56 +889,51 @@ BEGIN
 				LOOP name[i] := ch; INC(i);
 					Attributes.Read(T, ch);
 					IF T.eot THEN EXIT; END;
-					IF (ch # ".") & ((ch <= " ") OR ((CAP(ch) < "A") OR (CAP(ch) > "Z"))) THEN EXIT END;
+					IF (ch # ".") & ((ch <= " ") OR ((CAP(ch) < "A") OR (CAP(ch) > "Z"))) THEN EXIT END
 				END;
-				name[i] := 0X;
+				name[i] := 0X
 			END;
 			Oberon.GetSelection(text, bg, end, ttime);
-			S.id := Display.get; S.F := NIL; S.sel := NIL; S.obj := NIL; S.time := 0; Display.Broadcast(S);
-			IF (S.time > ttime) & (S.obj # NIL) & (name # "") THEN
+			S.id := Display.get; S.F := NIL; S.sel := NIL; S.obj := NIL; S.time := -1; Display.Broadcast(S);
+			IF (S.time # -1) & ((ttime-S.time) < 0) & (S.obj # NIL) & (name # "") THEN
 				NEW(text); Texts.Open(text, ""); beg := 0;
-				IF S.time > 0 THEN
-					obj := S.obj;
-					WHILE obj # NIL DO
-						IF obj IS Frame THEN Attributes.WriteAttr(obj, name, W); Texts.Write(W, " ");
-						END;
-						obj := obj.slink;
+				obj := S.obj;
+				WHILE obj # NIL DO
+					IF obj IS Frame THEN Attributes.WriteAttr(obj, name, W); Texts.Write(W, " ")
 					END;
-					Texts.Append(text, W.buf); res := text;
-				ELSE res := NIL
+					obj := obj.slink
 				END;
-			ELSE
-				IF ttime > 0 THEN 
-					(* res := text; beg := bg; *)
-					Attributes.OpenReader(R, text, bg); uparrowdone := TRUE; beg := bg;
-					NEW(text0); Texts.Open(text0, ""); string := FALSE;
-					Attributes.Read(R, ch0);  
-					WHILE ~R.eot & (beg < end) DO
-						IF ch0 = 22X THEN R.substitute := ~R.substitute; string := ~string END;
-						old := W.lib; W.lib := R.lib; Texts.Write(W, ch0); W.lib := old;
-						IF beg + 1 = end THEN (* reached the end, ch0 is the last character read *)
-							IF (ch0 # " ") & (ch0 # 0DX) & (ch0 # 9X) THEN
-								Attributes.Read(R, ch0)
-							ELSE ch0 := " " (* ended on a termination char *)
-							END
-						ELSE 
+				Texts.Append(text, W.buf); res := text
+			ELSIF ttime # -1 THEN  
+				(* res := text; beg := bg; *)
+				Attributes.OpenReader(R, text, bg); uparrowdone := TRUE; beg := bg;
+				NEW(text0); Texts.Open(text0, ""); string := FALSE;
+				Attributes.Read(R, ch0);  
+				WHILE ~R.eot & (beg < end) DO
+					IF ch0 = 22X THEN R.substitute := ~R.substitute; string := ~string END;
+					old := W.lib; W.lib := R.lib; Texts.Write(W, ch0); W.lib := old;
+					IF beg + 1 = end THEN (* reached the end, ch0 is the last character read *)
+						IF (ch0 # " ") & (ch0 # 0DX) & (ch0 # 9X) THEN
 							Attributes.Read(R, ch0)
-						END;
-						INC(beg);
+						ELSE ch0 := " " (* ended on a termination char *)
+						END
+					ELSE 
+						Attributes.Read(R, ch0)
 					END;
-					WHILE ~R.eot & (string OR ((ch0 # " ") & (ch0 # 0DX) & (ch0 # 9X))) DO
-						IF ch0 = 22X THEN R.substitute := ~R.substitute; string := ~string END;
-						old := W.lib; W.lib := R.lib; Texts.Write(W, ch0); W.lib := old;
-						Attributes.Read(R, ch0); INC(beg);
-					END;
-					Texts.Write(W, " "); Texts.Append(text0, W.buf); beg := 0; end := text0.len; res := text0
-				ELSE res := NIL;
+					INC(beg)
 				END;
-			END;
+				WHILE ~R.eot & (string OR ((ch0 # " ") & (ch0 # 0DX) & (ch0 # 9X))) DO
+					IF ch0 = 22X THEN R.substitute := ~R.substitute; string := ~string END;
+					old := W.lib; W.lib := R.lib; Texts.Write(W, ch0); W.lib := old;
+					Attributes.Read(R, ch0); INC(beg)
+				END;
+				Texts.Write(W, " "); Texts.Append(text0, W.buf); beg := 0; end := text0.len; res := text0
+			ELSE res := NIL
+			END
 		ELSE
-			res := NIL; beg := 0;
-		END;
-	END;
+			res := NIL; beg := 0
+		END
+	END
 END UpArrowMacro;
 
 (** Forwards a message from a camera-view to its contents, inserting the camera-view in the message thread. X, Y is the absolute screen coordinates of the bottom-left corner of the camera-view. This is important for calculating the correct display mask for the contents of the view. *)
@@ -1148,7 +1123,7 @@ BEGIN
 END findobj;
 
 PROCEDURE *ObjectHandler(obj: Objects.Object; VAR M: Objects.ObjMsg);
-VAR name: ARRAY 64 OF CHAR; obj0: Object; ch: CHAR;
+VAR obj0: Object; ch: CHAR;
 BEGIN
 	WITH obj: Object DO
 		IF M IS  Objects.FileMsg THEN
@@ -1218,13 +1193,15 @@ PROCEDURE TrackFrame*(F: Display.Frame; VAR M: Oberon.InputMsg);
 VAR keys: SET; x, y, w, h: INTEGER; R: Display3.Mask;
 BEGIN
 	WITH F: Frame DO
-		IF ~(selected IN F.state) & (middle IN M.keys) THEN (* only when not selected and middle key *)
+		IF ~(selected IN F.state) & ((middle IN M.keys) OR (Oberon.New & (left IN M.keys))) THEN (* only when not selected and middle key *)
 			x := M.x + F.X; y :=  M.y + F.Y; w := F.W; h := F.H;
 			IF InActiveArea(F, M) THEN (* usable areas, corner, sides may be part, TRUE if locked *)
 				IF HasCmdAttr(F, "Cmd") THEN
 					MakeMask(F, x, y, M.dlink, R);
 					Effects.TrackHighlight(R, keys, M.X, M.Y, x, y, w, h);
-					IF InActiveArea(F, M) & (keys = {1}) THEN ExecuteAttr(F(Frame), "Cmd", M.dlink, NIL, NIL) END;
+					IF InActiveArea(F, M) & ((keys = {1}) OR (Oberon.New & (keys = {2}))) THEN
+						ExecuteAttr(F(Frame), "Cmd", M.dlink, NIL, NIL)
+					END;
 					M.res := 0
 				ELSIF ~IsLocked(F, M.dlink) THEN MoveFrame(F, M)
 				END
@@ -1383,7 +1360,7 @@ BEGIN
 						IF M.id = Oberon.track THEN TrackFrame(F, M) END
 					END
 				END;
-				M.x := u; M.y := v;
+				M.x := u; M.y := v
 			END
 		END
 	END
@@ -1504,7 +1481,7 @@ PROCEDURE GetSelection*(VAR objs: Objects.Object; VAR time: LONGINT);
 VAR SM: Display.SelectMsg;
 BEGIN time := -1; objs := NIL;
 	SM.id := Display.get; SM.F := NIL; SM.sel := NIL; SM.obj := NIL; SM.time := -1; Display.Broadcast(SM);
-	IF (SM.time >= 0) & (SM.obj # NIL) THEN
+	IF (SM.time # -1) & (SM.obj # NIL) THEN
 		time := SM.time; objs := SM.obj
 	END
 END GetSelection;
@@ -1540,9 +1517,9 @@ VAR S: Attributes.Scanner; C: Display.ConsumeMsg;
 	fname: ARRAY 32 OF CHAR; oF, nF: Display.Frame; CM: Display.ControlMsg;
 	SM: Display.SelectMsg; obj: Objects.Object;
 BEGIN
-	SM.id := Display.get; SM.F := NIL; SM.sel := NIL; SM.obj := NIL; SM.time := 0;
+	SM.id := Display.get; SM.F := NIL; SM.sel := NIL; SM.obj := NIL; SM.time := -1;
 	Display.Broadcast(SM);
-	IF SM.time > 0 THEN
+	IF SM.time # -1 THEN
 		Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 		Attributes.Scan(S);
 		IF S.class = Attributes.Name THEN
@@ -1575,8 +1552,8 @@ END Change;
 PROCEDURE Copy*;
 VAR M: Display.SelectMsg; p, nl: Objects.Object; C: Objects.CopyMsg; CM: Display.ConsumeMsg;
 BEGIN
-	M.id := Display.get; M.F := NIL; M.time := 0; M.sel := NIL; M.obj := NIL; Display.Broadcast(M);
-	IF M.time > 0 THEN
+	M.id := Display.get; M.F := NIL; M.time := -1; M.sel := NIL; M.obj := NIL; Display.Broadcast(M);
+	IF M.time # -1 THEN
 		p := M.obj; nl := NIL; Objects.Stamp(C);
 		WHILE p # NIL DO
 			C.id := Objects.deep; p.handle(p, C);
@@ -1599,36 +1576,36 @@ END Copy;
 	"strings"	For string attributes
 *)
 PROCEDURE ChangeAttr*;
-VAR S: Attributes.Scanner; M: Display.SelectMsg; obj: Objects.Object; A: Objects.AttrMsg; U: UpdateMsg;
+VAR S: Attributes.Scanner; U: UpdateMsg; M: Display.SelectMsg; obj: Objects.Object; A: Objects.AttrMsg;
 BEGIN
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Attributes.Scan(S);
 	IF (S.class = Attributes.Name) OR (S.class = Attributes.String) THEN
 		A.id := Objects.set; COPY(S.s, A.name);
 		Attributes.Scan(S); A.class := Objects.Inval; A.s := "";
-		IF S.class = Attributes.Int THEN A.class := Objects.Int; A.i := S.i;
-		ELSIF S.class = Attributes.Name THEN A.class := Objects.String; COPY(S.s, A.s);
-		ELSIF S.class = Attributes.String THEN A.class := Objects.String; COPY(S.s, A.s);
+		IF S.class = Attributes.Int THEN A.class := Objects.Int; A.i := S.i
+		ELSIF S.class = Attributes.Name THEN A.class := Objects.String; COPY(S.s, A.s)
+		ELSIF S.class = Attributes.String THEN A.class := Objects.String; COPY(S.s, A.s)
 		END;
 		IF (A.s = "Yes") OR (A.s = "No") THEN Strings.StrToBool(A.s, A.b); A.class := Objects.Bool END;
 		IF A.class # Objects.Inval THEN
-			M.id := Display.get; M.F := NIL; M.sel := NIL; M.obj := NIL; M.time := 0; Display.Broadcast(M);
-			IF M.time > 0 THEN
+			M.id := Display.get; M.F := NIL; M.sel := NIL; M.obj := NIL; M.time := -1; Display.Broadcast(M);
+			IF M.time # -1 THEN
 				obj := M.obj;
 				WHILE obj # NIL DO
 					A.res := -1;
 					obj.handle(obj, A);
 					IF A.res = -1 THEN
-						Texts.WriteString(W, "Attribute not set"); Texts.WriteLn(W); Log;
+						Texts.WriteString(W, "Attribute not set"); Texts.WriteLn(W); Log
 					END;
-					obj := obj.slink;
+					obj := obj.slink
 				END;
-				U.obj := M.obj; U.F := NIL; Display.Broadcast(U);
+				U.F := NIL; U.obj := M.obj; Display.Broadcast(U)
 			ELSE
-				Texts.WriteString(W, "No selection"); Texts.WriteLn(W); Log;
-			END;
-		END;
-	END;
+				Texts.WriteString(W, "No selection"); Texts.WriteLn(W); Log
+			END
+		END
+	END
 END ChangeAttr;
 
 (** Set an attribute value of a named object. Used in the form:
@@ -1696,10 +1673,10 @@ BEGIN
 	Attributes.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos);
 	Attributes.Scan(S);
 	IF (S.class = Attributes.Name) OR (S.class = Attributes.String) THEN
-		M.id := Display.get; M.F := NIL; M.sel := NIL; M.obj := NIL; M.time := 0; Display.Broadcast(M);
+		M.id := Display.get; M.F := NIL; M.sel := NIL; M.obj := NIL; M.time := -1; Display.Broadcast(M);
 		COPY(S.s, oname);
 		obj := CreateObject(oname);
-		IF (obj # NIL) & (M.time > 0) THEN
+		IF (obj # NIL) & (M.time # -1) THEN
 			o := M.obj;
 			IF o # NIL THEN
 				IF o.lib # NIL THEN B.lib := o.lib; obj.handle(obj, B) END (* bind *)
@@ -1720,55 +1697,29 @@ BEGIN
 	END
 END Link;
 
-PROCEDURE Parse(VAR S:Texts.Scanner; VAR A: Attributes.Attr; VAR errpos: LONGINT);
-VAR sname: ARRAY 32 OF CHAR; i: Attributes.IntAttr; r: Attributes.RealAttr; s: Attributes.StringAttr; a, a0: Attributes.Attr;
-BEGIN
-	A := NIL; errpos := -1;
-	WHILE S.class IN {Texts.Name, Texts.String} DO
-		COPY(S.s, sname);
-		Texts.Scan(S);
-		IF (S.class =  Texts.Char) & (S.c = "=") THEN
-			Texts.Scan(S);
-			IF S.class =  Texts.Name THEN
-				NEW(s); COPY(sname, s.name); COPY(S.s, s.s); a := s;
-			ELSIF S.class =  Texts.Int THEN
-				NEW(i); COPY(sname, i.name); i.i := S.i; a := i;
-			ELSIF S.class =  Texts.String THEN
-				NEW(s); COPY(sname, s.name); COPY(S.s, s.s); a := s;
-			ELSIF S.class =  Texts.Real THEN
-				NEW(r); COPY(sname, r.name); r.r := S.x; a := r
-			ELSIF S.class =  Texts.LongReal THEN
-				NEW(r); COPY(sname, r.name); r.r := S.y; a := r
-			ELSE errpos :=  0; RETURN
-			END;
-			IF A = NIL THEN A := a; a0 := A ELSE a0.next := a; a0 := a END
-		ELSE errpos :=  0; RETURN END;
-		Texts.Scan(S)
-	END;
-	IF (S.class # Texts.Char) OR (S.c # "}") THEN errpos := 0 END
-END Parse;
-
 PROCEDURE LoadAliases;
-VAR A: Attributes.Attr; errpos: LONGINT;  S: Texts.Scanner;
+	VAR S: Texts.Scanner; alias: Objects.Name; err: BOOLEAN;
 BEGIN
 	Oberon.OpenScanner(S, "Gadgets.Aliases");
 	IF S.class = Texts.Inval THEN
 		Texts.WriteString(W, "Oberon.Text - Gadgets.Aliases not found");
 		Texts.WriteLn(W); Log
 	ELSE
-		Parse(S, A, errpos);
-		IF errpos >= 0 THEN
+		err := FALSE;
+		WHILE (S.class IN {Texts.Name, Texts.String}) & ~err DO
+			COPY(S.s, alias); Texts.Scan(S);
+			IF (S.class = Texts.Char) & (S.c = "=") THEN
+				Texts.Scan(S);
+				IF S.class IN {Texts.Name, Texts.String} THEN
+					AddAlias(alias, S.s); Texts.Scan(S)
+				ELSE err := TRUE
+				END
+			ELSE err := TRUE
+			END
+		END;
+		IF err OR (S.class # Texts.Char) OR (S.c # "}") THEN
 			Texts.WriteString(W, "Error in Gadgets.Aliases");
 			Texts.WriteLn(W); Log
-		ELSE
-			WHILE A # NIL DO
-				IF A IS Attributes.StringAttr THEN
-					WITH A: Attributes.StringAttr DO
-						 AddAlias(A.name, A.s);
-					END
-				END;
-				A := A.next;
-			END;
 		END
 	END;
 	Oberon.OpenScanner(S, "Gadgets.Verbose");
@@ -1780,10 +1731,12 @@ BEGIN
 	NEW(emptyText); Texts.Open(emptyText, "");
 	LoadAliases;
 
+(*
 	IF Display.Width < 800 THEN
 		Texts.WriteString(W, "Higher resolution recommended for Gadgets");
 		Texts.WriteLn(W);  Log
 	END;
+*)
 
 	Attributes.AddMacro("&", StandardMacros); (* lookup *)
 	Attributes.AddMacro("#", StandardMacros); (* executor *)

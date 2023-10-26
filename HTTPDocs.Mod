@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE HTTPDocs;	(** portable *) (* ejz,   *)
 	IMPORT Kernel, Files, Objects, Input, NetSystem, NetTools, Strings, HyperDocs, TextDocs, Texts, Links, Oberon, Documents,
@@ -489,7 +477,13 @@ END ListCookies;
 			END;
 			pos := MIME.FindField(h, "Location");
 			IF (pos > 0) & (status >= 300) THEN
-				MIME.ExtractValue(h, pos, location)
+				MIME.ExtractValue(h, pos, location);
+				IF Strings.Prefix("http://http", location) THEN
+					pos := 7;
+					WHILE location[pos] # 0X DO
+						location[pos-7] := location[pos]; INC(pos)
+					END
+				END
 			END;
 			pos := MIME.FindField(h, "Set-Cookie");
 			IF pos > 0 THEN

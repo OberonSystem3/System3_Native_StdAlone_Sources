@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Configuration;	(** portable *)	(* jm, Configuration module/code borrowed from ET by uh **)
 
@@ -19,7 +7,7 @@ MODULE Configuration;	(** portable *)	(* jm, Configuration module/code borrowed 
 	contains a lot of code borrowed from ET
 *)
 
-IMPORT Modules, Display, Viewers, Texts, Oberon;
+IMPORT Modules, Display, Input, Viewers, Texts, Oberon;
 
 CONST
 	CR = 0DX;
@@ -47,34 +35,63 @@ END OpenScanner;
 PROCEDURE do*(T: Texts.Text; beg, end: LONGINT);
 VAR S: Texts.Scanner; pos: LONGINT; res: INTEGER;
 	
-	PROCEDURE NextLine(text: Texts.Text; pos: LONGINT): LONGINT;
-		VAR tR: Texts.Reader;	ch: CHAR;
+	PROCEDURE NextCmd();
+		VAR tR: Texts.Reader; ch: CHAR;
 	BEGIN
-		IF pos < text.len THEN 
-			Texts.OpenReader(tR, text, pos); Texts.Read(tR, ch);
-			WHILE ~ tR.eot & (ch # CR) DO Texts.Read(tR, ch) END;
-			IF tR.eot THEN RETURN -1 ELSE RETURN Texts.Pos(tR)  END
-		ELSE RETURN -1
-		END
-	END NextLine;
-
-BEGIN
-	pos := beg;
-	Texts.OpenScanner(S, T, pos); Texts.Scan(S);
-	WHILE ((S.class = Texts.Name) OR ((S.class = Texts.Char) & (S.c = "!"))) & (pos < end) DO
-		pos := Texts.Pos(S) - 1; 
-		IF S.class = Texts.Name THEN
-			Oberon.Par.text := T; Oberon.Par.pos := pos;
-			Oberon.Call(S.s, Oberon.Par, FALSE, res);
-			IF res # 0 THEN
-				Texts.WriteString(W, "Call error: ");  Texts.WriteString(W, Modules.resMsg);
-				Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+		IF pos < end THEN 
+			Texts.OpenReader(tR, T, pos); Texts.Read(tR, ch);
+			LOOP
+				WHILE ~tR.eot & (ch # CR) DO Texts.Read(tR, ch) END;
+				Texts.Read(tR, ch);
+				IF tR.eot THEN
+					EXIT
+				ELSIF (ch > " ") & (ch # "!") & (ch # "#") THEN
+					pos := Texts.Pos(tR)-1;
+					Texts.OpenScanner(S, T, pos); Texts.Scan(S);
+					RETURN
+				END
 			END
 		END;
-		pos := NextLine(T, pos);
-		IF pos > 0 THEN Texts.OpenScanner(S, T, pos); Texts.Scan(S)
-		ELSE S.class := Texts.Inval
-		END
+		S.class := Texts.Inval
+	END NextCmd;
+
+	PROCEDURE FirstCmd();
+		VAR tR: Texts.Reader; ch: CHAR;
+	BEGIN
+		IF pos < end THEN 
+			Texts.OpenReader(tR, T, pos); Texts.Read(tR, ch);
+			IF ~tR.eot & (ch > " ") & (ch # "!") & (ch # "#") THEN
+				pos := Texts.Pos(tR)-1;
+				Texts.OpenScanner(S, T, pos); Texts.Scan(S);
+				RETURN
+			END
+		END;
+		NextCmd()
+	END FirstCmd;
+	
+	PROCEDURE UserInterrupt(): BOOLEAN;
+	VAR ch: CHAR;
+	BEGIN
+		WHILE Input.Available() # 0 DO
+			Input.Read(ch);
+			IF ch = CHR(27) THEN RETURN TRUE END
+		END;
+		RETURN FALSE
+	END UserInterrupt;
+
+BEGIN
+	pos := beg; FirstCmd();
+	WHILE (S.class = Texts.Name) & (pos < end) & ~UserInterrupt() DO
+		pos := Texts.Pos(S) - 1; 
+		Oberon.Par.vwr := Oberon.MarkedViewer();
+		Oberon.Par.frame := Oberon.MarkedFrame();
+		Oberon.Par.text := T; Oberon.Par.pos := pos;
+		Oberon.Call(S.s, Oberon.Par, FALSE, res);
+		IF res # 0 THEN
+			Texts.WriteString(W, "Call error: ");  Texts.WriteString(W, Modules.resMsg);
+			Texts.WriteLn(W);  Texts.Append(Oberon.Log, W.buf)
+		END;
+		NextCmd()
 	END
 END do;
 
@@ -174,6 +191,7 @@ BEGIN
 			END
 		END;
 		IF cM.id = Oberon.mark THEN
+			IF cM.Y >= Display.Width THEN cM.Y := Display.Width-1 END;
 			V := Viewers.This(cM.X, cM.Y); IF V # NIL THEN V.handle(V, cM) END	(* set marker *)
 		END
 	ELSIF S.s = "save" THEN

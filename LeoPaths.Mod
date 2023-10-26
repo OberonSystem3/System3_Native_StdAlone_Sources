@@ -1,224 +1,1482 @@
-MODULE LeoPaths;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE LeoPaths; (** portable **)	(* eos   *)
 
 	(**
-		Leonardo path shapes
+		Leonardo vector graphics: paths, path segments, contour protocol, etc.
 	**)
 	
 	(*
-		Still to do:
-		- join curves having the same class
-		- curve constraints
+		to do:
+		- link shape to segment?
 	*)
 	
 	IMPORT
-		Modules, Files, Objects, Math, Display, Input, Oberon, Display3, Attributes, Effects, Gadgets, BasicGadgets,
-		GfxMatrix, GfxMaps, GfxPictures, GfxPaths, Gfx, GfxPens, Solver, Figures, LeoFrames, Leonardo, LeoPens;
+		Files, Math, Display, Objects, Attributes, Strings, Gadgets, PictImages, GfxMatrix, GfxImages, GfxPaths, Gfx, Out,
+		Leonardo, LeoPens;
 		
 	
 	CONST
-		PointBorder = 3;
-		CurveBorder = Figures.BorderWidth;
+		get* = 1; set* = 2;	(** link message id **)
+		term* = 0; coincident* = 1; collinear* = 2; symmetric* = 3; wrap* = 4;	(** continuity modes **)
+		start* = 1; end* = 2; notify* = 3;	(** connect message id **)
 		
-		ML = 2; MM = 1; MR = 0;
+		wedge* = 0; segment* = 1;	(** arc modes **)
 		
 	
 	TYPE
 		Point* = POINTER TO PointDesc;
-		PointDesc* = RECORD (Figures.ShapeDesc)
-			x*, y*: REAL;
+		PointDesc* = RECORD (Leonardo.ShapeDesc)
+			x*, y*: REAL;	(** point coordinates **)
+			link*: Leonardo.Shape;	(** shape controlled by point **)
 		END;
 		
-		CurveClass* = POINTER TO CurveClassDesc;
-		
-		Curve* = POINTER TO CurveDesc;
-		CurveDesc* = RECORD (Figures.ContainerDesc)
-			class*: CurveClass;
-			stroke*: GfxPens.Pen;	(** pen used for stroking this curve **)
-			succ*, pred*: Curve;	(** curves connected to this one **)
-			dx0*, dy0*, dx1*, dy1*: REAL;	(** curve direction at first and last point **)
-			boff*, len*, eoff*: REAL;	(** curve offsets and length **)
+		(** message for getting and setting positional shape links **)
+		LinkMsg* = RECORD (Leonardo.LocalizedMsg)
+			id*: SHORTINT;	(** get/set **)
+			done*: BOOLEAN;	(** to be set by receiver **)
+			x*, y*: REAL;	(** coordinates in global space (in/out) **)
 		END;
 		
+		LinkAction = POINTER TO LinkActionDesc;
+		LinkActionDesc = RECORD (Leonardo.ActionDesc)
+			p: Point;
+			link: Leonardo.Shape;
+		END;
+		
+		(** container drawing several contours with the same pen **)
 		Path* = POINTER TO PathDesc;
-		PathDesc* = RECORD (Figures.ContainerDesc)
-			fill*: GfxPens.Pen;	(* pen used for filling the path **)
+		PathDesc* = RECORD (Leonardo.ContainerDesc)
+			pen*: LeoPens.Pen;	(** pen to use for all contours **)
 		END;
 		
-		CurveClassDesc* = RECORD
-			length*: PROCEDURE (curve: Curve): REAL;
-			render*: PROCEDURE (curve: Curve; pen: GfxPens.Pen; VAR dm: Figures.DrawMsg);
-			locate*: PROCEDURE (curve: Curve; llx, lly, urx, ury: REAL; VAR prev, next: Figures.Reference; VAR px, py: REAL);
-			insert*: PROCEDURE (curve: Curve; p: Point; prev, next: Figures.Reference; fig: Figures.Figure);
-			split*: PROCEDURE (curve: Curve; on, p: Point; fig: Figures.Figure);
+		(** message for querying contour shapes **)
+		ContourMsg* = RECORD (Leonardo.ShapeMsg)
+			done*: BOOLEAN;	(** to be set by receiver if it can render itself with a pen **)
 		END;
 		
-		(* curve actions *)
-		Action = POINTER TO ActionDesc;
-		ActionDesc = RECORD (Figures.ActionDesc)
-			curve, succ, pred: Curve;
-			p: Figures.Shape;
+		(** message requesting a contour to render itself with the given pen **)
+		RenderMsg* = RECORD (Leonardo.ShapeMsg)
+			pen*: LeoPens.Pen;	(** (opened) pen to use **)
 		END;
 		
-		LengthData = RECORD (GfxPaths.EnumData)
-			sx, sy, len: REAL;
+		(** connectable segments **)
+		Segment* = POINTER TO SegmentDesc;
+		SegmentDesc* = RECORD (Leonardo.ContainerDesc)
+			pen*: LeoPens.Pen;	(** pen for rendering **)
+			closed*: BOOLEAN;	(** set if segment returns to first point after last one **)
+			pred*, succ*: SHORTINT;	(** continuity mode **)
+			boff*, eoff*: REAL;	(** offsets from begin and to end of connected contour **)
+			len*: REAL;	(** segment length **)
+		END;
+		
+		(** message for exchanging information between neighboring contours **)
+		ConnectMsg* = RECORD (Leonardo.ShapeMsg)
+			id*: SHORTINT;	(** get/set **)
+			pos*: SHORTINT;	(** start/end **)
+			mode*: SHORTINT;	(** term/coincident/collinear/symmetric **)
+			done*: BOOLEAN;	(** to be set by receiver **)
+			x*, y*: REAL;	(** position in local space **)
+			dx*, dy*: REAL;	(** direction vector in local space **)
+		END;
+		
+		(** message for updating segment offsets **)
+		ValidateMsg* = RECORD (Leonardo.ShapeMsg)
+			pos*: SHORTINT;	(** start/end **)
+			off*: REAL;	(** start: boff, end: eoff **)
+		END;
+		
+		(** segment splitting **)
+		SplitMsg* = RECORD (Leonardo.LocalizedMsg)
+			llx*, lly*, urx*, ury*: REAL;	(** split location **)
+		END;
+		
+		ModeAction = POINTER TO ModeActionDesc;
+		ModeActionDesc = RECORD (Leonardo.ActionDesc)
+			seg: Segment;
+			mode: SHORTINT;
+		END;
+		
+		(** arc segments **)
+		Arc* = POINTER TO ArcDesc;
+		ArcDesc* = RECORD (SegmentDesc)
+			mode*: SHORTINT;	(** close mode: wedge/segment **)
+			mat*: GfxMatrix.Matrix;	(** ellipse specification **)
+			dx0, dy0, dx1, dy1: REAL;
 		END;
 		
 		ArcData = RECORD (GfxPaths.EnumData)
-			mx, my, rx, ry: REAL;
-			sense, tracking: BOOLEAN;
+			n: LONGINT;
+			dx0, dy0, dx1, dy1: REAL;
 		END;
 		
-		SplineData = RECORD (GfxPaths.EnumData)
-			pen: GfxPens.Pen;
-			off: REAL;
-		END;
-		
-		Connector = POINTER TO ConnectorDesc;
-		ConnectorDesc = RECORD (Figures.ShapeDesc)
-			src, dst: Figures.Shape;
-			sstamp, dstamp: LONGINT;
+		(** pen for realizing contour into segments **)
+		Pathifier* = POINTER TO PathifierDesc;
+		PathifierDesc* = RECORD (LeoPens.PenDesc)
+			bot*, top*: Segment;
+			enter: Segment;
+			elem: SHORTINT;
+			x0, y0, x, y: REAL;
 		END;
 		
 	
 	VAR
-		PointBG, PointFG: GfxMaps.Map;
-		Recorder: GfxPens.Recorder;
-		PolygonClass*, ArcClass*, BezierClass*, SplineClass*: CurveClass;
-		
-		ClosedCurve: BasicGadgets.Boolean;
-		Pnt, Cross: Oberon.Marker;
-		PntFG, PntBG, CrossFG, CrossBG: Display.Pattern;
-		Track: PROCEDURE(frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		Marker: Oberon.Marker;
+		Img*: ARRAY 4 OF GfxImages.Image;
+		Rec: LeoPens.Recorder;
+		ArcPath: GfxPaths.Path;
+		PathifierMethods: LeoPens.Methods;
 		
 	
-	(**--- Connectors ---**)
+	(**--- Points ---**)
 	
-	PROCEDURE HandleConnector (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR
-			c, copy: Connector; ctm, mat: GfxMatrix.Matrix; col: Gfx.Color; llx, lly, urx, ury, w, h: REAL;
-			tm: Figures.TransformMsg; cm: Objects.CopyMsg; ver: LONGINT;
+	PROCEDURE InitPointImages;
+		VAR p: ARRAY 11 OF SET;
 	BEGIN
-		c := obj(Connector);
-		IF msg IS Figures.ShapeMsg THEN
-			IF msg IS Figures.DrawMsg THEN
-				WITH msg: Figures.DrawMsg DO
-					IF (msg.id = Figures.Full) & (msg.all OR (c.src.stamp = msg.stamp) OR (c.dst.stamp = msg.stamp)) THEN
-						ctm := msg.ctxt.ctm; col := msg.ctxt.fillCol;
-						Gfx.ResetCTM(msg.ctxt);
-						GfxMatrix.Invert(msg.ctxt.ctm, mat);
-						GfxMatrix.Concat(ctm, mat, mat);
-						Gfx.SetFillColor(msg.ctxt, Gfx.White);
-						GfxMatrix.Apply(mat, c.llx, c.lly, llx, lly);
-						GfxMatrix.Apply(mat, c.urx, c.ury, urx, ury);
-						w := (urx - llx)/3; h := (ury - lly)/3;
-						Gfx.DrawRect(msg.ctxt, llx-3, lly-3, llx+w, lly-2, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, llx-3, lly-2, llx-2, lly+h, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, urx-w, lly-3, urx+3, lly-2, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, urx+2, lly-2, urx+3, lly+h, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, llx-3, ury+2, llx+w, ury+3, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, llx-3, ury-h, llx-2, ury+2, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, urx-w, ury+2, urx+3, ury+3, {Gfx.Fill});
-						Gfx.DrawRect(msg.ctxt, urx+2, ury-h, urx+3, ury+2, {Gfx.Fill});
-						Gfx.SetFillColor(msg.ctxt, col);
-						Gfx.SetCTM(msg.ctxt, ctm)
-					END
+		p[0] := {0..2}; p[1] := {0, 2}; p[2] := {0..2};
+		NEW(Img[0]); PictImages.PatternToImage(Display.NewPattern(3, 3, p), Img[0]);
+		p[0] := {1..3}; p[1] := {0, 4}; p[2] := {0, 4}; p[3] := {0, 4}; p[4] := {1..3};
+		NEW(Img[1]); PictImages.PatternToImage(Display.NewPattern(5, 5, p), Img[1]);
+		p[0] := {2..4}; p[1] := {1, 5}; p[2] := {0, 6}; p[3] := {0, 6}; p[4] := {0, 6}; p[5] := {1, 5}; p[6] := {2..4};
+		NEW(Img[2]); PictImages.PatternToImage(Display.NewPattern(7, 7, p), Img[2]);
+		p[0] := {3..4, 6..7}; p[1] := {1, 9}; p[2] := {}; p[3] := {0, 10}; p[4] := {0, 10}; p[5] := {};
+		p[6] := {0, 10}; p[7] := {0, 10}; p[8] := {}; p[9] := {1, 9}; p[10] := {3..4, 6..7};
+		NEW(Img[3]); PictImages.PatternToImage(Display.NewPattern(11, 11, p), Img[3])
+	END InitPointImages;
+	
+	PROCEDURE DoLink (fig: Leonardo.Figure; a: Leonardo.Action);
+		VAR act: LinkAction;
+	BEGIN
+		act := a(LinkAction); act.p.link := act.link; act.p.sel := TRUE
+	END DoLink;
+	
+	PROCEDURE UndoLink (fig: Leonardo.Figure; a: Leonardo.Action);
+		VAR act: LinkAction;
+	BEGIN
+		act := a(LinkAction); act.p.link := NIL; act.p.sel := TRUE
+	END UndoLink;
+	
+	PROCEDURE Unlink (fig: Leonardo.Figure; p: Point);
+		VAR act: LinkAction;
+	BEGIN
+		NEW(act); act.do := UndoLink; act.undo := DoLink; act.p := p; act.link := p.link;
+		Leonardo.AddAction(fig, act)
+	END Unlink;
+	
+	PROCEDURE ControlPoint (p: Point; VAR msg: Leonardo.ControlMsg);
+		VAR link: Leonardo.Shape; cm: Objects.CopyMsg;
+	BEGIN
+		Leonardo.HandleShape(p, msg);
+		IF msg.id = Leonardo.delete THEN
+			link := p.link; WHILE (link # NIL) & ~link.marked DO link := link.cont END;
+			IF link # NIL THEN	(* link will get deleted.. *)
+				link := p; WHILE (link # NIL) & ~link.marked DO link := link.cont END;
+				IF link = NIL THEN	(* ...but point won't *)
+					Unlink(msg.fig, p)
 				END
-			ELSIF msg IS Figures.ValidateMsg THEN
-				WITH msg: Figures.ValidateMsg DO
-					IF (c.dst = NIL) OR (c.dst.cont = NIL) OR (c.src = NIL) OR (c.src.cont = NIL) OR (c.sstamp # c.dstamp) THEN
-						c.slink := NIL;
-						Figures.Delete(msg.fig, c);
-						c.sstamp := MIN(LONGINT); c.dstamp := MIN(LONGINT)
-					ELSIF (msg.stamp = c.stamp) OR (msg.stamp = c.src.stamp) OR (msg.stamp = c.dst.stamp) THEN
-						c.llx := c.src.llx; c.lly := c.src.lly; c.urx := c.src.urx; c.ury := c.src.ury; c.bw := c.src.bw;
-						c.cont.stamp := msg.stamp
-					END
+			END
+		ELSIF (msg.id = Leonardo.clone) & p.marked THEN	(* link copy if original link gets cloned, too *)
+			IF (p.link # NIL) & p.link.marked THEN
+				cm.stamp := msg.stamp; cm.id := Objects.shallow; p.link.handle(p.link, cm);
+				p.dlink(Point).link := cm.obj(Leonardo.Shape)
+			END
+		END
+	END ControlPoint;
+	
+	PROCEDURE ValidatePoint (p: Point; VAR msg: Leonardo.ValidateMsg);
+		VAR x, y: REAL;
+	BEGIN
+		IF p.marked THEN
+			Leonardo.UpdateShape(msg.fig, p);
+			GfxMatrix.Apply(msg.lgm, p.x, p.y, x, y);
+			p.llx := x - 0.5; p.lly := y - 0.5; p.urx := x + 0.5; p.ury := y + 0.5;
+			Leonardo.UpdateShape(msg.fig, p);
+			p.marked := FALSE; p.cont.marked := TRUE
+		END
+	END ValidatePoint;
+	
+	PROCEDURE ConsumePoint (p: Point; VAR msg: Leonardo.ConsumeMsg);
+		VAR lm: LinkMsg; x, y: REAL; act: LinkAction;
+	BEGIN
+		IF (p.link = NIL) & (msg.recv = NIL) & (msg.bottom = msg.top) & (msg.top.cont # p.cont) &
+			(msg.llx <= p.urx) & (p.llx <= msg.urx) & (msg.lly <= p.ury) & (p.lly <= msg.ury)
+		THEN
+			lm.fig := msg.fig; lm.lgm := msg.slgm; lm.id := get; lm.done := FALSE; msg.top.handle(msg.top, lm);
+			IF lm.done THEN
+				Leonardo.BeginCommand(msg.fig);
+				GfxMatrix.Apply(msg.lgm, p.x, p.y, lm.x, lm.y);
+				lm.id := set; lm.done := FALSE; msg.top.handle(msg.top, lm);
+				Leonardo.EndCommand(msg.fig);
+				IF lm.done THEN
+					msg.top.slink := NIL; Leonardo.Transform(msg.fig, msg.top, GfxMatrix.Identity);
+					NEW(act); act.do := DoLink; act.undo := UndoLink; act.p := p; act.link := msg.top;
+					Leonardo.AddAction(msg.fig, act);
+					msg.recv := p
 				END
-			ELSIF msg IS Figures.ControlMsg THEN
-				WITH msg: Figures.ControlMsg DO
-					IF msg.id = Figures.Remove THEN
-						IF (c.dst.stamp = msg.stamp) OR (c.src.stamp = msg.stamp) THEN
-							c.stamp := msg.stamp
-						END
-					END
+			END
+		END
+	END ConsumePoint;
+	
+	PROCEDURE RenderPoint* (p: Point; VAR msg: Leonardo.RenderMsg);
+		VAR ctm: GfxMatrix.Matrix; x, y: REAL; col: Gfx.Color;
+	BEGIN
+		ctm := msg.ctxt.ctm; Gfx.ResetCTM(msg.ctxt);
+		GfxMatrix.Apply(ctm, p.x, p.y, x, y);
+		GfxMatrix.Solve(ctm, ENTIER(x), ENTIER(y), x, y);	(* align to device pixel grid *)
+		GfxMatrix.Apply(msg.lgm, x, y, x, y);
+		GfxMatrix.Apply(msg.gsm, x, y, x, y);
+		col := msg.ctxt.fillCol; Gfx.SetFillColor(msg.ctxt, Gfx.Black);
+		IF p.link # NIL THEN
+			Gfx.DrawImageAt(msg.ctxt, x-5, y-5, Img[3], GfxImages.NoFilter)
+		END;
+		Gfx.DrawImageAt(msg.ctxt, x-1, y-1, Img[0], GfxImages.NoFilter);
+		IF p.sel THEN
+			Gfx.DrawImageAt(msg.ctxt, x-3, y-3, Img[2], GfxImages.NoFilter);
+			Gfx.SetFillColor(msg.ctxt, Gfx.LGrey);
+			Gfx.DrawImageAt(msg.ctxt, x-2, y-2, Img[1], GfxImages.NoFilter)
+		END;
+		Gfx.SetFillColor(msg.ctxt, col);
+		Gfx.SetCTM(msg.ctxt, ctm)
+	END RenderPoint;
+	
+	PROCEDURE LocatePoint (p: Point; VAR msg: Leonardo.LocateMsg);
+	BEGIN
+		IF (msg.llx <= p.urx) & (p.llx <= msg.urx) & (msg.lly <= p.ury) & (p.lly <= msg.ury) THEN
+			IF msg.id IN {Leonardo.inside, Leonardo.overlap} THEN p.slink := msg.res; msg.res := p
+			ELSIF msg.id = Leonardo.project THEN GfxMatrix.Apply(msg.lgm, p.x, p.y, msg.px, msg.py); msg.res := p
+			END
+		END
+	END LocatePoint;
+	
+	PROCEDURE TransformPoint (p: Point; VAR msg: Leonardo.TransformMsg);
+		VAR x, y: REAL; lm: LinkMsg;
+	BEGIN
+		IF msg.id = Leonardo.apply THEN
+			IF ~p.marked THEN
+				IF (p.link # NIL) & p.link.marked THEN
+					msg.notify := TRUE
 				END
-			ELSIF msg IS Figures.TransformMsg THEN
-				WITH msg: Figures.TransformMsg DO
-					IF msg.id IN {Figures.Apply, Figures.Notify} THEN
-						IF (c.dst.stamp = msg.stamp) & (c.src.stamp # msg.stamp) THEN
-							c.src.stamp := msg.stamp;
-							c.src.handle(c.src, msg);
-							tm.stamp := msg.stamp; tm.fig := msg.fig; tm.id := Figures.Notify; tm.mat := msg.mat;
-							msg.fig.handle(msg.fig, tm)
-						END;
-						c.sstamp := c.src.stamp; c.dstamp := c.dst.stamp
-					END
+			ELSIF msg.stamp # p.stamp THEN
+				p.stamp := msg.stamp;
+				GfxMatrix.Apply(msg.lgm, p.x, p.y, x, y);
+				GfxMatrix.Apply(msg.mat, x, y, x, y);
+				GfxMatrix.Solve(msg.lgm, x, y, x, y);
+				Leonardo.SetReal(msg.fig, p, "X", x);
+				Leonardo.SetReal(msg.fig, p, "Y", y);
+				IF p.link # NIL THEN
+					msg.notify := TRUE
 				END
+			END
+		ELSIF (msg.id = Leonardo.notify) & (p.link # NIL) THEN
+			IF p.marked & ~p.link.marked THEN
+				lm.stamp := msg.stamp; lm.fig := msg.fig; lm.id := set; lm.done := FALSE;
+				Leonardo.GetCoordSystem(p.link, lm.lgm);
+				GfxMatrix.Apply(msg.lgm, p.x, p.y, lm.x, lm.y);
+				p.link.handle(p.link, lm);
+				IF lm.done THEN p.link.marked := TRUE; msg.notify := TRUE
+				ELSE Unlink(msg.fig, p)
+				END
+			ELSIF ~p.marked & p.link.marked THEN
+				lm.stamp := msg.stamp; lm.fig := msg.fig; lm.id := get; lm.done := FALSE;
+				Leonardo.GetCoordSystem(p.link, lm.lgm);
+				p.link.handle(p.link, lm);
+				IF lm.done THEN
+					GfxMatrix.Solve(msg.lgm, lm.x, lm.y, x, y);
+					Leonardo.SetReal(msg.fig, p, "X", x);
+					Leonardo.SetReal(msg.fig, p, "Y", y);
+					p.marked := TRUE; msg.notify := TRUE
+				ELSE
+					Unlink(msg.fig, p)
+				END
+			END
+		END
+	END TransformPoint;
+	
+	PROCEDURE LinkPoint (p: Point; VAR msg: LinkMsg);
+		VAR x, y: REAL;
+	BEGIN
+		IF msg.id = get THEN
+			GfxMatrix.Apply(msg.lgm, p.x, p.y, msg.x, msg.y);
+			msg.done := TRUE
+		ELSIF msg.id = set THEN
+			GfxMatrix.Solve(msg.lgm, msg.x, msg.y, x, y);
+			Leonardo.SetReal(msg.fig, p, "X", x);
+			Leonardo.SetReal(msg.fig, p, "Y", y);
+			msg.done := TRUE
+		END
+	END LinkPoint;
+	
+	PROCEDURE SplitPoint (p: Point; VAR msg: SplitMsg);
+	BEGIN
+		IF (p.link # NIL) & (p.llx <= msg.urx) & (msg.llx <= p.llx) & (p.lly <= msg.ury) & (msg.lly <= p.ury) THEN
+			Unlink(msg.fig, p)
+		END
+	END SplitPoint;
+	
+	PROCEDURE GetPointItem* (p: Point; VAR s: ARRAY OF CHAR);
+		VAR t: ARRAY 10 OF CHAR;
+	BEGIN
+		Strings.RealToFixStr(p.x, s, 8, 2, 0);
+		Strings.RealToFixStr(p.y, t, 8, 2, 0);
+		Strings.AppendCh(s, " "); Strings.Append(s, t)
+	END GetPointItem;
+	
+	PROCEDURE CopyPoint* (VAR msg: Objects.CopyMsg; from, to: Point);
+	BEGIN
+		Leonardo.CopyShape(msg, from, to);
+		to.x := from.x; to.y := from.y
+	END CopyPoint;
+	
+	PROCEDURE HandlePoint* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR p, copy: Point; ver, pos: LONGINT; mode: SHORTINT;
+	BEGIN
+		p := obj(Point);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.ControlMsg THEN
+				ControlPoint(p, msg(Leonardo.ControlMsg))
+			ELSIF msg IS Leonardo.ValidateMsg THEN
+				ValidatePoint(p, msg(Leonardo.ValidateMsg))
+			ELSIF msg IS Leonardo.ConsumeMsg THEN
+				ConsumePoint(p, msg(Leonardo.ConsumeMsg))
+			ELSIF msg IS Leonardo.RenderMsg THEN
+				RenderPoint(p, msg(Leonardo.RenderMsg))
+			ELSIF msg IS Leonardo.LocateMsg THEN
+				LocatePoint(p, msg(Leonardo.LocateMsg))
+			ELSIF msg IS Leonardo.TransformMsg THEN
+				TransformPoint(p, msg(Leonardo.TransformMsg))
+			ELSIF msg IS LinkMsg THEN
+				LinkPoint(p, msg(LinkMsg))
+			ELSIF msg IS SplitMsg THEN
+				SplitPoint(p, msg(SplitMsg))
+			ELSE
+				Leonardo.HandleShape(p, msg)
 			END
 		ELSIF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewConnector")
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("X"); msg.Enum("Y"); Leonardo.HandleShape(p, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPaths.NewPoint"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; GetPointItem(p, msg.s); msg.res := 0
+					ELSIF msg.name = "X" THEN msg.class := Objects.Real; msg.x := p.x; msg.res := 0
+					ELSIF msg.name = "Y" THEN msg.class := Objects.Real; msg.x := p.y; msg.res := 0
+					ELSE Leonardo.HandleShape(p, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "X" THEN
+						IF msg.class = Objects.Real THEN p.x := msg.x; msg.res := 0 END
+					ELSIF msg.name = "Y" THEN
+						IF msg.class = Objects.Real THEN p.y := msg.x; msg.res := 0 END
+					ELSE
+						Leonardo.HandleShape(p, msg)
+					END
+				END
+			END
 		ELSIF msg IS Objects.CopyMsg THEN
 			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # c.stamp THEN
-					c.stamp := msg.stamp;
-					NEW(copy); c.dlink := copy;
-					Figures.CopyShape(msg, c, copy);
-					cm.stamp := msg.stamp; cm.id := msg.id;
-					c.src.handle(c.src, cm);
-					copy.src := cm.obj(Figures.Shape);
-					c.dst.handle(c.dst, cm);
-					copy.dst := cm.obj(Figures.Shape)
+				IF msg.stamp # p.stamp THEN
+					NEW(copy); p.dlink := copy; p.stamp := msg.stamp;
+					CopyPoint(msg, p, copy)
 				END;
-				msg.obj := c.dlink
+				msg.obj := p.dlink
 			END
 		ELSIF msg IS Objects.BindMsg THEN
-			Figures.HandleShape(c, msg)
+			IF p.link # NIL THEN
+				p.link.handle(p.link, msg)
+			END;
+			Leonardo.HandleShape(p, msg)
 		ELSIF msg IS Objects.FileMsg THEN
 			WITH msg: Objects.FileMsg DO
 				IF msg.id = Objects.store THEN
-					Files.WriteNum(msg.R, 1);
-					Gadgets.WriteRef(msg.R, c.lib, c.dst);
-					Gadgets.WriteRef(msg.R, c.lib, c.src)
+					Leonardo.HandleShape(p, msg);
+					Files.WriteNum(msg.R, 3);
+					Files.WriteReal(msg.R, p.x); Files.WriteReal(msg.R, p.y);
+					Gadgets.WriteRef(msg.R, p.lib, p.link)
 				ELSIF msg.id = Objects.load THEN
+					pos := Files.Pos(msg.R);
 					Files.ReadNum(msg.R, ver);
-					IF ver >= 1 THEN
-						Gadgets.ReadRef(msg.R, c.lib, obj);
-						IF (obj # NIL) & (obj IS Figures.Shape) THEN c.dst := obj(Figures.Shape) END;
-						Gadgets.ReadRef(msg.R, c.lib, obj);
-						IF (obj # NIL) & (obj IS Figures.Shape) THEN c.src := obj(Figures.Shape) END
+					IF ver = 1 THEN	(* old style point *)
+						Files.ReadReal(msg.R, p.x); Files.ReadReal(msg.R, p.y)
+					ELSE
+						Files.Set(msg.R, Files.Base(msg.R), pos);	(* re-read version (belongs to shape) *)
+						Leonardo.HandleShape(p, msg);
+						Files.ReadNum(msg.R, ver);
+						Files.ReadReal(msg.R, p.x); Files.ReadReal(msg.R, p.y);
+						IF ver = 2 THEN
+							Files.Read(msg.R, mode)
+						ELSE
+							Gadgets.ReadRef(msg.R, p.lib, obj);
+							IF (obj # NIL) & (obj IS Leonardo.Shape) THEN
+								p.link := obj(Leonardo.Shape)
+							END
+						END
+					END;
+					p.llx := p.x-0.5; p.lly := p.y-0.5; p.urx := p.x+0.5; p.ury := p.y+0.5
+				END
+			END
+		ELSE
+			Leonardo.HandleShape(p, msg)
+		END
+	END HandlePoint;
+	
+	PROCEDURE InitPoint* (p: Point; x, y: REAL);
+	BEGIN
+		Leonardo.InitShape(p, HandlePoint);
+		p.x := x; p.y := y;
+		p.llx := x-0.5; p.lly := y-0.5; p.urx := x+0.5; p.ury := y+0.5; p.bw := 0
+	END InitPoint;
+	
+	PROCEDURE NewPoint*;
+		VAR p: Point;
+	BEGIN
+		NEW(p); InitPoint(p, 0, 0);
+		Objects.NewObj := p
+	END NewPoint;
+	
+	
+	(**--- Paths ---**)
+	
+	PROCEDURE CalcPathBox (path: Path; VAR mat: GfxMatrix.Matrix);
+		VAR bw: REAL;
+	BEGIN
+		Leonardo.GetComponentsBox(path.bottom, path.llx, path.lly, path.urx, path.ury, path.bw);
+		Attributes.GetReal(path.pen, "Border", bw);
+		GfxMatrix.ApplyToDist(mat, bw, bw);
+		IF bw > path.bw THEN path.bw := bw END
+	END CalcPathBox;
+	
+	PROCEDURE SelectPath* (path: Path; VAR msg: Leonardo.SelectMsg);
+		VAR cur: Leonardo.Shape;
+	BEGIN
+		IF msg.id = Leonardo.validate THEN
+			Leonardo.ToComponents(path.bottom, msg);
+			cur := path.bottom; WHILE (cur # NIL) & ~cur.sel DO cur := cur.up END;
+			path.subsel := cur # NIL;
+			IF path.subsel & ~path.sel THEN
+				path.sel := TRUE;
+				Leonardo.UpdateShape(msg.fig, path)
+			END
+		ELSE
+			IF (msg.id = Leonardo.reset) & path.sel THEN
+				Leonardo.UpdateShape(msg.fig, path)
+			END;
+			Leonardo.SelectContainer(path, msg)
+		END
+	END SelectPath;
+	
+	PROCEDURE ControlPath* (path: Path; VAR msg: Leonardo.ControlMsg);
+		VAR s, bot, top: Leonardo.Shape; copy: Path;
+	BEGIN
+		IF msg.id = Leonardo.delete THEN
+			Leonardo.ControlContainer(path, msg);
+			s := path.bottom; WHILE (s # NIL) & s.marked DO s := s.up END;
+			IF s = NIL THEN	(* all components deleted *)
+				path.marked := TRUE
+			END
+		ELSIF (msg.id = Leonardo.clone) & ~path.marked THEN
+			bot := msg.bottom; top := msg.top; msg.bottom := NIL; msg.top := NIL;
+			Leonardo.ControlContainer(path, msg);
+			IF msg.top # NIL THEN
+				NEW(copy); Leonardo.InitContainer(copy, path.handle, msg.bottom, msg.top); copy.pen := path.pen;
+				copy.llx := path.llx; copy.lly := path.lly; copy.urx := path.urx; copy.ury := path.ury; copy.bw := path.bw;
+				msg.top := copy; copy.down := top;
+				IF top = NIL THEN msg.bottom := copy
+				ELSE msg.bottom := bot; top.up := copy
+				END
+			ELSE
+				msg.bottom := bot; msg.top := top
+			END
+		ELSE
+			Leonardo.ControlContainer(path, msg)
+		END
+	END ControlPath;
+	
+	PROCEDURE ValidatePath (path: Path; VAR msg: Leonardo.ValidateMsg);
+	BEGIN
+		Leonardo.ToComponents(path.bottom, msg);
+		IF path.marked THEN
+			Leonardo.UpdateShape(msg.fig, path);
+			CalcPathBox(path, msg.lgm);
+			Leonardo.UpdateShape(msg.fig, path);
+			path.marked := FALSE; path.cont.marked := TRUE
+		END
+	END ValidatePath;
+	
+	PROCEDURE ConsumePath (path: Path; VAR msg: Leonardo.ConsumeMsg);
+		VAR cm: ContourMsg; s: Leonardo.Shape; dm: Leonardo.ControlMsg;
+	BEGIN
+		IF (msg.recv = NIL) & (msg.llx <= path.urx + path.bw) & (path.llx - path.bw <= msg.urx) &
+			(msg.lly <= path.ury + path.bw) & (path.lly - path.bw <= msg.ury)
+		THEN
+			cm.fig := msg.fig; s := msg.bottom;
+			REPEAT
+				cm.done := FALSE; s.handle(s, cm); s := s.up
+			UNTIL ~cm.done OR (s = msg.top.up);
+			IF cm.done THEN
+				s := msg.bottom; WHILE s # msg.top.up DO s.marked := TRUE; s := s.up END;
+				dm.id := Leonardo.delete; msg.fig.handle(msg.fig, dm);
+				Leonardo.AddConsumeAction(msg.fig, path.top, msg.bottom, msg.top, NIL, path);
+				msg.recv := path
+			ELSE
+				Leonardo.ToComponents(path.bottom, msg)
+			END
+		END
+	END ConsumePath;
+	
+	PROCEDURE RenderPath (path: Path; VAR msg: Leonardo.RenderMsg);
+		VAR state: Gfx.State; rm: RenderMsg; id: INTEGER;
+		
+		PROCEDURE corner (x, y: REAL);
+		BEGIN
+			GfxMatrix.Apply(msg.gsm, x, y, x, y);
+			x := ENTIER(x); y := ENTIER(y);
+			Gfx.DrawRect(msg.ctxt, x-7, y, x+8, y+1, {Gfx.Fill});
+			Gfx.DrawRect(msg.ctxt, x, y-7, x+1, y+8, {Gfx.Fill})
+		END corner;
+		
+	BEGIN
+		IF (path.llx - path.bw < msg.urx) & (msg.llx < path.urx + path.bw) &
+			(path.lly - path.bw < msg.ury) & (msg.lly < path.ury + path.bw)
+		THEN
+			IF msg.id = Leonardo.marked THEN
+				Leonardo.ToComponents(path.bottom, msg)
+			ELSE
+				IF msg.id IN {Leonardo.active, Leonardo.passive} THEN
+					Gfx.Save(msg.ctxt, Gfx.attr, state);
+					path.pen.do.begin(path.pen, msg.ctxt);
+					rm.stamp := msg.stamp; rm.dlink := msg.dlink; rm.fig := msg.fig; rm.pen := path.pen;
+					Leonardo.ToComponents(path.bottom, rm);
+					path.pen.do.end(path.pen);
+					Gfx.Restore(msg.ctxt, state)
+				END;
+				IF path.sel THEN
+					IF msg.id IN {Leonardo.active, Leonardo.marksonly} THEN
+						id := msg.id; msg.id := Leonardo.marksonly;
+						Leonardo.ToComponents(path.bottom, msg);
+						msg.id := id
+					END;
+					IF msg.id = Leonardo.active THEN
+						Gfx.Save(msg.ctxt, {Gfx.fillColPat, Gfx.ctm}, state);
+						Gfx.SetFillColor(msg.ctxt, Gfx.DGrey); Gfx.SetFillPattern(msg.ctxt, NIL);
+						Gfx.ResetCTM(msg.ctxt);
+						corner(path.llx, path.lly); corner(path.urx, path.lly);
+						corner(path.urx, path.ury); corner(path.llx, path.ury);
+						Gfx.Restore(msg.ctxt, state)
 					END
 				END
 			END
 		END
-	END HandleConnector;
+	END RenderPath;
 	
-	PROCEDURE Connect (fig: Figures.Figure; src, dst: Figures.Shape);
-		VAR c: Connector;
+	PROCEDURE GetPathMatrix* (path: Path; VAR msg: Leonardo.MatrixMsg);
+		VAR lgm: GfxMatrix.Matrix;
 	BEGIN
-		NEW(c); c.handle := HandleConnector;
-		c.src := src; c.dst := dst;
-		c.sstamp := MIN(LONGINT); c.dstamp := MIN(LONGINT);
-		c.llx := src.llx; c.lly := src.lly; c.urx := src.urx; c.ury := src.ury; c.bw := src.bw;
-		Figures.Integrate(fig, fig.root.last.shape, c)
-	END Connect;
+		IF msg.dest = path THEN
+			lgm := msg.lgm; msg.lgm := GfxMatrix.Identity;
+			Leonardo.GetHandleMatrix(path.llx, path.lly, path.urx, path.ury, msg);
+			msg.lgm := lgm
+		ELSE
+			Leonardo.GetContainerMatrix(path, msg)
+		END
+	END GetPathMatrix;
 	
-	PROCEDURE NewConnector*;
-		VAR c: Connector;
+	PROCEDURE CopyPath* (VAR msg: Objects.CopyMsg; from, to: Path);
+		VAR obj: Objects.Object;
 	BEGIN
-		NEW(c); c.handle := HandleConnector;
-		Objects.NewObj := c
-	END NewConnector;
+		Leonardo.CopyContainer(msg, from, to);
+		obj := Gadgets.CopyPtr(msg, from.pen);
+		IF (obj # NIL) & (obj IS LeoPens.Pen) THEN
+			to.pen := obj(LeoPens.Pen)
+		END
+	END CopyPath;
 	
-	
-	(**--- Auxiliary Procedures ---**)
-	
-	PROCEDURE OnLine* (x0, y0, x1, y1, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
-		VAR x, y, dx, dy: REAL;
+	PROCEDURE HandlePath* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR path, copy: Path; ver: LONGINT;
 	BEGIN
-		x := 0.5*(llx + urx); y := 0.5*(lly + ury);
+		path := obj(Path);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.SelectMsg THEN
+				SelectPath(path, msg(Leonardo.SelectMsg))
+			ELSIF msg IS Leonardo.ControlMsg THEN
+				ControlPath(path, msg(Leonardo.ControlMsg))
+			ELSIF msg IS Leonardo.ValidateMsg THEN
+				ValidatePath(path, msg(Leonardo.ValidateMsg))
+			ELSIF msg IS Leonardo.ConsumeMsg THEN
+				ConsumePath(path, msg(Leonardo.ConsumeMsg))
+			ELSIF msg IS Leonardo.RenderMsg THEN
+				RenderPath(path, msg(Leonardo.RenderMsg))
+			ELSIF msg IS Leonardo.MatrixMsg THEN
+				GetPathMatrix(path, msg(Leonardo.MatrixMsg))
+			ELSE
+				Leonardo.HandleContainer(path, msg)
+			END
+		ELSIF msg IS LeoPens.UpdateMsg THEN
+			WITH msg: LeoPens.UpdateMsg DO
+				IF msg.pen = path.pen THEN path.marked := TRUE; path.sel := TRUE
+				ELSE path.pen.handle(path.pen, msg)
+				END
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					Leonardo.HandleContainer(path, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPaths.New"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Path"; msg.res := 0
+					ELSE Leonardo.HandleContainer(path, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					Leonardo.HandleContainer(path, msg)
+				END
+			END
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Pen"); Leonardo.HandleContainer(path, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Pen" THEN msg.obj := path.pen; msg.res := 0
+					ELSE Leonardo.HandleContainer(path, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Pen" THEN
+						IF (msg.obj # NIL) & (msg.obj IS LeoPens.Pen) THEN path.pen := msg.obj(LeoPens.Pen); msg.res := 0 END
+					ELSE
+						Leonardo.HandleContainer(path, msg)
+					END
+				END
+			END
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # path.stamp THEN
+					NEW(copy); path.dlink := copy; path.stamp := msg.stamp;
+					CopyPath(msg, path, copy)
+				END;
+				msg.obj := path.dlink
+			END
+		ELSIF msg IS Objects.BindMsg THEN
+			path.pen.handle(path.pen, msg);
+			Leonardo.HandleContainer(path, msg)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				Leonardo.HandleContainer(path, msg);
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					Gadgets.WriteRef(msg.R, path.lib, path.pen)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Gadgets.ReadRef(msg.R, path.lib, obj);
+					IF (obj # NIL) & (obj IS LeoPens.Pen) THEN
+						path.pen := obj(LeoPens.Pen)
+					END;
+					CalcPathBox(path, GfxMatrix.Identity)
+				END
+			END
+		ELSE
+			Leonardo.HandleContainer(path, msg)
+		END
+	END HandlePath;
+	
+	PROCEDURE InitPath* (path: Path; bottom, top: Leonardo.Shape; pen: LeoPens.Pen);
+	BEGIN
+		Leonardo.InitContainer(path, HandlePath, bottom, top);
+		path.pen := pen;
+		CalcPathBox(path, GfxMatrix.Identity)
+	END InitPath;
+	
+	PROCEDURE New*;
+		VAR path: Path;
+	BEGIN
+		NEW(path); InitPath(path, NIL, NIL, LeoPens.Default);
+		Objects.NewObj := path
+	END New;
+	
+	
+	(**--- Segments ---**)
+	
+	PROCEDURE GetFirstLast* (seg: Segment; VAR first, last: Point);
+	BEGIN
+		first := seg.bottom(Point); last := seg.top(Point);
+		IF seg.closed THEN
+			first.down := last; last.up := first;
+			last := first
+		END
+	END GetFirstLast;
+	
+	PROCEDURE Pred* (seg: Segment): Leonardo.Shape;
+		VAR cm: ConnectMsg; pred: Leonardo.Shape;
+	BEGIN
+		IF seg.pred = term THEN RETURN NIL
+		ELSIF seg.pred < wrap THEN RETURN seg.down
+		ELSE
+			cm.id := get; cm.pos := end; pred := seg;
+			LOOP
+				cm.done := FALSE; pred.handle(pred, cm);
+				IF ~cm.done THEN RETURN NIL
+				ELSIF cm.mode >= wrap THEN RETURN pred
+				ELSE pred := pred.up
+				END
+			END
+		END
+	END Pred;
+	
+	PROCEDURE Succ* (seg: Segment): Leonardo.Shape;
+		VAR cm: ConnectMsg; succ: Leonardo.Shape;
+	BEGIN
+		IF seg.succ = term THEN RETURN NIL
+		ELSIF seg.succ < wrap THEN RETURN seg.up
+		ELSE
+			cm.id := get; cm.pos := start; succ := seg;
+			LOOP
+				cm.done := FALSE; succ.handle(succ, cm);
+				IF ~cm.done THEN RETURN NIL
+				ELSIF cm.mode >= wrap THEN RETURN succ
+				ELSE succ := succ.down
+				END
+			END
+		END
+	END Succ;
+	
+	PROCEDURE GetPred* (seg: Segment; VAR dx, dy: REAL);
+		VAR pred: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		pred := Pred(seg); dx := 0; dy := 0;
+		IF pred # NIL THEN
+			cm.id := get; cm.pos := end; cm.done := FALSE; pred.handle(pred, cm);
+			IF cm.done THEN
+				dx := cm.dx; dy := cm.dy
+			END
+		END
+	END GetPred;
+	
+	PROCEDURE GetSucc* (seg: Segment; VAR dx, dy: REAL);
+		VAR succ: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		succ := Succ(seg); dx := 0; dy := 0;
+		IF succ # NIL THEN
+			cm.id := get; cm.pos := start; cm.done := FALSE; succ.handle(succ, cm);
+			IF cm.done THEN
+				dx := cm.dx; dy := cm.dy
+			END
+		END
+	END GetSucc;
+	
+	PROCEDURE SwapPred (fig: Leonardo.Figure; a: Leonardo.Action);
+		VAR act: ModeAction; seg: Segment; mode: SHORTINT;
+	BEGIN
+		act := a(ModeAction); seg := act.seg;
+		mode := seg.pred; seg.pred := act.mode; act.mode := mode;
+		seg.marked := TRUE; seg.sel := TRUE
+	END SwapPred;
+	
+	PROCEDURE ChangePred* (fig: Leonardo.Figure; seg: Segment; mode: SHORTINT);
+		VAR act: ModeAction;
+	BEGIN
+		NEW(act); act.do := SwapPred; act.undo := SwapPred; act.seg := seg; act.mode := mode;
+		Leonardo.AddAction(fig, act)
+	END ChangePred;
+	
+	PROCEDURE SwapSucc (fig: Leonardo.Figure; a: Leonardo.Action);
+		VAR act: ModeAction; seg: Segment; mode: SHORTINT;
+	BEGIN
+		act := a(ModeAction); seg := act.seg;
+		mode := seg.succ; seg.succ := act.mode; act.mode := mode;
+		seg.marked := TRUE; seg.sel := TRUE
+	END SwapSucc;
+	
+	PROCEDURE ChangeSucc* (fig: Leonardo.Figure; seg: Segment; mode: SHORTINT);
+		VAR act: ModeAction;
+	BEGIN
+		NEW(act); act.do := SwapSucc; act.undo := SwapSucc; act.seg := seg; act.mode := mode;
+		Leonardo.AddAction(fig, act)
+	END ChangeSucc;
+	
+	PROCEDURE ConnectPred* (fig: Leonardo.Figure; seg: Segment; pred: Leonardo.Shape);
+		VAR cm: ConnectMsg; p: Point;
+	BEGIN
+		IF pred # NIL THEN
+			cm.fig := fig; cm.id := get; cm.pos := start; cm.done := FALSE; seg.handle(seg, cm);
+			IF cm.done THEN
+				p := seg.bottom(Point);
+				cm.id := set; cm.pos := end; cm.mode := coincident; cm.x := p.x; cm.y := p.y; cm.done := FALSE;
+				IF pred # seg.down THEN INC(cm.mode, wrap) END;
+				pred.handle(pred, cm);
+				IF cm.done THEN
+					ChangePred(fig, seg, cm.mode)
+				END
+			END
+		END
+	END ConnectPred;
+	
+	PROCEDURE ConnectSucc* (fig: Leonardo.Figure; seg: Segment; succ: Leonardo.Shape);
+		VAR cm: ConnectMsg; p: Point;
+	BEGIN
+		IF succ # NIL THEN
+			cm.fig := fig; cm.id := get; cm.pos := end; cm.done := FALSE; seg.handle(seg, cm);
+			IF cm.done THEN
+				p := seg.top(Point);
+				cm.id := set; cm.pos := start; cm.mode := coincident; cm.x := p.x; cm.y := p.y; cm.done := FALSE;
+				IF succ # seg.up THEN INC(cm.mode, wrap) END;
+				succ.handle(succ, cm);
+				IF cm.done THEN
+					ChangeSucc(fig, seg, cm.mode)
+				END
+			END
+		END
+	END ConnectSucc;
+	
+	PROCEDURE ControlSegment* (seg: Segment; VAR msg: Leonardo.ControlMsg);
+		VAR p: Leonardo.Shape; n: LONGINT; pred, succ, bot, top: Leonardo.Shape; cm: ConnectMsg; copy: Segment;
+	BEGIN
+		IF msg.id = Leonardo.delete THEN
+			Leonardo.ControlContainer(seg, msg);
+			p := seg.bottom; n := 0;
+			WHILE p # NIL DO
+				IF ~p.marked THEN INC(n) END;
+				p := p.up
+			END;
+			IF n < 2 THEN	(* segment collapses *)
+				seg.marked := TRUE
+			END;
+			pred := Pred(seg); succ := Succ(seg);
+			IF (pred # NIL) & ~pred.marked & (seg.marked OR seg.bottom.marked) THEN
+				cm.fig := msg.fig; cm.id := set; cm.pos := end; cm.mode := term; cm.done := FALSE; pred.handle(pred, cm);
+				ChangePred(msg.fig, seg, term)
+			END;
+			IF (succ # NIL) & ~succ.marked & (seg.marked OR seg.top.marked) THEN
+				cm.fig := msg.fig; cm.id := set; cm.pos := start; cm.mode := term; cm.done := FALSE; succ.handle(succ, cm);
+				ChangeSucc(msg.fig, seg, term)
+			END
+		ELSIF msg.id = Leonardo.clone THEN
+			IF seg.marked THEN
+				Leonardo.ControlContainer(seg, msg);
+				pred := Pred(seg); succ := Succ(seg); copy := seg.dlink(Segment);
+				IF (pred # NIL) & pred.marked THEN copy.pred := seg.pred; copy.boff := seg.boff; copy.eoff := seg.eoff
+				ELSE copy.pred := term
+				END;
+				IF (succ # NIL) & succ.marked THEN copy.succ := seg.succ; copy.boff := seg.boff; copy.eoff := seg.eoff
+				ELSE copy.succ := term
+				END
+			ELSE
+				bot := msg.bottom; top := msg.top; msg.bottom := NIL; msg.top := NIL;
+				Leonardo.ControlContainer(seg, msg);
+				IF msg.top # NIL THEN
+					NEW(copy); Leonardo.InitContainer(copy, seg.handle, msg.bottom, msg.top);
+					copy.llx := seg.llx; copy.lly := seg.lly; copy.urx := seg.urx; copy.ury := seg.ury; copy.bw := seg.bw;
+					copy.pen := seg.pen; copy.closed := seg.closed; copy.len := seg.len;
+					msg.top := copy; copy.down := top;
+					IF top = NIL THEN msg.bottom := copy
+					ELSE msg.bottom := bot; top.up := copy
+					END
+				ELSE
+					msg.bottom := bot; msg.top := top
+				END
+			END
+		ELSE
+			Leonardo.ControlContainer(seg, msg)
+		END
+	END ControlSegment;
+	
+	PROCEDURE OrderSegment* (seg: Segment; VAR msg: Leonardo.OrderMsg);
+		VAR pred, succ: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		Leonardo.HandleContainer(seg, msg);
+		pred := Pred(seg); succ := Succ(seg);
+		IF (pred # NIL) & ~pred.marked & (seg.marked OR seg.bottom.marked) THEN
+			cm.fig := msg.fig; cm.id := set; cm.pos := end; cm.mode := term; cm.done := FALSE; pred.handle(pred, cm);
+			ChangePred(msg.fig, seg, term)
+		END;
+		IF (succ # NIL) & ~succ.marked & (seg.marked OR seg.top.marked) THEN
+			cm.fig := msg.fig; cm.id := set; cm.pos := start; cm.mode := term; cm.done := FALSE; succ.handle(succ, cm);
+			ChangeSucc(msg.fig, seg, term)
+		END
+	END OrderSegment;
+	
+	PROCEDURE CalcSegmentBox* (seg: Segment; VAR mat: GfxMatrix.Matrix);
+		VAR bw: REAL;
+	BEGIN
+		Leonardo.GetComponentsBox(seg.bottom, seg.llx, seg.lly, seg.urx, seg.ury, seg.bw);
+		Attributes.GetReal(seg.pen, "Border", bw);
+		GfxMatrix.ApplyToDist(mat, bw, bw);
+		IF bw > seg.bw THEN seg.bw := bw END
+	END CalcSegmentBox;
+	
+	PROCEDURE ValidateSegmentLength* (seg: Segment; VAR msg: Leonardo.ValidateMsg);
+		VAR rm: RenderMsg; len: REAL; vm: ValidateMsg;
+	BEGIN
+		Rec.do.begin(Rec, NIL);
+		rm.stamp := msg.stamp; rm.fig := msg.fig; rm.pen := Rec; seg.handle(seg, rm);
+		Rec.do.end(Rec);
+		len := GfxPaths.Length(Rec.path, 0.5);
+		IF len # seg.len THEN
+			seg.len := len;
+			IF (seg.pred # term) & (seg.pred < wrap) THEN
+				vm.fig := msg.fig; vm.pos := end; vm.off := seg.eoff + len; seg.down.handle(seg.down, vm)
+			END;
+			IF (seg.succ # term) & (seg.succ < wrap) THEN
+				vm.fig := msg.fig; vm.pos := start; vm.off := seg.boff + len; seg.up.handle(seg.up, vm)
+			END
+		END
+	END ValidateSegmentLength;
+	
+	PROCEDURE ValidateSegment* (seg: Segment; VAR msg: Leonardo.ValidateMsg);
+	BEGIN
+		Leonardo.ToComponents(seg.bottom, msg);
+		IF seg.marked THEN
+			Leonardo.UpdateShape(msg.fig, seg);
+			CalcSegmentBox(seg, msg.lgm);
+			Leonardo.UpdateShape(msg.fig, seg);
+			ValidateSegmentLength(seg, msg);
+			seg.marked := FALSE; seg.cont.marked := TRUE
+		END
+	END ValidateSegment;
+	
+	PROCEDURE ConsumeSegment* (seg: Segment; VAR msg: Leonardo.ConsumeMsg);
+		VAR t, b, succ, pred: Leonardo.Shape; cm: ConnectMsg; x, y: REAL;
+	BEGIN
+		IF (msg.recv = NIL) & (msg.top.cont # seg) & (msg.llx <= seg.urx + seg.bw) & (seg.llx - seg.bw <= msg.urx) &
+			(msg.lly <= seg.ury + seg.bw) & (seg.lly - seg.bw <= msg.ury)
+		THEN
+			t := seg.top; b := seg.bottom;
+			IF (seg.succ = term) & (msg.llx <= t.urx) & (t.llx <= msg.urx) & (msg.lly <= t.ury) & (t.lly <= msg.ury) THEN
+				succ := msg.bottom; WHILE (succ.cont # NIL) & (succ.cont # seg.cont) DO succ := succ.cont END;
+				IF succ.cont = seg.cont THEN
+					IF (succ # seg.up) & (seg.pred # term) THEN
+						cm.fig := msg.fig; cm.id := get; cm.pos := start; pred := seg;
+						REPEAT
+							pred := pred.down; cm.done := FALSE; pred.handle(pred, cm)
+						UNTIL ~cm.done OR (cm.mode = term) OR (pred.down = NIL);
+						IF ~cm.done OR (cm.mode # term) THEN pred := NIL END
+					ELSE pred := NIL
+					END;
+					IF (succ = seg.up) OR (succ = pred) THEN
+						cm.fig := msg.fig; cm.id := get; cm.pos := start; cm.done := FALSE; succ.handle(succ, cm);
+						IF cm.done THEN
+							GfxMatrix.Apply(msg.lgm, cm.x, cm.y, x, y);
+							IF (msg.llx <= x) & (x <= msg.urx) & (msg.lly <= y) & (y <= msg.ury) THEN
+								ConnectSucc(msg.fig, seg, succ);
+								msg.recv := seg
+							END
+						END
+					END
+				END;
+				IF msg.recv = NIL THEN
+					Leonardo.ToComponents(seg.bottom, msg)
+				END
+			ELSIF (seg.pred = term) & (msg.llx <= b.urx) & (b.llx <= msg.urx) & (msg.lly <= b.ury) & (b.lly <= msg.ury) THEN
+				pred := msg.bottom; WHILE (pred.cont # NIL) & (pred.cont # seg.cont) DO pred := pred.cont END;
+				IF pred.cont = seg.cont THEN
+					IF (pred # seg.down) & (seg.succ # term) THEN
+						cm.fig := msg.fig; cm.id := get; cm.pos := end; succ := seg;
+						REPEAT
+							succ := succ.up; cm.done := FALSE; succ.handle(succ, cm)
+						UNTIL ~cm.done OR (cm.mode = term) OR (succ.up = NIL);
+						IF ~cm.done OR (cm.mode # term) THEN succ := NIL END
+					ELSE succ := NIL
+					END;
+					IF (pred = seg.down) OR (pred = succ) THEN
+						cm.fig := msg.fig; cm.id := get; cm.pos := end; cm.done := FALSE; pred.handle(pred, cm);
+						IF cm.done THEN
+							GfxMatrix.Apply(msg.lgm, cm.x, cm.y, x, y);
+							IF (msg.llx <= x) & (x <= msg.urx) & (msg.lly <= y) & (y <= msg.ury) THEN
+								ConnectPred(msg.fig, seg, pred);
+								msg.recv := seg
+							END
+						END
+					END
+				END;
+				IF msg.recv = NIL THEN
+					Leonardo.ToComponents(seg.bottom, msg)
+				END
+			ELSE
+				Leonardo.ToComponents(seg.bottom, msg)
+			END
+		END
+	END ConsumeSegment;
+	
+	PROCEDURE ConsumePoints* (seg: Segment; VAR msg: Leonardo.ConsumeMsg);
+		VAR b, t: Point;
+	BEGIN
+		IF (msg.recv = NIL) & (msg.top.cont = seg) & (msg.top.slink = NIL) & ~seg.closed THEN
+			b := seg.bottom(Point); t := seg.top(Point);
+			IF (msg.top = t) & (msg.llx <= b.x) & (b.x <= msg.urx) & (msg.lly <= b.y) & (b.y <= msg.ury) THEN
+				Leonardo.AddDeleteAction(msg.fig, t.down, t, t, NIL, seg);
+				Leonardo.SetBool(msg.fig, seg, "Closed", TRUE);
+				msg.recv := seg
+			ELSIF (msg.top = b) & (msg.llx <= t.x) & (t.x <= msg.urx) & (msg.lly <= t.y) & (t.y <= msg.ury) THEN
+				Leonardo.SetReal(msg.fig, b, "X", t.x);
+				Leonardo.SetReal(msg.fig, b, "Y", t.y);
+				Leonardo.AddDeleteAction(msg.fig, t.down, t, t, NIL, seg);
+				Leonardo.SetBool(msg.fig, seg, "Closed", TRUE);
+				msg.recv := seg
+			END
+		ELSE
+			ConsumeSegment(seg, msg)
+		END
+	END ConsumePoints;
+	
+	PROCEDURE RenderSegment* (seg: Segment; VAR msg: Leonardo.RenderMsg);
+		VAR
+			state: Gfx.State; cm: ConnectMsg; x, y, dx, dy, d: REAL;
+		
+		PROCEDURE coinc (x, y, dx, dy: REAL);
+			VAR x0, y0, x1, y1, x2, y2, x3, y3: REAL;
+		BEGIN
+			x0 := x + 4*dx; y0 := y + 4*dy; x1 := x + 12*dx; y1 := y + 12*dy;
+			x2 := x1 - 4*dy; y2 := y1 + 4*dx; x3 := x1 + 4*dy; y3 := y1 - 4*dx;
+			Gfx.Begin(msg.ctxt, {Gfx.Fill});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x0, y0); Gfx.LineTo(msg.ctxt, x3, y3); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt);
+			Gfx.Begin(msg.ctxt, {Gfx.Stroke});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x0, y0); Gfx.LineTo(msg.ctxt, x3, y3); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt)
+		END coinc;
+		
+		PROCEDURE coll (x, y, dx, dy: REAL);
+			VAR x0, y0, x1, y1, x2, y2, x3, y3: REAL;
+		BEGIN
+			x0 := x + 4*dx; y0 := y + 4*dy; x1 := x + 12*dx; y1 := y + 12*dy;
+			x2 := x0 - 4*dy; y2 := y0 + 4*dx; x3 := x0 + 4*dy; y3 := y0 - 4*dx;
+			Gfx.Begin(msg.ctxt, {Gfx.Fill});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x1, y1); Gfx.LineTo(msg.ctxt, x3, y3); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt);
+			Gfx.Begin(msg.ctxt, {Gfx.Stroke});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x1, y1); Gfx.LineTo(msg.ctxt, x3, y3); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt)
+		END coll;
+		
+		PROCEDURE symm (x, y, dx, dy: REAL);
+			VAR x0, y0, x1, y1, x2, y2, x3, y3: REAL;
+		BEGIN
+			x0 := x + 4*dx; y0 := y + 4*dy; x1 := x + 8*dx; y1 := y + 8*dy;
+			x2 := x1 - 3*dy; y2 := y1 + 3*dx; x3 := x1 + 3*dy; y3 := y1 - 3*dx;
+			x1 := x + 12*dx; y1 := y + 12*dy;
+			Gfx.Begin(msg.ctxt, {Gfx.Fill});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x1, y1);
+			Gfx.LineTo(msg.ctxt, x3, y3); Gfx.LineTo(msg.ctxt, x0, y0); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt);
+			Gfx.Begin(msg.ctxt, {Gfx.Stroke});
+			Gfx.MoveTo(msg.ctxt, x2, y2); Gfx.LineTo(msg.ctxt, x1, y1);
+			Gfx.LineTo(msg.ctxt, x3, y3); Gfx.LineTo(msg.ctxt, x0, y0); Gfx.Close(msg.ctxt);
+			Gfx.End(msg.ctxt);
+		END symm;
+		
+	BEGIN
+		IF seg.sel & (msg.id IN {Leonardo.active, Leonardo.marksonly}) THEN
+			IF (seg.pred # term) OR (seg.succ # term) THEN
+				Gfx.Save(msg.ctxt, {Gfx.strokeColPat, Gfx.fillColPat, Gfx.ctm}, state);
+				Gfx.SetStrokeColor(msg.ctxt, Gfx.DGrey);
+				Gfx.SetFillColor(msg.ctxt, Gfx.LGrey);
+				IF seg.pred # term THEN
+					cm.id := get; cm.pos := start; cm.done := FALSE; seg.handle(seg, cm);
+					IF cm.done THEN
+						GfxMatrix.Apply(msg.lgm, cm.x, cm.y, x, y);
+						GfxMatrix.Apply(msg.gsm, x, y, x, y);
+						GfxMatrix.ApplyToVector(msg.lgm, cm.dx, cm.dy, dx, dy);
+						GfxMatrix.ApplyToVector(msg.gsm, dx, dy, dx, dy);
+						Gfx.ResetCTM(msg.ctxt);
+						d := 1/Math.sqrt(dx * dx + dy * dy + 0.1);
+						dx := d * dx; dy := d * dy;
+						IF cm.mode MOD wrap = coincident THEN coinc(x, y, dx, dy)
+						ELSIF cm.mode MOD wrap = collinear THEN coll(x, y, dx, dy)
+						ELSIF cm.mode MOD wrap = symmetric THEN symm(x, y, dx, dy)
+						END
+					END
+				END;
+				IF seg.succ # term THEN
+					cm.id := get; cm.pos := end; cm.done := FALSE; seg.handle(seg, cm);
+					IF cm.done THEN
+						GfxMatrix.Apply(msg.lgm, cm.x, cm.y, x, y);
+						GfxMatrix.Apply(msg.gsm, x, y, x, y);
+						GfxMatrix.ApplyToVector(msg.lgm, -cm.dx, -cm.dy, dx, dy);
+						GfxMatrix.ApplyToVector(msg.gsm, dx, dy, dx, dy);
+						Gfx.ResetCTM(msg.ctxt);
+						d := 1/Math.sqrt(dx * dx + dy * dy + 0.1);
+						dx := d * dx; dy := d * dy;
+						IF cm.mode MOD wrap = coincident THEN coinc(x, y, dx, dy)
+						ELSIF cm.mode MOD wrap = collinear THEN coll(x, y, dx, dy)
+						ELSIF cm.mode MOD wrap = symmetric THEN symm(x, y, dx, dy)
+						END
+					END
+				END;
+				Gfx.Restore(msg.ctxt, state)
+			END;
+			Leonardo.ToComponents(seg.bottom, msg)
+		END
+	END RenderSegment;
+	
+	PROCEDURE TransformSegment* (seg: Segment; VAR msg: Leonardo.TransformMsg);
+		VAR first, last: Point; pred, succ: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		Leonardo.TransformContainer(seg, msg);
+		IF (msg.id = Leonardo.apply) & ((seg.pred # term) OR (seg.succ # term)) THEN
+			GetFirstLast(seg, first, last);
+			LOOP
+				IF first.marked THEN msg.notify := TRUE END;
+				IF first = last THEN EXIT END;
+				first := first.up(Point)
+			END;
+			seg.bottom.down := NIL; seg.top.up := NIL
+		ELSIF (msg.id = Leonardo.notify) & (msg.stamp # seg.stamp) THEN
+			pred := Pred(seg);
+			IF (pred # NIL) & (seg.bottom.marked OR (seg.pred MOD wrap # coincident) & seg.bottom.up.marked) THEN
+				cm.stamp := msg.stamp; cm.fig := msg.fig; cm.id := get; cm.pos := start; cm.done := FALSE; seg.handle(seg, cm);
+				IF cm.done THEN
+					cm.id := notify; cm.pos := end; cm.done := FALSE; pred.handle(pred, cm);
+					IF cm.done THEN
+						IF cm.mode # seg.pred THEN ChangePred(msg.fig, seg, cm.mode)
+						ELSE msg.notify := TRUE
+						END
+					END
+				END
+			END;
+			succ := Succ(seg);
+			IF (succ # NIL) & (seg.top.marked OR (seg.succ MOD wrap # coincident) & seg.top.down.marked) THEN
+				cm.stamp := msg.stamp; cm.fig := msg.fig; cm.id := get; cm.pos := end; cm.done := FALSE; seg.handle(seg, cm);
+				IF cm.done THEN
+					cm.id := notify; cm.pos := start; cm.done := FALSE; succ.handle(succ, cm);
+					IF cm.done THEN
+						IF cm.mode # seg.succ THEN ChangeSucc(msg.fig, seg, cm.mode)
+						ELSE msg.notify := TRUE
+						END
+					END
+				END
+			END
+		END
+	END TransformSegment;
+	
+	PROCEDURE ConnectSegment* (seg: Segment; VAR msg: ConnectMsg);
+		VAR first, last, p: Point; dx, dy, t, x, y: REAL;
+	BEGIN
+		IF ~seg.closed & (seg.bottom # NIL) & (seg.bottom # seg.top) THEN
+			first := seg.bottom(Point); last := seg.top(Point);
+			IF msg.id = get THEN
+				IF msg.pos = start THEN
+					msg.mode := seg.pred; msg.x := first.x; msg.y := first.y;
+					msg.dx := first.up(Point).x - first.x; msg.dy := first.up(Point).y - first.y
+				ELSIF msg.pos = end THEN
+					msg.mode := seg.succ; msg.x := last.x; msg.y := last.y;
+					msg.dx := last.x - last.down(Point).x; msg.dy := last.y - last.down(Point).y
+				END;
+				msg.done := TRUE
+			ELSIF msg.id = set THEN
+				IF msg.pos = start THEN
+					IF msg.mode # term THEN
+						Leonardo.BeginCommand(msg.fig);
+						Leonardo.SetReal(msg.fig, first, "X", msg.x);
+						Leonardo.SetReal(msg.fig, first, "Y", msg.y);
+						p := first.up(Point);
+						IF msg.mode MOD wrap = collinear THEN
+							dx := p.x - msg.x; dy := p.y - msg.y;
+							t := Math.sqrt((dx * dx + dy * dy)/(msg.dx * msg.dx + msg.dy * msg.dy));
+							Leonardo.SetReal(msg.fig, p, "X", msg.x + t * msg.dx);
+							Leonardo.SetReal(msg.fig, p, "Y", msg.y + t * msg.dy)
+						ELSIF msg.mode MOD wrap = symmetric THEN
+							Leonardo.SetReal(msg.fig, p, "X", msg.x + msg.dx);
+							Leonardo.SetReal(msg.fig, p, "Y", msg.y + msg.dy)
+						END;
+						Leonardo.EndCommand(msg.fig);
+						first.slink := p; p.slink := NIL;
+						Leonardo.Transform(msg.fig, first, GfxMatrix.Identity)
+					END;
+					IF msg.mode # seg.pred THEN
+						ChangePred(msg.fig, seg, msg.mode)
+					END;
+					msg.done := TRUE
+				ELSIF msg.pos = end THEN
+					IF msg.mode # term THEN
+						Leonardo.BeginCommand(msg.fig);
+						Leonardo.SetReal(msg.fig, last, "X", msg.x);
+						Leonardo.SetReal(msg.fig, last, "Y", msg.y);
+						p := last.down(Point);
+						IF msg.mode MOD wrap = collinear THEN
+							dx := msg.x - p.x; dy := msg.y - p.y;
+							t := Math.sqrt((dx * dx + dy * dy)/(msg.dx * msg.dx + msg.dy * msg.dy));
+							Leonardo.SetReal(msg.fig, p, "X", msg.x - t * msg.dx);
+							Leonardo.SetReal(msg.fig, p, "Y", msg.y - t * msg.dy)
+						ELSIF msg.mode MOD wrap = symmetric THEN
+							Leonardo.SetReal(msg.fig, p, "X", msg.x - msg.dx);
+							Leonardo.SetReal(msg.fig, p, "Y", msg.y - msg.dy)
+						END;
+						Leonardo.EndCommand(msg.fig);
+						last.slink := p; p.slink := NIL;
+						Leonardo.Transform(msg.fig, last, GfxMatrix.Identity)
+					END;
+					IF msg.mode # seg.succ THEN
+						ChangeSucc(msg.fig, seg, msg.mode)
+					END;
+					msg.done := TRUE
+				END
+			ELSIF (msg.id = notify) & (msg.stamp # seg.stamp) THEN
+				IF (msg.pos = start) & (seg.pred # term) THEN
+					IF ABS(msg.x - first.x) + ABS(msg.y - first.y) > 1.0E-3 THEN
+						IF first.marked THEN
+							msg.mode := term; ChangePred(msg.fig, seg, term)
+						ELSE
+							Leonardo.SetReal(msg.fig, first, "X", msg.x);
+							Leonardo.SetReal(msg.fig, first, "Y", msg.y);
+							first.marked := TRUE; seg.stamp := msg.stamp
+						END;
+						msg.done := TRUE
+					END;
+					p := first.up(Point); x := p.x; y := p.y;
+					IF msg.mode MOD wrap = collinear THEN
+						dx := p.x - msg.x; dy := p.y - msg.y;
+						t := Math.sqrt((dx * dx + dy * dy)/(msg.dx * msg.dx + msg.dy * msg.dy));
+						x := msg.x + t * msg.dx; y := msg.y + t * msg.dy
+					ELSIF msg.mode MOD wrap = symmetric THEN
+						x := msg.x + msg.dx; y := msg.y + msg.dy
+					END;
+					IF ABS(x - p.x) + ABS(y - p.y) > 1.0E-3 THEN
+						IF ~p.marked THEN
+							Leonardo.SetReal(msg.fig, p, "X", x);
+							Leonardo.SetReal(msg.fig, p, "Y", y);
+							p.marked := TRUE; seg.stamp := msg.stamp
+						ELSE
+							IF first.marked THEN msg.mode := term
+							ELSE msg.mode := coincident + wrap * (msg.mode DIV wrap)
+							END;
+							ChangePred(msg.fig, seg, msg.mode)
+						END;
+						msg.done := TRUE
+					END
+				ELSIF (msg.pos = end) & (seg.succ # term) THEN
+					IF ABS(msg.x - last.x) + ABS(msg.y - last.y) > 1.0E-3 THEN
+						IF last.marked THEN
+							msg.mode := term; ChangeSucc(msg.fig, seg, term)
+						ELSE
+							Leonardo.SetReal(msg.fig, last, "X", msg.x);
+							Leonardo.SetReal(msg.fig, last, "Y", msg.y);
+							last.marked := TRUE; seg.stamp := msg.stamp
+						END;
+						msg.done := TRUE
+					END;
+					p := last.down(Point); x := p.x; y := p.y;
+					IF msg.mode MOD wrap = collinear THEN
+						dx := msg.x - p.x; dy := msg.y - p.y;
+						t := Math.sqrt((dx * dx + dy * dy)/(msg.dx * msg.dx + msg.dy * msg.dy));
+						x := msg.x - t * msg.dx; y := msg.y - t * msg.dy
+					ELSIF msg.mode MOD wrap = symmetric THEN
+						x := msg.x - msg.dx; y := msg.y - msg.dy
+					END;
+					IF ABS(x - p.x) + ABS(y - p.y) > 1.0E-3 THEN
+						IF ~p.marked THEN
+							Leonardo.SetReal(msg.fig, p, "X", x);
+							Leonardo.SetReal(msg.fig, p, "Y", y);
+							p.marked := TRUE; seg.stamp := msg.stamp
+						ELSE
+							IF last.marked THEN msg.mode := term
+							ELSE msg.mode := coincident + wrap * (msg.mode DIV wrap)
+							END;
+							ChangeSucc(msg.fig, seg, msg.mode)
+						END;
+						msg.done := TRUE
+					END
+				END
+			END
+		END
+	END ConnectSegment;
+	
+	PROCEDURE CopySegment* (VAR msg: Objects.CopyMsg; from, to: Segment);
+		VAR obj: Objects.Object;
+	BEGIN
+		Leonardo.CopyContainer(msg, from, to);
+		obj := Gadgets.CopyPtr(msg, from.pen);
+		to.pen := obj(LeoPens.Pen);
+		to.closed := from.closed; to.pred := term; to.succ := term; to.boff := 0; to.eoff := 0
+	END CopySegment;
+	
+	PROCEDURE HandleSegment* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR seg, copy: Segment; p: Leonardo.Shape; ver: LONGINT;
+	BEGIN
+		seg := obj(Segment);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.SelectMsg THEN
+				WITH msg: Leonardo.SelectMsg DO
+					IF (msg.id = Leonardo.reset) & seg.sel THEN
+						p := seg.bottom; WHILE p # NIL DO p.sel := FALSE; p := p.up END;
+						Leonardo.UpdateShape(msg.fig, seg);
+						seg.sel := FALSE
+					ELSE
+						Leonardo.SelectContainer(seg, msg)
+					END
+				END
+			ELSIF msg IS Leonardo.ControlMsg THEN
+				ControlSegment(seg, msg(Leonardo.ControlMsg))
+			ELSIF msg IS Leonardo.OrderMsg THEN
+				OrderSegment(seg, msg(Leonardo.OrderMsg))
+			ELSIF msg IS Leonardo.ValidateMsg THEN
+				ValidateSegment(seg, msg(Leonardo.ValidateMsg))
+			ELSIF msg IS Leonardo.ConsumeMsg THEN
+				ConsumeSegment(seg, msg(Leonardo.ConsumeMsg))
+			ELSIF msg IS Leonardo.TransformMsg THEN
+				TransformSegment(seg, msg(Leonardo.TransformMsg))
+			ELSIF msg IS ContourMsg THEN
+				msg(ContourMsg).done := TRUE
+			ELSIF msg IS ValidateMsg THEN
+				WITH msg: ValidateMsg DO
+					IF (msg.pos = start) & (msg.off # seg.boff) THEN
+						Leonardo.UpdateShape(msg.fig, seg);
+						seg.boff := msg.off;
+						IF (seg.succ # term) & (seg.succ < wrap) THEN
+							msg.off := seg.boff + seg.len; seg.up.handle(seg.up, msg)
+						END
+					ELSIF (msg.pos = end) & (msg.off # seg.eoff) THEN
+						Leonardo.UpdateShape(msg.fig, seg);
+						seg.eoff := msg.off;
+						IF (seg.pred # term) & (seg.pred < wrap) THEN
+							msg.off := seg.eoff + seg.len; seg.down.handle(seg.down, msg)
+						END
+					END
+				END
+			ELSE
+				Leonardo.HandleContainer(seg, msg)
+			END
+		ELSIF msg IS LeoPens.UpdateMsg THEN
+			WITH msg: LeoPens.UpdateMsg DO
+				IF msg.pen = seg.pen THEN seg.marked := TRUE; seg.sel := TRUE
+				ELSIF seg.pen # NIL THEN seg.pen.handle(seg.pen, msg)
+				END
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Closed"); Leonardo.HandleContainer(seg, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Closed" THEN msg.class := Objects.Bool; msg.b := seg.closed; msg.res := 0
+					ELSE Leonardo.HandleContainer(seg, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Closed" THEN
+						IF msg.class = Objects.Bool THEN
+							IF ~msg.b THEN
+								seg.closed := FALSE; msg.res := 0
+							ELSIF (seg.bottom # seg.top) & (seg.pred = term) & (seg.succ = term) THEN
+								seg.closed := TRUE; msg.res := 0
+							END
+						END
+					ELSE
+						Leonardo.HandleContainer(seg, msg)
+					END
+				END
+			END
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Pen"); Leonardo.HandleContainer(seg, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Pen" THEN msg.obj := seg.pen; msg.res := 0
+					ELSE Leonardo.HandleContainer(seg, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Pen" THEN
+						IF (msg.obj # NIL) & (msg.obj IS LeoPens.Pen) THEN seg.pen := msg.obj(LeoPens.Pen); msg.res := 0 END
+					ELSE
+						Leonardo.HandleContainer(seg, msg)
+					END
+				END
+			END
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # seg.stamp THEN
+					NEW(copy); seg.dlink := copy; seg.stamp := msg.stamp;
+					CopySegment(msg, seg, copy)
+				END;
+				msg.obj := seg.dlink
+			END
+		ELSIF msg IS Objects.BindMsg THEN
+			seg.pen.handle(seg.pen, msg);
+			Leonardo.HandleContainer(seg, msg)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				Leonardo.HandleContainer(seg, msg);
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 2);
+					Files.WriteBool(msg.R, seg.closed);
+					Gadgets.WriteRef(msg.R, seg.lib, seg.pen);
+					Files.Write(msg.R, seg.pred); Files.Write(msg.R, seg.succ);
+					IF seg.pred # term THEN Files.WriteReal(msg.R, seg.boff) END;
+					IF seg.succ # term THEN Files.WriteReal(msg.R, seg.eoff) END
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Files.ReadBool(msg.R, seg.closed);
+					Gadgets.ReadRef(msg.R, seg.lib, obj);
+					IF (obj # NIL) & (obj IS LeoPens.Pen) THEN seg.pen := obj(LeoPens.Pen) END;
+					IF ver > 1 THEN
+						Files.Read(msg.R, seg.pred); Files.Read(msg.R, seg.succ);
+						IF seg.pred # term THEN Files.ReadReal(msg.R, seg.boff) END;
+						IF seg.succ # term THEN Files.ReadReal(msg.R, seg.eoff) END
+					END;
+					CalcSegmentBox(seg, GfxMatrix.Identity)
+				END
+			END
+		ELSE
+			Leonardo.HandleContainer(seg, msg)
+		END
+	END HandleSegment;
+	
+	PROCEDURE InitSegment* (seg: Segment; handle: Objects.Handler; bottom, top: Point; closed: BOOLEAN; pen: LeoPens.Pen);
+	BEGIN
+		Leonardo.InitContainer(seg, handle, bottom, top);
+		seg.pen := pen; seg.closed := closed;
+		seg.pred := term; seg.succ := term; seg.boff := 0; seg.eoff := 0;
+		CalcSegmentBox(seg, GfxMatrix.Identity)
+	END InitSegment;
+	
+	PROCEDURE SplitSegment* (fig: Leonardo.Figure; seg, new: Segment; at: Point; mode: SHORTINT);
+		VAR p: Point;
+	BEGIN
+		InitSegment(new, seg.handle, NIL, NIL, FALSE, seg.pen);
+		NEW(p); InitPoint(p, at.x, at.y);
+		Leonardo.AddConsumeAction(fig, seg, new, new, seg.up, seg.cont(Leonardo.Container));
+		Leonardo.AddDeleteAction(fig, at, at.up, seg.top, NIL, seg);
+		Leonardo.AddConsumeAction(fig, NIL, at.up, seg.top, NIL, new);
+		Leonardo.AddConsumeAction(fig, NIL, p, p, at.up, new);
+		ChangeSucc(fig, new, seg.succ);
+		ChangePred(fig, new, mode);
+		ChangeSucc(fig, seg, mode)
+	END SplitSegment;
+	
+	PROCEDURE SetPred* (fig: Leonardo.Figure; seg: Segment; mode: SHORTINT);
+		VAR pred: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		pred := Pred(seg);
+		IF pred # NIL THEN
+			cm.fig := fig; cm.id := get; cm.pos := start; cm.done := FALSE; seg.handle(seg, cm);
+			IF cm.done & (cm.mode # mode) THEN
+				cm.id := set; cm.pos := end; cm.mode := mode; cm.done := FALSE; pred.handle(pred, cm);
+				IF cm.done THEN
+					cm.pos := start; cm.done := FALSE; seg.handle(seg, cm)
+				END
+			END
+		END
+	END SetPred;
+	
+	PROCEDURE SetSucc* (fig: Leonardo.Figure; seg: Segment; mode: SHORTINT);
+		VAR succ: Leonardo.Shape; cm: ConnectMsg;
+	BEGIN
+		succ := Succ(seg);
+		IF succ # NIL THEN
+			cm.fig := fig; cm.id := get; cm.pos := end; cm.done := FALSE; seg.handle(seg, cm);
+			IF cm.done & (cm.mode # mode) THEN
+				cm.id := set; cm.pos := start; cm.mode := mode; cm.done := FALSE; succ.handle(succ, cm);
+				IF cm.done THEN
+					cm.pos := end; cm.done := FALSE; seg.handle(seg, cm)
+				END
+			END
+		END
+	END SetSucc;
+	
+	
+	(**--- Polylines ---**)
+	
+	PROCEDURE OnLine* (x0, y0, x1, y1, x, y, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
+		VAR dx, dy: REAL;
+	BEGIN
 		GfxPaths.ProjectToLine(x0, y0, x1, y1, x, y, px, py);
 		IF (llx <= px) & (px <= urx) & (lly <= py) & (py <= ury) THEN
+			IF (llx <= x0) & (x0 <= urx) & (lly <= y0) & (y0 <= ury) & (llx <= x1) & (x1 <= urx) & (lly <= y1) & (y1 <= ury) THEN
+				RETURN TRUE	(* even end points are within rectangle *)
+			END;
 			dx := x1 - x0; dy := y1 - y0;
 			IF ((x - x0) * dx + (y - y0) * dy >= 0) & ((x1 - x) * dx + (y1 - y) * dy >= 0) THEN
 				RETURN TRUE
@@ -227,23 +1485,248 @@ MODULE LeoPaths;	(** eos   **)
 		RETURN FALSE
 	END OnLine;
 	
-	PROCEDURE OnArc* (x0, y0, x1, y1, x2, y2, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
-		VAR ax, ay, bx, by, mx, my: REAL;
+	PROCEDURE DrawPolyline (poly: Segment; pen: LeoPens.Pen);
+		VAR first, last, p: Point; dx, dy: REAL;
 	BEGIN
-		ax := x1 - x2; ay := y1 - y2;
-		bx := x1 - x0; by := y1 - y0;
-		mx := x0 - ax; my := y0 - ay;
-		GfxPaths.ProjectToEllipse(ax, ay, bx, by, 0.5*(llx + urx) - mx, 0.5*(lly + ury) - my, px, py);
-		IF ((ax * py - ay * px) >= 0) = ((px * by - py * bx) >= 0) THEN	(* projection is in correct quadrant *)
-			px := mx + px; py := my + py;
-			IF (llx <= px) & (px <= urx) & (lly <= py) & (py <= ury) THEN
-				RETURN TRUE
-			END
+		IF (poly.bottom # NIL) & (poly.bottom # poly.top) THEN
+			GetFirstLast(poly, first, last);
+			IF poly.closed THEN pen.do.enter(pen, first.x, first.y, last.x - last.down(Point).x, last.y - last.down(Point).y, 0)
+			ELSIF poly.pred = term THEN pen.do.enter(pen, first.x, first.y, 0, 0, 0)
+			ELSE
+				GetPred(poly, dx, dy);
+				pen.do.enter(pen, first.x, first.y, dx, dy, poly.boff)
+			END;
+			p := first.up(Point);
+			WHILE p # last DO
+				pen.do.line(pen, p.x, p.y);
+				p := p.up(Point)
+			END;
+			pen.do.line(pen, p.x, p.y);
+			IF poly.closed THEN pen.do.exit(pen, first.up(Point).x - first.x, first.up(Point).y - first.y, 0)
+			ELSIF poly.succ = term THEN pen.do.exit(pen, 0, 0, 0)
+			ELSE
+				GetSucc(poly, dx, dy);
+				pen.do.exit(pen, dx, dy, poly.eoff)
+			END;
+			poly.bottom.down := NIL; poly.top.up := NIL
+		END
+	END DrawPolyline;
+	
+	PROCEDURE DragPolyline (poly: Segment; ctxt: Gfx.Context);
+		VAR first, last, p0, p1: Point; inpath: BOOLEAN;
+	BEGIN
+		IF (poly.bottom # NIL) & (poly.bottom # poly.top) THEN
+			Gfx.Begin(ctxt, {Gfx.Stroke});
+			GetFirstLast(poly, first, last);
+			p0 := first; inpath := FALSE;
+			REPEAT
+				p1 := p0.up(Point);
+				IF p0.marked OR p1.marked THEN
+					IF ~inpath THEN
+						Gfx.MoveTo(ctxt, p0.x, p0.y); inpath := TRUE
+					END;
+					Gfx.LineTo(ctxt, p1.x, p1.y)
+				ELSE
+					inpath := FALSE
+				END;
+				p0 := p1
+			UNTIL p0 = last;
+			poly.bottom.down := NIL; poly.top.up := NIL;
+			Gfx.End(ctxt)
+		END
+	END DragPolyline;
+	
+	PROCEDURE RenderPolyline (poly: Segment; VAR msg: Leonardo.RenderMsg);
+		VAR state: Gfx.State;
+	BEGIN
+		IF (poly.llx - poly.bw < msg.urx) & (msg.llx < poly.urx + poly.bw) &
+			(poly.lly - poly.bw < msg.ury) & (msg.lly < poly.ury + poly.bw)
+		THEN
+			IF msg.id = Leonardo.marked THEN
+				DragPolyline(poly, msg.ctxt)
+			END;
+			IF msg.id IN {Leonardo.active, Leonardo.passive} THEN
+				Gfx.Save(msg.ctxt, Gfx.attr, state);
+				poly.pen.do.begin(poly.pen, msg.ctxt);
+				DrawPolyline(poly, poly.pen);
+				poly.pen.do.end(poly.pen);
+				Gfx.Restore(msg.ctxt, state)
+			END;
+			RenderSegment(poly, msg)
+		END
+	END RenderPolyline;
+	
+	PROCEDURE ProjectPolyline (poly: Segment; x, y, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
+		VAR first, last, p0, p1: Point;
+	BEGIN
+		IF (poly.bottom # NIL) & (poly.bottom # poly.top) THEN
+			GetFirstLast(poly, first, last);
+			p0 := first;
+			REPEAT
+				p1 := p0.up(Point);
+				IF OnLine(p0.x, p0.y, p1.x, p1.y, x, y, llx, lly, urx, ury, px, py) THEN
+					poly.bottom.down := NIL; poly.top.up := NIL;
+					RETURN TRUE
+				END;
+				p0 := p1
+			UNTIL p0 = last;
+			poly.bottom.down := NIL; poly.top.up := NIL
 		END;
 		RETURN FALSE
-	END OnArc;
+	END ProjectPolyline;
 	
-	PROCEDURE SubdivideBezier* (at, x0, y0, x1, y1, x2, y2, x3, y3: REAL; VAR x11, y11, x12, y12, xm, ym, x21, y21, x22, y22: REAL);
+	PROCEDURE LocatePolyline (poly: Segment; VAR msg: Leonardo.LocateMsg);
+		VAR res: Leonardo.Shape; glm: GfxMatrix.Matrix; llx, lly, urx, ury, px, py: REAL;
+	BEGIN
+		IF (msg.llx <= poly.urx) & (poly.llx <= msg.urx) & (msg.lly <= poly.ury) & (poly.lly <= msg.ury) THEN
+			IF msg.id = Leonardo.inside THEN
+				IF (msg.llx <= poly.llx) & (poly.urx <= msg.urx) & (msg.lly <= poly.lly) & (poly.ury <= msg.ury) THEN
+					poly.slink := msg.res; msg.res := poly
+				ELSE
+					Leonardo.ToComponents(poly.bottom, msg)
+				END
+			ELSE
+				res := msg.res;
+				Leonardo.ToComponents(poly.bottom, msg);
+				IF msg.id = Leonardo.overlap THEN
+					IF msg.res = res THEN
+						GfxMatrix.Invert(msg.lgm, glm);
+						GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+						GfxMatrix.Apply(glm, 0.5*(msg.llx + msg.urx), 0.5*(msg.lly + msg.ury), px, py);
+						IF ProjectPolyline(poly, px, py, llx, lly, urx, ury, px, py) THEN
+							poly.slink := msg.res; msg.res := poly
+						END
+					ELSIF ~poly.sel THEN
+						msg.res := poly; poly.slink := res	(* must select segment before points can be located *)
+					END
+				ELSIF (msg.id = Leonardo.project) & (msg.res = res) THEN
+					GfxMatrix.Invert(msg.lgm, glm);
+					GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+					GfxMatrix.Apply(glm, msg.x, msg.y, px, py);
+					IF ProjectPolyline(poly, px, py, llx, lly, urx, ury, px, py) THEN
+						msg.res := poly; msg.px := px; msg.py := py
+					END
+				END
+			END
+		END
+	END LocatePolyline;
+	
+	PROCEDURE SplitPolyline (poly: Segment; VAR msg: SplitMsg);
+		VAR
+			first, last, p, q: Point; succ, pred: Leonardo.Shape; cm: ConnectMsg; new: Segment; glm: GfxMatrix.Matrix;
+			llx, lly, urx, ury, x, y, px, py: REAL;
+	BEGIN
+		IF (poly.llx <= msg.urx) & (msg.llx <= poly.urx) & (poly.lly <= msg.ury) & (msg.lly <= poly.ury) THEN
+			GetFirstLast(poly, first, last);
+			IF (last.llx <= msg.urx) & (msg.llx <= last.urx) & (last.lly <= msg.ury) & (msg.lly <= last.ury) THEN
+				IF poly.closed THEN
+					NEW(p); InitPoint(p, first.x, first.y);
+					Leonardo.AddConsumeAction(msg.fig, poly.top, p, p, NIL, poly);
+					Leonardo.SetBool(msg.fig, poly, "Closed", FALSE)
+				ELSIF poly.succ # term THEN
+					succ := Succ(poly);
+					IF succ # NIL THEN
+						cm.fig := msg.fig; cm.id := set; cm.pos := start; cm.mode := term; cm.done := FALSE; succ.handle(succ, cm)
+					END;
+					ChangeSucc(msg.fig, poly, term)
+				END
+			ELSIF (first.llx <= msg.urx) & (msg.llx <= first.urx) & (first.lly <= msg.ury) & (msg.lly <= first.ury) THEN
+				IF poly.pred # term THEN
+					pred := Pred(poly);
+					IF pred # NIL THEN
+						cm.fig := msg.fig; cm.id := set; cm.pos := end; cm.mode := term; cm.done := FALSE; pred.handle(pred, cm)
+					END;
+					ChangePred(msg.fig, poly, term)
+				END
+			ELSE
+				p := last.down(Point);
+				WHILE p # first DO
+					IF (p.llx <= msg.urx) & (msg.llx <= p.urx) & (p.lly <= msg.ury) & (msg.lly <= p.ury) THEN
+						poly.bottom.down := NIL; poly.top.up := NIL;
+						IF poly.closed THEN
+							Leonardo.BeginCommand(msg.fig);
+							NEW(q); InitPoint(q, first.x, first.y);
+							Leonardo.AddConsumeAction(msg.fig, poly.top, q, q, NIL, poly);
+							Leonardo.SetBool(msg.fig, poly, "Closed", FALSE);
+							ChangePred(msg.fig, poly, coincident + wrap);
+							ChangeSucc(msg.fig, poly, coincident + wrap);
+							Leonardo.EndCommand(msg.fig)
+						END;
+						NEW(new); SplitSegment(msg.fig, poly, new, p, coincident);
+						RETURN
+					END;
+					p := p.down(Point);
+				END;
+				GfxMatrix.Invert(msg.lgm, glm);
+				GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+				x := 0.5*(llx + urx); y := 0.5*(lly + ury);
+				q := last; p := last.down(Point);
+				LOOP
+					IF OnLine(p.x, p.y, q.x, q.y, x, y, llx, lly, urx, ury, px, py) THEN
+						poly.bottom.down := NIL; poly.top.up := NIL;
+						NEW(q); InitPoint(q, px, py);
+						Leonardo.AddConsumeAction(msg.fig, p, q, q, p.up, poly);
+						RETURN
+					END;
+					IF p = first THEN EXIT END;
+					q := p; p := p.down(Point)
+				END
+			END;
+			poly.bottom.down := NIL; poly.top.up := NIL
+		END
+	END SplitPolyline;
+	
+	PROCEDURE HandlePolyline* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR poly: Segment;
+	BEGIN
+		poly := obj(Segment);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.RenderMsg THEN
+				RenderPolyline(poly, msg(Leonardo.RenderMsg))
+			ELSIF msg IS Leonardo.LocateMsg THEN
+				LocatePolyline(poly, msg(Leonardo.LocateMsg))
+			ELSIF msg IS RenderMsg THEN
+				DrawPolyline(poly, msg(RenderMsg).pen)
+			ELSIF msg IS ConnectMsg THEN
+				ConnectSegment(poly, msg(ConnectMsg))
+			ELSIF msg IS Leonardo.ConsumeMsg THEN
+				ConsumePoints(poly, msg(Leonardo.ConsumeMsg))
+			ELSIF msg IS SplitMsg THEN
+				SplitPolyline(poly, msg(SplitMsg))
+			ELSE
+				HandleSegment(poly, msg)
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPaths.NewPolyline"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Polyline"; msg.res := 0
+					ELSE HandleSegment(poly, msg)
+					END
+				ELSE HandleSegment(poly, msg)
+				END
+			END
+		ELSE
+			HandleSegment(poly, msg)
+		END
+	END HandlePolyline;
+	
+	PROCEDURE InitPolyline* (poly: Segment; bottom, top: Point; closed: BOOLEAN; pen: LeoPens.Pen);
+	BEGIN
+		InitSegment(poly, HandlePolyline, bottom, top, closed, pen)
+	END InitPolyline;
+	
+	PROCEDURE NewPolyline*;
+		VAR poly: Segment;
+	BEGIN
+		NEW(poly); InitSegment(poly, HandlePolyline, NIL, NIL, FALSE, LeoPens.Default);
+		Objects.NewObj := poly
+	END NewPolyline;
+	
+	
+	(**--- Beziers ---**)
+	
+	PROCEDURE SubdivideBezier (at, x0, y0, x1, y1, x2, y2, x3, y3: REAL; VAR x11, y11, x12, y12, xm, ym, x21, y21, x22, y22: REAL);
 		VAR as, xt, yt: REAL;
 	BEGIN
 		as := 1 - at;
@@ -255,889 +1738,1106 @@ MODULE LeoPaths;	(** eos   **)
 		xm := as * x12 + at * x21; ym := as * y12 + at * y21
 	END SubdivideBezier;
 	
-	PROCEDURE OnBezier* (x0, y0, x1, y1, x2, y2, x3, y3, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
-		VAR dx, dy, l, d, xa1, ya1, xa2, ya2, xm, ym, xb1, yb1, xb2, yb2: REAL;
+	PROCEDURE OnBezier (x0, y0, x1, y1, x2, y2, x3, y3, x, y, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
+		VAR xa1, ya1, xa2, ya2, xm, ym, xb1, yb1, xb2, yb2: REAL;
 	BEGIN
-		IF ((llx <= x0) OR (llx <= x1) OR (llx <= x2) OR (llx <= x3)) & ((x0 <= urx) OR (x1 <= urx) OR (x2 <= urx) OR (x3 <= urx)) &
-			((lly <= y0) OR (lly <= y1) OR (lly <= y2) OR (lly <= x3)) & ((y0 <= ury) OR (y1 <= ury) OR (y2 <= ury) OR (y3 <= ury))
-		THEN
-			dx := x3 - x0; dy := y3 - y0;
-			l := 0.01*(dx * dx + dy * dy);
-			GfxPaths.ProjectToLine(x0, y0, x3, y3, x1, y1, px, py);
-			dx := px - x1; dy := py - y1;
-			d := dx * dx + dy * dy;
-			IF d < l THEN
-				GfxPaths.ProjectToLine(x0, y0, x3, y3, x2, y2, px, py);
-				dx := px - x2; dy := py - y2;
-				d := d + dx * dx + dy * dy
+		IF ((llx <= x0) OR (llx <= x1) OR (llx <= x2) OR (llx <= x3)) &
+			((x0 <= urx) OR (x1 <= urx) OR (x2 <= urx) OR (x3 <= urx)) &
+			((lly <= y0) OR (lly <= y1) OR (lly <= y2) OR (lly <= y3)) &
+			((y0 <= ury) OR (y1 <= ury) OR (y2 <= ury) OR (y3 <= ury))
+		THEN	(* within hull of control points *)
+			IF (ABS(x3 - x0) <= 0.5*(urx - llx)) & (ABS(y3 - y0) <= 0.5*(ury - lly)) THEN	(* short enough *)
+				RETURN OnLine(x0, y0, x3, y3, x, y, llx, lly, urx, ury, px, py)
 			END;
-			IF d < l THEN
-				RETURN OnLine(x0, y0, x3, y3, llx, lly, urx, ury, px, py)
-			ELSE
-				SubdivideBezier(0.5, x0, y0, x1, y1, x2, y2, x3, y3, xa1, ya1, xa2, ya2, xm, ym, xb1, yb1, xb2, yb2);
-				IF OnBezier(xm, ym, xb1, yb1, xb2, yb2, x3, y3, llx, lly, urx, ury, px, py) THEN
-					RETURN TRUE
-				ELSE
-					RETURN OnBezier(x0, y0, xa1, ya1, xa2, ya2, xm, ym, llx, lly, urx, ury, px, py)
-				END
-			END
+			SubdivideBezier(0.5, x0, y0, x1, y1, x2, y2, x3, y3, xa1, ya1, xa2, ya2, xm, ym, xb1, yb1, xb2, yb2);
+			RETURN
+				OnBezier(x0, y0, xa1, ya1, xa2, ya2, xm, ym, x, y, llx, lly, urx, ury, px, py) OR
+				OnBezier(xm, ym, xb1, yb1, xb2, yb2, x3, y3, x, y, llx, lly, urx, ury, px, py)
 		ELSE
 			RETURN FALSE
 		END
 	END OnBezier;
 	
-	PROCEDURE DoSplitPath (fig: Figures.Figure; fa: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR a: Action; pred, succ: Curve; sm: Figures.SelectMsg;
+	PROCEDURE DrawBezier (bez: Segment; pen: LeoPens.Pen);
+		VAR p0, p1, p2, p3: Point; x0, y0, dx, dy, x1, y1: REAL;
 	BEGIN
-		a := fa(Action); pred := a.pred; succ := a.succ;
-		IF undo THEN
-			pred.succ := succ; succ.pred := pred;
-			succ.first.shape := pred.last.shape
-		ELSE
-			pred.succ := NIL; succ.pred := NIL;
-			succ.first.shape := a.p
-		END;
-		pred.stamp := stamp; succ.stamp := stamp;
-		sm.dlink := NIL; sm.fig := fig; sm.id := Figures.Set;
-		Figures.Forward(succ, succ.first.shape, sm)
-	END DoSplitPath;
-	
-	PROCEDURE SplitPath* (pred, succ: Curve; p: Point; fig: Figures.Figure);
-		VAR cm: Objects.CopyMsg; a: Action;
-	BEGIN
-		IF p = NIL THEN
-			p := succ.first.shape(Point);
-			ASSERT(p = pred.last.shape);
-			Objects.Stamp(cm); cm.id := Objects.shallow; cm.obj := p;
-			p.handle(p, cm);
-			p := cm.obj(Point)
-		END;
-		NEW(a); a.pred := pred; a.succ := succ; a.p := p;
-		Figures.AddAction(fig, a, DoSplitPath)
-	END SplitPath;
-	
-	PROCEDURE JoinPaths* (path, with: Path; fig: Figures.Figure);
-		VAR ref: Figures.Reference; shapes: Figures.Shape;
-	BEGIN
-		ref := with.first; shapes := ref.shape;
-		WHILE ref.next # NIL DO
-			ref.shape.slink := ref.next.shape; ref := ref.next
-		END;
-		Figures.Delete(fig, shapes);	(* should delete containing path as well *)
-		ref.shape.slink := NIL;
-		Figures.Integrate(fig, path, shapes)	(* re-integrate curves *)
-	END JoinPaths;
-	
-	PROCEDURE CurveToPath* (fig: Figures.Figure; curve: Curve; VAR path: Path);
-		VAR obj: Objects.Object; cont: Figures.Shape;
-	BEGIN
-		obj := Gadgets.CreateObject("LeoPaths.NewPath"); path := obj(Path);
-		cont := curve.cont;
-		ASSERT(~(cont IS Path));
-		curve.slink := NIL;
-		Figures.Delete(fig, curve);
-		Figures.Integrate(fig, cont, path);
-		Figures.Integrate(fig, path, curve)
-	END CurveToPath;
-	
-	PROCEDURE DoSplitCurve (fig: Figures.Figure; act: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR a: Action; pred, succ: Curve; ref: Figures.Reference;
-	BEGIN
-		a := act(Action); pred := a.pred; succ := a.succ;
-		IF undo THEN
-			ref := succ.first;
-			ref.next.prev := NIL;
-			WHILE ref # NIL DO ref.shape.cont := pred; ref := ref.next END;
-			pred.succ := succ.succ;
-			IF pred.succ # NIL THEN pred.succ.pred := pred END
-		ELSE
-			IF pred.succ # NIL THEN pred.succ.pred := succ END;
-			pred.succ := NIL;
-			ref := succ.first;
-			ref.next.prev := ref;
-			WHILE ref # NIL DO ref.shape.cont := succ; ref := ref.next END
-		END
-	END DoSplitCurve;
-	
-	PROCEDURE SplitCurve* (pred: Curve; on, p: Point; fig: Figures.Figure);
-		VAR path: Path; pf, pl, sf, sl, ref, sref: Figures.Reference; succ: Curve; ca: Figures.ControlAction; a: Action;
-	BEGIN
-		IF pred.cont # NIL THEN
-			IF pred.cont IS Path THEN
-				path := pred.cont(Path)
+		IF (bez.bottom # NIL) & (bez.bottom # bez.top) THEN
+			p0 := bez.bottom(Point);
+			IF bez.closed THEN
+				p1 := bez.top(Point); x0 := 0.5*(p0.x + p1.x); y0 := 0.5*(p0.y + p1.y);
+				pen.do.enter(pen, x0, y0, p0.x - x0, p0.y - y0, 0);
+				p1 := p0
 			ELSE
-				CurveToPath(fig, pred, path)
+				GetPred(bez, dx, dy); x0 := p0.x; y0 := p0.y;
+				pen.do.enter(pen, x0, y0, dx, dy, bez.boff);
+				p1 := p0.up(Point)
 			END;
-			pf := pred.first; pl := pf;
-			WHILE pl.shape # on DO pl := pl.next END;
-			NEW(sf); sf.shape := p; sf.next := pl.next;
-			sl := pred.last;
-			NEW(succ); succ.class := pred.class; succ.handle := pred.handle; succ.stroke := pred.stroke;
-			succ.succ := pred.succ; succ.pred := NIL;
-			succ.first := sf; succ.last := sl;
-			p.cont := succ;
-			NEW(ca); Figures.InitControlAction(ca, Figures.Remove, pl, pl.next, sl, NIL, pred);
-			Figures.AddAction(fig, ca, Figures.DoControlAction);
-			ref := path.first; WHILE ref.shape # pred DO ref := ref.next END;
-			NEW(sref); sref.shape := succ;
-			NEW(ca); Figures.InitControlAction(ca, Figures.Consume, ref, sref, sref, ref.next, path);
-			Figures.AddAction(fig, ca, Figures.DoControlAction);
-			NEW(a); a.pred := pred; a.succ := succ;
-			Figures.AddAction(fig, a, DoSplitCurve)
-		END
-	END SplitCurve;
-	
-	PROCEDURE DoJoinCurves (fig: Figures.Figure; fa: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR a: Action; pred, succ: Curve; sm: Figures.SelectMsg;
-	BEGIN
-		a := fa(Action); pred := a.pred; succ := a.succ;
-		IF undo THEN
-			pred.succ := NIL; succ.pred := NIL;
-			pred.last.shape := a.p
-		ELSE
-			pred.succ := succ; succ.pred := pred;
-			pred.last.shape := succ.first.shape
-		END;
-		pred.stamp := stamp; succ.stamp := stamp;
-		sm.dlink := NIL; sm.fig := fig; sm.id := Figures.Set;
-		Figures.Forward(pred.cont, pred, sm);
-		Figures.Forward(succ.cont, succ, sm)
-	END DoJoinCurves;
-	
-	PROCEDURE JoinCurves* (pred, succ: Curve; fig: Figures.Figure);
-		VAR a: Action; path: Path;
-	BEGIN
-		IF (pred.cont # succ.cont) OR ~(pred.cont IS Path) THEN
-			IF (pred.cont IS Path) & (succ.cont IS Path) THEN
-				JoinPaths(pred.cont(Path), succ.cont(Path), fig)
-			ELSIF pred.cont IS Path THEN
-				succ.slink := NIL;
-				Figures.Delete(fig, succ);
-				Figures.Integrate(fig, pred.cont, succ)
-			ELSIF succ.cont IS Path THEN
-				pred.slink := NIL;
-				Figures.Delete(fig, pred);
-				Figures.Integrate(fig, succ.cont, pred)
-			ELSE
-				CurveToPath(fig, pred, path);
-				succ.slink := NIL;
-				Figures.Delete(fig, succ);
-				Figures.Integrate(fig, path, succ)
-			END
-		END;
-		NEW(a); a.pred := pred; a.succ := succ; a.p := pred.last.shape;
-		Figures.AddAction(fig, a, DoJoinCurves)
-	END JoinCurves;
-	
-	
-	(**--- Points ---**)
-	
-	PROCEDURE InitPointImages;
-		VAR p: ARRAY 5 OF SET;
-	BEGIN
-		p[0] := {0..2}; p[1] := {0, 2}; p[2] := {0..2};
-		NEW(PointBG); GfxPictures.PatternToMap(Display.NewPattern(3, 3, p), PointBG);
-		p[0] := {1..3}; p[1] := {0, 4}; p[2] := {0, 4}; p[3] := {0, 4}; p[4] := {1..3};
-		NEW(PointFG); GfxPictures.PatternToMap(Display.NewPattern(5, 5, p), PointFG)
-	END InitPointImages;
-	
-	PROCEDURE RenderPoint* (p: Point; ctxt: Gfx.Context; id: INTEGER; color: Gfx.Color);
-		VAR ctm: GfxMatrix.Matrix; px, py: REAL;
-	BEGIN
-		ctm := ctxt.ctm;
-		Gfx.ResetCTM(ctxt);
-		GfxMatrix.Apply(ctm, p.x, p.y, px, py);
-		GfxMatrix.Solve(ctxt.ctm, ENTIER(px), ENTIER(py), px, py);	(* force pattern to be aligned with figure grid *)
-		IF id = Figures.Print THEN
-			Gfx.SetFillColor(ctxt, color);
-			Gfx.DrawRect(ctxt, px, py, px+1, py+1, {Gfx.Fill})
-		ELSIF id = Figures.Full THEN
-			Gfx.SetFillColor(ctxt, color);
-			IF p.sel THEN
-				Gfx.DrawImageAt(ctxt, px-2, py-2, PointFG, GfxMaps.NoFilter);
-				Gfx.SetFillColor(ctxt, Gfx.LGrey)
-			END;
-			Gfx.DrawImageAt(ctxt, px-1, py-1, PointBG, GfxMaps.NoFilter)
-		END;
-		Gfx.SetCTM(ctxt, ctm)
-	END RenderPoint;
-	
-	PROCEDURE HandlePoint (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR p, q, copy: Point; curve, c: Curve; id, ver: LONGINT; px, py: REAL;
-	BEGIN
-		p := obj(Point);
-		IF msg IS Figures.ShapeMsg THEN
-			IF msg IS Figures.LocateMsg THEN
-				WITH msg: Figures.LocateMsg DO
-					IF msg.stamp # p.stamp THEN
-						p.stamp := msg.stamp;
-						IF (msg.llx <= p.x) & (p.x <= msg.urx) & (msg.lly <= p.y) & (p.y <= msg.ury) THEN
-							IF msg.id = Figures.Inside THEN
-								p.slink := msg.shapes; msg.shapes := p
-							ELSIF msg.id = Figures.Overlap THEN
-								msg.shapes := p; p.slink := NIL
-							ELSIF msg.id = Figures.Project THEN
-								msg.px := p.x; msg.py := p.y; msg.shapes := p
-							END
-						END
-					END 
-				END
-			ELSIF msg IS Figures.DrawMsg THEN
-				WITH msg: Figures.DrawMsg DO
-					IF msg.all OR (p.stamp = msg.stamp) THEN
-						RenderPoint(p, msg.ctxt, msg.id, Gfx.Black)
-					END
-				END
-			ELSIF (msg IS Figures.ValidateMsg) & (msg.stamp = p.stamp) THEN
-				p.llx := p.x; p.lly := p.y; p.urx := p.x; p.ury := p.y; p.bw := 0;
-				Figures.HandleShape(p, msg);
-				IF (p.cont # NIL) & (p.cont IS Curve) THEN
-					curve := p.cont(Curve);
-					IF (p = curve.first.shape) & (curve.pred # NIL) THEN	(* validate both parents of shared point *)
-						curve.pred.stamp := msg.stamp
-					END
-				END
-			ELSIF msg IS Figures.ControlMsg THEN
-				WITH msg: Figures.ControlMsg DO
-					IF (msg.dest = p) & (p.cont # NIL) & (p.cont IS Curve) THEN
-						IF msg.shapes IS Curve THEN
-							msg.dest := p.cont	(* let containing curve handle this case *)
-						ELSIF (msg.shapes IS Point) & (msg.shapes.slink = NIL) THEN
-							q := msg.shapes(Point); curve := p.cont(Curve);
-							IF q.cont = NIL THEN	(* split path or curve on existing point *)
-								IF (p # curve.first.shape) & (p # curve.last.shape) THEN
-									curve.class.split(curve, p, q, msg.fig)
-								ELSIF (p = curve.first.shape) & (curve.pred # NIL) THEN
-									ASSERT((curve.cont # NIL) & (curve.cont IS Path));
-									SplitPath(curve.pred, curve, q, msg.fig)
-								ELSIF (p = curve.last.shape) & (curve.succ # NIL) THEN
-									ASSERT((curve.cont # NIL) & (curve.cont IS Path));
-									SplitPath(curve, curve.succ, q, msg.fig)
-								END
-							ELSIF (p = curve.first.shape) & (curve.pred = NIL) & (q.cont IS Curve) THEN
-								c := q.cont(Curve);
-								IF (q = c.last.shape) & (c.succ = NIL) THEN
-									JoinCurves(c, curve, msg.fig)
-								END
-							ELSIF (p = curve.last.shape) & (curve.succ = NIL) & (q.cont IS Curve) THEN
-								c := q.cont(Curve);
-								IF (q = c.first.shape) & (c.pred = NIL) THEN
-									JoinCurves(curve, c, msg.fig)
-								END
-							ELSE	(* establish point-on-point constraint *)
-								Connect(msg.fig, q, p)
-							END
-						END
-					END
-				END
-			ELSIF msg IS Figures.TransformMsg THEN
-				WITH msg: Figures.TransformMsg DO
-					IF (msg.id = Figures.Apply) & (msg.stamp = p.stamp) THEN
-						Solver.RegisterObj(p, id);
-						GfxMatrix.Apply(msg.mat, p.x, p.y, px, py);
-						Solver.Assign(Solver.Attr(id, "X"), Solver.Real(px));
-						Solver.Assign(Solver.Attr(id, "Y"), Solver.Real(py))
+			REPEAT
+				IF p1.up = NIL THEN
+					IF bez.closed THEN
+						p2 := bez.bottom(Point); x1 := 0.5*(p1.x + p2.x); y1 := 0.5*(p1.y + p2.y);
+						pen.do.bezier(pen, x1, y1, (x0 + 2*p1.x)/3, (y0 + 2*p1.y)/3, (x1 + 2*p1.x)/3, (y1 + 2*p1.y)/3)
 					ELSE
-						Figures.HandleShape(p, msg)
+						pen.do.line(pen, p1.x, p1.y)
+					END;
+					p0 := p1	(* p1 = bez.top *)
+				ELSE
+					p2 := p1.up(Point);
+					IF p2.up = NIL THEN
+						IF bez.closed THEN
+							p3 := bez.bottom(Point); x1 := 0.5*(p2.x + p3.x); y1 := 0.5*(p2.y + p3.y);
+							pen.do.bezier(pen, x1, y1, p1.x, p1.y, p2.x, p2.y)
+						ELSE
+							pen.do.bezier(pen, p2.x, p2.y, (x0 + 2*p1.x)/3, (y0 + 2*p1.y)/3, (p2.x + 2*p1.x)/3, (p2.y + 2*p1.y)/3)
+						END;
+						p0 := p2	(* p2 = bez.top *)
+					ELSE
+						p3 := p2.up(Point);
+						IF (p3 = bez.top) & ~bez.closed THEN
+							pen.do.bezier(pen, p3.x, p3.y, p1.x, p1.y, p2.x, p2.y);
+							p0 := p3
+						ELSE
+							x0 := 0.5*(p2.x + p3.x); y0 := 0.5*(p2.y + p3.y);
+							pen.do.bezier(pen, x0, y0, p1.x, p1.y, p2.x, p2.y);
+							p0 := p2; p1 := p3
+						END
 					END
 				END
+			UNTIL p0 = bez.top;
+			IF bez.closed THEN
+				pen.do.exit(pen, x1 - p0.x, y1 - p0.y, 0)
 			ELSE
-				Figures.HandleShape(p, msg)
+				GetSucc(bez, dx, dy);
+				pen.do.exit(pen, dx, dy, bez.eoff)
+			END
+		END
+	END DrawBezier;
+	
+	PROCEDURE DragBezier (bez: Segment; ctxt: Gfx.Context);
+		VAR s: Leonardo.Shape; p0, p1, p2, p3: Point; x0, y0, x1, y1: REAL; ctm: GfxMatrix.Matrix;
+	BEGIN
+		s := bez.bottom; WHILE (s # NIL) & ~s.marked DO s := s.up END;
+		IF (s # NIL) & (bez.bottom # bez.top) & s.marked THEN
+			Gfx.Begin(ctxt, {Gfx.Stroke});
+			p0 := bez.bottom(Point);
+			IF bez.closed THEN p1 := bez.top(Point); x0 := 0.5*(p0.x + p1.x); y0 := 0.5*(p0.y + p1.y); p1 := p0
+			ELSE x0 := p0.x; y0 := p0.y; p1 := p0.up(Point)
+			END;
+			Gfx.MoveTo(ctxt, x0, y0);
+			REPEAT
+				IF p1.up = NIL THEN
+					IF bez.closed THEN
+						p2 := bez.bottom(Point); x1 := 0.5*(p1.x + p2.x); y1 := 0.5*(p1.y + p2.y);
+						Gfx.BezierTo(ctxt, x1, y1, (x0 + 2*p1.x)/3, (y0 + 2*p1.y)/3, (x1 + 2*p1.x)/3, (y1 + 2*p1.y)/3)
+					ELSE
+						Gfx.LineTo(ctxt, p1.x, p1.y)
+					END;
+					p0 := p1	(* p1 = bez.top *)
+				ELSE
+					p2 := p1.up(Point);
+					IF p2.up = NIL THEN
+						IF bez.closed THEN
+							p3 := bez.bottom(Point); x1 := 0.5*(p2.x + p3.x); y1 := 0.5*(p2.y + p3.y);
+							Gfx.BezierTo(ctxt, x1, y1, p1.x, p1.y, p2.x, p2.y)
+						ELSE
+							Gfx.BezierTo(ctxt, p2.x, p2.y, (x0 + 2*p1.x)/3, (y0 + 2*p1.y)/3, (p2.x + 2*p1.x)/3, (p2.y + 2*p1.y)/3)
+						END;
+						p0 := p2	(* p2 = bez.top *)
+					ELSE
+						p3 := p2.up(Point);
+						IF (p3 = bez.top) & ~bez.closed THEN
+							Gfx.BezierTo(ctxt, p3.x, p3.y, p1.x, p1.y, p2.x, p2.y);
+							p0 := p3
+						ELSE
+							x0 := 0.5*(p2.x + p3.x); y0 := 0.5*(p2.y + p3.y);
+							Gfx.BezierTo(ctxt, x0, y0, p1.x, p1.y, p2.x, p2.y);
+							p0 := p2; p1 := p3
+						END
+					END
+				END
+			UNTIL p0 = bez.top;
+			Gfx.End(ctxt);
+			ctm := ctxt.ctm; Gfx.ResetCTM(ctxt);
+			p0 := bez.bottom.up(Point);
+			WHILE p0 # bez.top DO
+				GfxMatrix.Apply(ctm, p0.x, p0.y, x0, y0);
+				x0 := ENTIER(x0); y0 := ENTIER(y0);
+				Gfx.DrawRect(ctxt, x0-1, y0-1, x0+1, y0+1, {Gfx.Fill});
+				p0 := p0.up(Point)
+			END;
+			Gfx.SetCTM(ctxt, ctm)
+		END
+	END DragBezier;
+	
+	PROCEDURE RenderBezier (bez: Segment; VAR msg: Leonardo.RenderMsg);
+		VAR state: Gfx.State;
+	BEGIN
+		IF (bez.llx - bez.bw < msg.urx) & (msg.llx < bez.urx + bez.bw) &
+			(bez.lly - bez.bw < msg.ury) & (msg.lly < bez.ury + bez.bw)
+		THEN
+			IF msg.id = Leonardo.marked THEN
+				DragBezier(bez, msg.ctxt)
+			END;
+			IF msg.id IN {Leonardo.active, Leonardo.passive} THEN
+				Gfx.Save(msg.ctxt, Gfx.attr, state);
+				bez.pen.do.begin(bez.pen, msg.ctxt);
+				DrawBezier(bez, bez.pen);
+				bez.pen.do.end(bez.pen);
+				Gfx.Restore(msg.ctxt, state)
+			END;
+			RenderSegment(bez, msg)
+		END
+	END RenderBezier;
+	
+	PROCEDURE ProjectBezier (bez: Segment; x, y, llx, lly, urx, ury: REAL; VAR px, py: REAL): BOOLEAN;
+		VAR p0, p1, p2, p3: Point; x0, y0, x3, y3, x1, y1, x2, y2: REAL;
+	BEGIN
+		IF (bez.bottom # NIL) & (bez.bottom # bez.top) THEN
+			p0 := bez.bottom(Point);
+			IF bez.closed THEN p1 := bez.top(Point); x0 := 0.5*(p0.x + p1.x); y0 := 0.5*(p0.y + p1.y); p1 := p0
+			ELSE x0 := p0.x; y0 := p0.y; p1 := p0.up(Point)
+			END;
+			REPEAT
+				IF p1.up = NIL THEN
+					IF bez.closed THEN
+						p2 := bez.bottom(Point); x3 := 0.5*(p1.x + p2.x); y3 := 0.5*(p1.y + p2.y);
+						x1 := (x0 + 2*p1.x)/3; y1 := (y0 + 2*p1.y)/3; x2 := (x3 + 2*p1.x)/3; y2 := (y3 + 2*p1.y)/3;
+						IF OnBezier(x0, y0, x1, y1, x2, y2, x3, y3, x, y, llx, lly, urx, ury, px, py) THEN
+							RETURN TRUE
+						END
+					ELSIF OnLine(x0, y0, p1.x, p1.y, x, y, llx, lly, urx, ury, px, py) THEN
+						RETURN TRUE
+					END;
+					p0 := p1	(* p1 = bez.top *)
+				ELSE
+					p2 := p1.up(Point);
+					IF p2.up = NIL THEN
+						IF bez.closed THEN
+							p3 := bez.bottom(Point); x3 := 0.5*(p2.x + p3.x); y3 := 0.5*(p2.y + p3.y);
+							IF OnBezier(x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x, y, llx, lly, urx, ury, px, py) THEN
+								RETURN TRUE
+							END
+						ELSE
+							x1 := (x0 + 2*p1.x)/3; y1 := (y0 + 2*p1.y)/3; x2 := (p2.x + 2*p1.x)/3; y2 := (p2.y + 2*p1.y)/3;
+							IF OnBezier(x0, y0, x1, y1, x2, y2, p2.x, p2.y, x, y, llx, lly, urx, ury, px, py) THEN
+								RETURN TRUE
+							END
+						END;
+						p0 := p2	(* p2 = bez.top *)
+					ELSE
+						p3 := p2.up(Point);
+						IF (p3 = bez.top) & ~bez.closed THEN
+							IF OnBezier(x0, y0, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, x, y, llx, lly, urx, ury, px, py) THEN
+								RETURN TRUE
+							END;
+							p0 := p3
+						ELSE
+							x3 := 0.5*(p2.x + p3.x); y3 := 0.5*(p2.y + p3.y);
+							IF OnBezier(x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x, y, llx, lly, urx, ury, px, py) THEN
+								RETURN TRUE
+							END;
+							p0 := p2; p1 := p3; x0 := x3; y0 := y3
+						END
+					END
+				END
+			UNTIL p0 = bez.top
+		END;
+		RETURN FALSE
+	END ProjectBezier;
+	
+	PROCEDURE LocateBezier (bez: Segment; VAR msg: Leonardo.LocateMsg);
+		VAR res: Leonardo.Shape; glm: GfxMatrix.Matrix; llx, lly, urx, ury, px, py: REAL;
+	BEGIN
+		IF (msg.llx <= bez.urx) & (bez.llx <= msg.urx) & (msg.lly <= bez.ury) & (bez.lly <= msg.ury) THEN
+			IF msg.id = Leonardo.inside THEN
+				IF (msg.llx <= bez.llx) & (bez.urx <= msg.urx) & (msg.lly <= bez.lly) & (bez.ury <= msg.ury) THEN
+					bez.slink := msg.res; msg.res := bez
+				ELSE
+					Leonardo.ToComponents(bez.bottom, msg)
+				END
+			ELSE
+				res := msg.res;
+				Leonardo.ToComponents(bez.bottom, msg);
+				IF msg.id = Leonardo.overlap THEN
+					IF msg.res = res THEN
+						GfxMatrix.Invert(msg.lgm, glm);
+						GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+						GfxMatrix.Apply(glm, 0.5*(msg.llx + msg.urx), 0.5*(msg.lly + msg.ury), px, py);
+						IF ProjectBezier(bez, px, py, llx, lly, urx, ury, px, py) THEN
+							bez.slink := msg.res; msg.res := bez
+						END
+					ELSIF ~bez.sel THEN
+						msg.res := bez; bez.slink := res	(* must select segment before points can be located *)
+					END
+				ELSIF (msg.id = Leonardo.project) & (msg.res = res) THEN
+					GfxMatrix.Invert(msg.lgm, glm);
+					GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+					GfxMatrix.Apply(glm, msg.x, msg.y, px, py);
+					IF ProjectBezier(bez, px, py, llx, lly, urx, ury, px, py) THEN
+						msg.res := bez; msg.px := px; msg.py := py
+					END
+				END
+			END
+		END
+	END LocateBezier;
+	
+	PROCEDURE SplitBezier (bez: Segment; VAR msg: SplitMsg);
+		VAR
+			p0, p1, p2, bt, tp, p3: Point; succ, pred: Leonardo.Shape; cm: ConnectMsg; glm: GfxMatrix.Matrix;
+			llx, lly, urx, ury, x, y, x0, y0, x3, y3, x1, y1, x2, y2, px, py, t, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22: REAL;
+			s: Segment;
+	
+		PROCEDURE split (x0, y0, x1, y1, x2, y2, x3, y3, x, y, t0, t1: REAL; VAR px, py, t: REAL): BOOLEAN;
+			VAR x11, y11, x12, y12, x21, y21, x22, y22: REAL;
+		BEGIN
+			IF (ABS(x3 - x0) <= 0.5*(urx - llx)) & (ABS(y3 - y0) <= 0.5*(ury - lly)) THEN
+				IF OnLine(x0, y0, x3, y3, x, y, llx, lly, urx, ury, px, py) THEN
+					t := Math.sqrt(((x3 - px)*(x3 - px) + (y3 - py)*(y3 - py)) / ((x3 - x0)*(x3 - x0) + (y3 - y0)*(y3 - y0)));
+					t := t0 * t + t1 * (1-t);
+					RETURN TRUE
+				ELSE
+					RETURN FALSE
+				END
+			END;
+			SubdivideBezier(0.5, x0, y0, x1, y1, x2, y2, x3, y3, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+			RETURN
+				split(x0, y0, x11, y11, x12, y12, xm, ym, x, y, t0, 0.5*(t0 + t1), px, py, t) OR
+				split(xm, ym, x21, y21, x22, y22, x3, y3, x, y, 0.5*(t0 + t1), t1, px, py, t)
+		END split;
+		
+		PROCEDURE unclose (x, y: REAL);
+			VAR p: Point;
+		BEGIN
+			NEW(p); InitPoint(p, x, y);
+			Leonardo.AddConsumeAction(msg.fig, NIL, p, p, bez.bottom, bez);
+			Leonardo.SetBool(msg.fig, bez, "Closed", FALSE);
+			ChangePred(msg.fig, bez, collinear + wrap);
+			ChangeSucc(msg.fig, bez, collinear + wrap)
+		END unclose;
+		
+		PROCEDURE move (p: Point; x, y: REAL);
+		BEGIN
+			Leonardo.SetReal(msg.fig, p, "X", x);
+			Leonardo.SetReal(msg.fig, p, "Y", y)
+		END move;
+		
+		PROCEDURE make (x, y: REAL; VAR b, t: Point);
+		BEGIN
+			NEW(b); InitPoint(b, x, y); t := b
+		END make;
+		
+		PROCEDURE add (x, y: REAL; VAR t: Point);
+			VAR p: Point;
+		BEGIN
+			NEW(p); InitPoint(p, x, y);
+			p.down := t; t.up := p; t := p
+		END add;
+		
+		PROCEDURE bezier (x0, y0, x1, y1, x2, y2, x3, y3: REAL): Segment;
+			VAR p0, p3: Point; b: Segment;
+		BEGIN
+			make(x0, y0, p0, p3); add(x1, y1, p3); add(x2, y2, p3); add(x3, y3, p3);
+			NEW(b); InitSegment(b, bez.handle, p0, p3, FALSE, bez.pen);
+			RETURN b
+		END bezier;
+		
+		PROCEDURE line (x0, y0, x1, y1: REAL): Segment;
+			VAR p0, p1: Point; l: Segment;
+		BEGIN
+			make(x0, y0, p0, p1); add(x1, y1, p1);
+			NEW(l); InitPolyline(l, p0, p1, FALSE, bez.pen);
+			RETURN l
+		END line;
+		
+		PROCEDURE connect (seg: Segment);
+		BEGIN
+			Leonardo.AddConsumeAction(msg.fig, bez, seg, seg, bez.up, bez.cont(Leonardo.Container));
+			seg.pred := collinear;
+			IF bez.closed THEN seg.succ := collinear + wrap	(* hack: new mode from unclose() hasn't yet been set *)
+			ELSE seg.succ := bez.succ
+			END;
+			IF bez.succ # collinear THEN
+				ChangeSucc(msg.fig, bez, collinear)
+			END
+		END connect;
+		
+	BEGIN
+		IF (bez.llx <= msg.urx) & (msg.llx <= bez.urx) & (bez.lly <= msg.ury) & (msg.lly <= bez.ury) THEN
+			p0 := bez.bottom(Point); p1 := bez.top(Point);
+			IF (p1.llx <= msg.urx) & (msg.llx <= p1.urx) & (p1.lly <= msg.ury) & (msg.lly <= p1.ury) THEN
+				IF ~bez.closed & (bez.succ # term) THEN
+					succ := Succ(bez);
+					IF succ # NIL THEN
+						cm.fig := msg.fig; cm.id := set; cm.pos := start; cm.mode := term; cm.done := FALSE; succ.handle(succ, cm)
+					END;
+					ChangeSucc(msg.fig, bez, term)
+				END
+			ELSIF (p0.llx <= msg.urx) & (msg.llx <= p0.urx) & (p0.lly <= msg.ury) & (msg.lly <= p0.ury) THEN
+				IF ~bez.closed & (bez.pred # term) THEN
+					pred := Pred(bez);
+					IF pred # NIL THEN
+						cm.fig := msg.fig; cm.id := set; cm.pos := end; cm.mode := term; cm.done := FALSE; pred.handle(pred, cm)
+					END;
+					ChangePred(msg.fig, bez, term)
+				END
+			ELSE
+				GfxMatrix.Invert(msg.lgm, glm);
+				GfxMatrix.ApplyToRect(glm, msg.llx, msg.lly, msg.urx, msg.ury, llx, lly, urx, ury);
+				x := 0.5*(llx + urx); y := 0.5*(lly + ury);
+				p0 := bez.bottom(Point);
+				IF bez.closed THEN p1 := bez.top(Point); x0 := 0.5*(p0.x + p1.x); y0 := 0.5*(p0.y + p1.y); p1 := p0
+				ELSE x0 := p0.x; y0 := p0.y; p1 := p0.up(Point)
+				END;
+				REPEAT
+					IF p1.up = NIL THEN
+						IF bez.closed THEN
+							p2 := bez.bottom(Point); x3 := 0.5*(p1.x + p2.x); y3 := 0.5*(p1.y + p2.y);
+							x1 := (x0 + 2*p1.x)/3; y1 := (y0 + 2*p1.y)/3; x2 := (x3 + 2*p1.x)/3; y2 := (y3 + 2*p1.y)/3;
+							IF split(x0, y0, x1, y1, x2, y2, x3, y3, x, y, 0, 1, px, py, t) THEN
+								unclose(x3, y3);
+								SubdivideBezier(t, x0, y0, x1, y1, x2, y2, x3, y3, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+								move(p1, x11, y11); make(x12, y12, bt, tp); add(xm, ym, tp);
+								Leonardo.AddConsumeAction(msg.fig, p1, bt, tp, NIL, bez);
+								connect(bezier(xm, ym, x21, y21, x22, y22, x3, y3));
+								RETURN
+							END
+						ELSIF OnLine(x0, y0, p1.x, p1.y, x, y, llx, lly, urx, ury, px, py) THEN
+							move(p1, px, py); connect(line(px, py, p1.x, p1.y));
+							RETURN
+						END;
+						p0 := p1	(* p1 = bez.top *)
+					ELSE
+						p2 := p1.up(Point);
+						IF p2.up = NIL THEN
+							IF bez.closed THEN
+								p3 := bez.bottom(Point); x3 := 0.5*(p2.x + p3.x); y3 := 0.5*(p2.y + p3.y);
+								IF split(x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x, y, 0, 1, px, py, t) THEN
+									unclose(x3, y3);
+									SubdivideBezier(t, x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+									move(p1, x11, y11); move(p2, x12, y12); make(xm, ym, bt, tp);
+									Leonardo.AddConsumeAction(msg.fig, p2, bt, tp, NIL, bez);
+									connect(bezier(xm, ym, x21, y21, x22, y22, x3, y3));
+									RETURN
+								END
+							ELSE
+								x1 := (x0 + 2*p1.x)/3; y1 := (y0 + 2*p1.y)/3; x2 := (p2.x + 2*p1.x)/3; y2 := (p2.y + 2*p1.y)/3;
+								IF split(x0, y0, x1, y1, x2, y2, p2.x, p2.y, x, y, 0, 1, px, py, t) THEN
+									SubdivideBezier(t, x0, y0, x1, y1, x2, y2, p2.x, p2.y, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+									move(p1, x11, y11); move(p2, x12, y12); make(xm, ym, bt, tp);
+									Leonardo.AddConsumeAction(msg.fig, p2, bt, tp, NIL, bez);
+									connect(bezier(xm, ym, x21, y21, x22, y22, p2.x, p2.y));
+									RETURN
+								END
+							END;
+							p0 := p2	(* p2 = bez.top *)
+						ELSE
+							p3 := p2.up(Point);
+							IF (p3 = bez.top) & ~bez.closed THEN
+								x3 := p3.x; y3 := p3.y;
+								IF split(x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x, y, 0, 1, px, py, t) THEN
+									SubdivideBezier(t, x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+									move(p1, x11, y11); move(p2, x12, y12); move(p3, xm, ym);
+									make(xm, ym, bt, tp); add(x21, y21, tp); add(x22, y22, tp); add(x3, y3, tp);
+									NEW(s); InitSegment(s, bez.handle, bt, tp, FALSE, bez.pen); connect(s);
+									RETURN
+								END;
+								p0 := p3
+							ELSE
+								x3 := 0.5*(p2.x + p3.x); y3 := 0.5*(p2.y + p3.y);
+								IF split(x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x, y, 0, 1, px, py, t) THEN
+									SubdivideBezier(t, x0, y0, p1.x, p1.y, p2.x, p2.y, x3, y3, x11, y11, x12, y12, xm, ym, x21, y21, x22, y22);
+									move(p1, x11, y11); move(p2, x12, y12);
+									IF bez.closed THEN
+										x1 := 0.5*(bez.bottom(Point).x + bez.top(Point).x);
+										y1 := 0.5*(bez.bottom(Point).y + bez.top(Point).y);
+										unclose(x1, y1)
+									END;
+									Leonardo.AddDeleteAction(msg.fig, p2, p3, bez.top, NIL, bez);
+									make(xm, ym, bt, tp);
+									Leonardo.AddConsumeAction(msg.fig, p2, bt, tp, NIL, bez);
+									make(xm, ym, bt, tp); add(x21, y21, tp); add(x22, y22, tp);
+									NEW(s); InitSegment(s, bez.handle, bt, tp, FALSE, bez.pen); connect(s);
+									Leonardo.AddConsumeAction(msg.fig, tp, p3, bez.top, NIL, s);
+									IF bez.closed THEN
+										make(x1, y1, bt, tp);
+										Leonardo.AddConsumeAction(msg.fig, bez.top, bt, tp, NIL, s)
+									END;
+									RETURN
+								END;
+								p0 := p2; p1 := p3; x0 := x3; y0 := y3
+							END
+						END
+					END
+				UNTIL p0 = bez.top
+			END
+		END
+	END SplitBezier;
+	
+	PROCEDURE HandleBezier* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR bez: Segment;
+	BEGIN
+		bez := obj(Segment);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.RenderMsg THEN
+				RenderBezier(bez, msg(Leonardo.RenderMsg))
+			ELSIF msg IS Leonardo.LocateMsg THEN
+				LocateBezier(bez, msg(Leonardo.LocateMsg))
+			ELSIF msg IS RenderMsg THEN
+				DrawBezier(bez, msg(RenderMsg).pen)
+			ELSIF msg IS ConnectMsg THEN
+				ConnectSegment(bez, msg(ConnectMsg))
+			ELSIF msg IS SplitMsg THEN
+				SplitBezier(bez, msg(SplitMsg))
+			ELSE
+				HandleSegment(bez, msg)
 			END
 		ELSIF msg IS Objects.AttrMsg THEN
 			WITH msg: Objects.AttrMsg DO
-				Figures.HandleGenAttr(msg, "LeoPaths.NewPoint");
-				Figures.HandleRealAttr(msg, "X", p.x);
-				Figures.HandleRealAttr(msg, "Y", p.y)
+				IF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPaths.NewBezierX"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Bezier"; msg.res := 0
+					ELSE HandleSegment(bez, msg)
+					END
+				ELSE HandleSegment(bez, msg)
+				END
+			END
+		ELSE
+			HandleSegment(bez, msg)
+		END
+	END HandleBezier;
+	
+	PROCEDURE InitBezier* (bezier: Segment; bottom, top: Point; closed: BOOLEAN; pen: LeoPens.Pen);
+	BEGIN
+		InitSegment(bezier, HandleBezier, bottom, top, closed, pen)
+	END InitBezier;
+	
+	PROCEDURE NewBezierX*;
+		VAR bez: Segment;
+	BEGIN
+		NEW(bez); InitSegment(bez, HandleBezier, NIL, NIL, FALSE, LeoPens.Default);
+		Objects.NewObj := bez
+	END NewBezierX;
+	
+	
+	(**--- Arcs ---**)
+	
+	PROCEDURE ArcToPath (arc: Arc; path: GfxPaths.Path);
+		VAR p0, p1: Point; x0, y0, x1, y1, x2, y2, dx, dy: REAL;
+	BEGIN
+		GfxPaths.Clear(path);
+		IF (arc.bottom # NIL) & (arc.bottom # arc.top) THEN
+			p0 := arc.bottom(Point); p1 := arc.top(Point);
+			x0 := arc.mat[2, 0]; y0 := arc.mat[2, 1];
+			x1 := x0 - arc.mat[0, 0]; y1 := y0 - arc.mat[0, 1];
+			x2 := x0 + arc.mat[1, 0]; y2 := y0 + arc.mat[1, 1];
+			IF ~arc.closed THEN GetPred(arc, dx, dy)
+			ELSIF arc.mode = wedge THEN dx := p0.x - x0; dy := p0.y - y0
+			ELSE dx := p0.x - p1.x; dy := p0.y - p1.y
+			END;
+			GfxPaths.AddEnter(path, p0.x, p0.y, dx, dy);
+			GfxPaths.AddArc(path, p1.x, p1.y, x0, y0, x1, y1, x2, y2);
+			IF ~arc.closed THEN
+				GetSucc(arc, dx, dy)
+			ELSE
+				IF arc.mode = wedge THEN GfxPaths.AddLine(path, x0, y0) END;
+				GfxPaths.AddLine(path, p0.x, p0.y);
+				dx := arc.dx0; dy := arc.dy0
+			END;
+			GfxPaths.AddExit(path, dx, dy)
+		END
+	END ArcToPath;
+	
+	PROCEDURE EnumArc (VAR data: GfxPaths.EnumData);
+	BEGIN
+		WITH data: ArcData DO
+			IF data.n = 0 THEN
+				data.dx0 := data.x - data.x0; data.dy0 := data.y - data.y0; data.dx1 := data.dx0; data.dy1 := data.dy0
+			ELSE
+				data.dx1 := data.x - data.x1; data.dy1 := data.y - data.y1
+			END;
+			data.x1 := data.x; data.y1 := data.y; INC(data.n)
+		END
+	END EnumArc;
+	
+	PROCEDURE CalcArcBox* (arc: Arc; VAR mat: GfxMatrix.Matrix);
+		VAR m: GfxMatrix.Matrix; p0, p1: Point; x0, y0, x1, y1, x2, y2: REAL; data: ArcData;
+	BEGIN
+		GfxMatrix.Concat(arc.mat, mat, m);
+		GfxMatrix.ApplyToRect(m, -1, -1, 1, 1, arc.llx, arc.lly, arc.urx, arc.ury);
+		Attributes.GetReal(arc.pen, "Border", arc.bw);
+		GfxMatrix.ApplyToDist(mat, arc.bw, arc.bw);
+		arc.dx0 := 0; arc.dy0 := 0; arc.dx1 := 0; arc.dy1 := 0;
+		IF ~arc.closed THEN
+			p0 := arc.bottom(Point); p1 := arc.top(Point);
+			x0 := arc.mat[2, 0]; y0 := arc.mat[2, 1];
+			x1 := x0 - arc.mat[0, 0]; y1 := y0 - arc.mat[0, 1];
+			x2 := x0 + arc.mat[1, 0]; y2 := y0 + arc.mat[1, 1];
+			data.x0 := p0.x; data.y0 := p0.y; data.x := data.x0; data.y := data.y0; data.n := 0;
+			GfxPaths.EnumArc(x0, y0, x1, y1, x2, y2, p1.x, p1.y, 0.5, EnumArc, data);
+			arc.dx0 := data.dx0; arc.dy0 := data.dy0; arc.dx1 := data.dx1; arc.dy1 := data.dy1
+		END
+	END CalcArcBox;
+	
+	PROCEDURE ControlArc (arc: Arc; VAR msg: Leonardo.ControlMsg);
+	BEGIN
+		IF msg.id = Leonardo.delete THEN
+			arc.bottom.marked := FALSE; arc.top.marked := FALSE;
+			ControlSegment(arc, msg)
+		ELSIF msg.id = Leonardo.clone THEN
+			IF arc.marked THEN
+				ControlSegment(arc, msg)
+			END
+		ELSE
+			ControlSegment(arc, msg)
+		END
+	END ControlArc;
+	
+	PROCEDURE ValidateArc (arc: Arc; VAR msg: Leonardo.ValidateMsg);
+	BEGIN
+		Leonardo.ToComponents(arc.bottom, msg);
+		IF arc.marked THEN
+			Leonardo.UpdateShape(msg.fig, arc);
+			CalcArcBox(arc, msg.lgm);
+			Leonardo.UpdateShape(msg.fig, arc);
+			ValidateSegmentLength(arc, msg);
+			arc.marked := FALSE; arc.cont.marked := TRUE
+		END
+	END ValidateArc;
+	
+	PROCEDURE DrawArc (arc: Arc; pen: LeoPens.Pen);
+		VAR p0, p1: Point; x0, y0, x1, y1, x2, y2, dx, dy: REAL;
+	BEGIN
+		IF (arc.bottom # NIL) & (arc.bottom # arc.top) THEN
+			p0 := arc.bottom(Point); p1 := arc.top(Point);
+			x0 := arc.mat[2, 0]; y0 := arc.mat[2, 1];
+			x1 := x0 - arc.mat[0, 0]; y1 := y0 - arc.mat[0, 1];
+			x2 := x0 + arc.mat[1, 0]; y2 := y0 + arc.mat[1, 1];
+			IF ~arc.closed THEN GetPred(arc, dx, dy)
+			ELSIF arc.mode = wedge THEN dx := p0.x - x0; dy := p0.y - y0
+			ELSE dx := p0.x - p1.x; dy := p0.y - p1.y
+			END;
+			pen.do.enter(pen, p0.x, p0.y, dx, dy, arc.boff);
+			pen.do.arc(pen, p1.x, p1.y, x0, y0, x1, y1, x2, y2);
+			IF ~arc.closed THEN
+				GetSucc(arc, dx, dy)
+			ELSE
+				IF arc.mode = wedge THEN pen.do.line(pen, x0, y0) END;
+				pen.do.line(pen, p0.x, p0.y);
+				dx := arc.dx0; dy := arc.dy0
+			END;
+			pen.do.exit(pen, dx, dy, arc.eoff)
+		END
+	END DrawArc;
+	
+	PROCEDURE DragArc (arc: Arc; ctxt: Gfx.Context);
+		VAR p0, p1: Point; x0, y0, x1, y1, x2, y2: REAL;
+	BEGIN
+		IF (arc.bottom # NIL) & (arc.bottom # arc.top) THEN
+			p0 := arc.bottom(Point); p1 := arc.top(Point);
+			IF arc.marked OR p0.marked OR p1.marked THEN
+				x0 := arc.mat[2, 0]; y0 := arc.mat[2, 1];
+				x1 := x0 - arc.mat[0, 0]; y1 := y0 - arc.mat[0, 1];
+				x2 := x0 + arc.mat[1, 0]; y2 := y0 + arc.mat[1, 1];
+				Gfx.Begin(ctxt, {Gfx.Stroke});
+				Gfx.MoveTo(ctxt, p0.x, p0.y);
+				Gfx.ArcTo(ctxt, p1.x, p1.y, x0, y0, x1, y1, x2, y2);
+				IF arc.closed THEN
+					IF arc.mode = wedge THEN Gfx.LineTo(ctxt, x0, y0) END;
+					Gfx.LineTo(ctxt, p0.x, p0.y)
+				END;
+				Gfx.End(ctxt)
+			END
+		END
+	END DragArc;
+	
+	PROCEDURE RenderArc (arc: Arc; VAR msg: Leonardo.RenderMsg);
+		VAR state: Gfx.State; ctm, lgm: GfxMatrix.Matrix;
+	BEGIN
+		IF (arc.llx - arc.bw < msg.urx) & (msg.llx < arc.urx + arc.bw) & (arc.lly - arc.bw < msg.ury) & (msg.lly < arc.ury + arc.bw) THEN
+			IF msg.id = Leonardo.marked THEN
+				DragArc(arc, msg.ctxt)
+			END;
+			IF msg.id IN {Leonardo.active, Leonardo.passive} THEN
+				Gfx.Save(msg.ctxt, Gfx.attr, state);
+				arc.pen.do.begin(arc.pen, msg.ctxt);
+				DrawArc(arc, arc.pen);
+				arc.pen.do.end(arc.pen);
+				Gfx.Restore(msg.ctxt, state)
+			END;
+			IF (msg.id IN {Leonardo.active, Leonardo.marksonly}) & arc.sel THEN
+				ctm := msg.ctxt.ctm; Gfx.Concat(msg.ctxt, arc.mat);
+				lgm := msg.lgm; GfxMatrix.Concat(arc.mat, lgm, msg.lgm);
+				Leonardo.DrawHandles(-1, -1, 1, 1, msg);
+				msg.lgm := lgm; Gfx.SetCTM(msg.ctxt, ctm)
+			END;
+			RenderSegment(arc, msg)
+		END
+	END RenderArc;
+	
+	PROCEDURE LocateArc (arc: Arc; VAR msg: Leonardo.LocateMsg);
+		VAR res: Leonardo.Shape; px, py: REAL;
+	BEGIN
+		IF (msg.llx <= arc.urx) & (arc.llx <= msg.urx) & (msg.lly <= arc.ury) & (arc.lly <= msg.ury) THEN
+			IF msg.id = Leonardo.inside THEN
+				IF (msg.llx <= arc.llx) & (arc.urx <= msg.urx) & (msg.lly <= arc.lly) & (arc.ury <= msg.ury) THEN
+					arc.slink := msg.res; msg.res := arc
+				ELSE
+					Leonardo.ToComponents(arc.bottom, msg)
+				END
+			ELSE
+				res := msg.res;
+				Leonardo.ToComponents(arc.bottom, msg);
+				IF msg.id = Leonardo.overlap THEN
+					IF msg.res = res THEN
+						ArcToPath(arc, ArcPath);
+						GfxPaths.Apply(ArcPath, msg.lgm);
+						GfxPaths.ProjectToPath(ArcPath, 0.5*(msg.llx + msg.urx), 0.5*(msg.lly + msg.ury), px, py);
+						IF (msg.llx <= px) & (px <= msg.urx) & (msg.lly <= py) & (py <= msg.ury) THEN
+							arc.slink := msg.res; msg.res := arc
+						END
+					ELSIF ~arc.sel THEN
+						msg.res := arc; arc.slink := res
+					END
+				ELSIF (msg.id = Leonardo.project) & (msg.res = res) THEN
+					ArcToPath(arc, ArcPath);
+					GfxPaths.Apply(ArcPath, msg.lgm);
+					GfxPaths.ProjectToPath(ArcPath, msg.x, msg.y, px, py);
+					IF (msg.llx <= px) & (px <= msg.urx) & (msg.lly <= py) & (py <= msg.ury) THEN
+						msg.res := arc; msg.px := px; msg.py := py
+					END
+				END
+			END
+		END
+	END LocateArc;
+	
+	PROCEDURE TransformArc (arc: Arc; VAR msg: Leonardo.TransformMsg);
+		VAR glm, m: GfxMatrix.Matrix; p: Point;
+		
+		PROCEDURE apply (p: Point);
+			VAR x, y: REAL;
+		BEGIN
+			IF msg.stamp # p.stamp THEN
+				p.stamp := msg.stamp;
+				GfxMatrix.Apply(msg.lgm, p.x, p.y, x, y);
+				GfxMatrix.Apply(msg.mat, x, y, x, y);
+				GfxMatrix.Solve(msg.lgm, x, y, x, y);
+				x := x - arc.mat[2, 0]; y := y - arc.mat[2, 1];
+				GfxPaths.ProjectToEllipse(-arc.mat[0, 0], -arc.mat[0, 1], arc.mat[1, 0], arc.mat[1, 1], x, y, x, y);
+				Leonardo.SetReal(msg.fig, p, "X", x + arc.mat[2, 0]);
+				Leonardo.SetReal(msg.fig, p, "Y",  y + arc.mat[2, 1]);
+				IF p.link # NIL THEN
+					msg.notify := TRUE
+				END
+			END
+		END apply;
+		
+	BEGIN
+		IF msg.id = Leonardo.apply THEN
+			IF arc.marked & (msg.stamp # arc.stamp) THEN
+				arc.stamp := msg.stamp;
+				IF ~arc.bottom.marked THEN arc.bottom.marked := TRUE; msg.notify := TRUE END;
+				IF ~arc.top.marked THEN arc.top.marked := TRUE; msg.notify := TRUE END;
+				Leonardo.ToComponents(arc.bottom, msg);
+				GfxMatrix.Invert(msg.lgm, glm);
+				GfxMatrix.Concat(arc.mat, msg.lgm, m); GfxMatrix.Concat(m, msg.mat, m); GfxMatrix.Concat(m, glm, m);
+				Leonardo.SetMatrix(msg.fig, arc, "M", m)
+			END;
+			IF arc.bottom.marked THEN
+				apply(arc.bottom(Point));
+				IF arc.pred # term THEN msg.notify := TRUE END
+			END;
+			IF arc.top.marked THEN
+				apply(arc.top(Point));
+				IF arc.succ # term THEN msg.notify := TRUE END
+			END
+		ELSIF msg.id = Leonardo.notify THEN
+			p := arc.bottom(Point);
+			IF ~p.marked & (p.link # NIL) & p.link.marked THEN
+				Unlink(msg.fig, p)
+			END;
+			p := arc.top(Point);
+			IF ~p.marked & (p.link # NIL) & p.link.marked THEN
+				Unlink(msg.fig, p)
+			END;
+			TransformSegment(arc, msg)
+		END
+	END TransformArc;
+	
+	PROCEDURE GetArcMatrix (arc: Arc; VAR msg: Leonardo.MatrixMsg);
+		VAR lgm: GfxMatrix.Matrix;
+	BEGIN
+		IF msg.dest = arc THEN
+			lgm := msg.lgm; GfxMatrix.Concat(arc.mat, msg.lgm, msg.lgm);
+			Leonardo.GetHandleMatrix(-1, -1, 1, 1, msg);
+			msg.lgm := lgm
+		END
+	END GetArcMatrix;
+	
+	PROCEDURE ConnectArc (arc: Arc; VAR msg: ConnectMsg);
+		VAR p0, p1: Point;
+	BEGIN
+		IF ~arc.closed & (arc.bottom # NIL) & (arc.bottom # arc.top) THEN
+			p0 := arc.bottom(Point); p1 := arc.top(Point);
+			IF msg.id = get THEN
+				IF msg.pos = start THEN
+					msg.mode := arc.pred; msg.x := p0.x; msg.y := p0.y; msg.dx := arc.dx0; msg.dy := arc.dy0
+				ELSIF msg.pos = end THEN
+					msg.mode := arc.succ; msg.x := p1.x; msg.y := p1.y; msg.dx := arc.dx1; msg.dy := arc.dy1
+				END;
+				msg.done := TRUE
+			ELSIF msg.id = set THEN
+				IF msg.pos = start THEN
+					IF (msg.mode = term) OR (msg.mode MOD wrap = coincident) & (msg.x = p0.x) & (msg.y = p0.y) THEN
+						IF msg.mode # arc.pred THEN
+							ChangePred(msg.fig, arc, msg.mode)
+						END;
+						msg.done := TRUE
+					END
+				ELSIF msg.pos = end THEN
+					IF (msg.mode = term) OR (msg.mode MOD wrap = coincident) & (msg.x = p1.x) & (msg.y = p1.y) THEN
+						IF msg.mode # arc.succ THEN
+							ChangeSucc(msg.fig, arc, msg.mode)
+						END;
+						msg.done := TRUE
+					END
+				END
+			ELSIF msg.id = notify THEN
+				IF (msg.pos = start) & (arc.pred # term) & (ABS(msg.x - p0.x) + ABS(msg.y - p0.y) > 1.0E-3) THEN
+					msg.mode := term; msg.done := TRUE
+				ELSIF (msg.pos = end) & (arc.succ # term) & (ABS(msg.x - p1.x) + ABS(msg.y - p1.y) > 1.0E-3) THEN
+					msg.mode := term; msg.done := TRUE
+				END
+			END
+		END
+	END ConnectArc;
+	
+	PROCEDURE CopyArc* (VAR msg: Objects.CopyMsg; from, to: Arc);
+	BEGIN
+		CopySegment(msg, from, to);
+		to.mode := from.mode; to.mat := from.mat;
+		to.dx0 := from.dx0; to.dy0 := from.dy0; to.dx1 := from.dy1; to.dy1 := from.dy1
+	END CopyArc;
+	
+	PROCEDURE HandleArc* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR arc, copy: Arc; ver: LONGINT;
+	BEGIN
+		arc := obj(Arc);
+		IF msg IS Leonardo.ShapeMsg THEN
+			IF msg IS Leonardo.ControlMsg THEN
+				ControlArc(arc, msg(Leonardo.ControlMsg))
+			ELSIF msg IS Leonardo.ValidateMsg THEN
+				ValidateArc(arc, msg(Leonardo.ValidateMsg))
+			ELSIF msg IS Leonardo.RenderMsg THEN
+				RenderArc(arc, msg(Leonardo.RenderMsg))
+			ELSIF msg IS Leonardo.LocateMsg THEN
+				LocateArc(arc, msg(Leonardo.LocateMsg))
+			ELSIF msg IS Leonardo.TransformMsg THEN
+				TransformArc(arc, msg(Leonardo.TransformMsg))
+			ELSIF msg IS Leonardo.MatrixMsg THEN
+				GetArcMatrix(arc, msg(Leonardo.MatrixMsg))
+			ELSIF msg IS RenderMsg THEN
+				DrawArc(arc, msg(RenderMsg).pen)
+			ELSIF msg IS ConnectMsg THEN
+				ConnectArc(arc, msg(ConnectMsg))
+			ELSE
+				HandleSegment(arc,msg)
+			END
+		ELSIF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Mode"); HandleSegment(arc, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPaths.NewArcX"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Arc"; msg.res := 0
+					ELSIF msg.name = "Mode" THEN msg.class := Objects.Int; msg.i := arc.mode; msg.res := 0
+					ELSIF msg.name = "M00" THEN msg.class := Objects.Real; msg.x := arc.mat[0, 0]; msg.res := 0
+					ELSIF msg.name = "M01" THEN msg.class := Objects.Real; msg.x := arc.mat[0, 1]; msg.res := 0
+					ELSIF msg.name = "M10" THEN msg.class := Objects.Real; msg.x := arc.mat[1, 0]; msg.res := 0
+					ELSIF msg.name = "M11" THEN msg.class := Objects.Real; msg.x := arc.mat[1, 1]; msg.res := 0
+					ELSIF msg.name = "M20" THEN msg.class := Objects.Real; msg.x := arc.mat[2, 0]; msg.res := 0
+					ELSIF msg.name = "M21" THEN msg.class := Objects.Real; msg.x := arc.mat[2, 1]; msg.res := 0
+					ELSE HandleSegment(arc, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Mode" THEN
+						IF (msg.class = Objects.Int) & (wedge <= msg.i) & (msg.i <= segment) THEN
+							arc.mode := SHORT(SHORT(msg.i)); msg.res := 0
+						END
+					ELSIF msg.name = "M00" THEN
+						IF msg.class = Objects.Real THEN arc.mat[0, 0] := msg.x; msg.res := 0 END
+					ELSIF msg.name = "M01" THEN
+						IF msg.class = Objects.Real THEN arc.mat[0, 1] := msg.x; msg.res := 0 END
+					ELSIF msg.name = "M10" THEN
+						IF msg.class = Objects.Real THEN arc.mat[1, 0] := msg.x; msg.res := 0 END
+					ELSIF msg.name = "M11" THEN
+						IF msg.class = Objects.Real THEN arc.mat[1, 1] := msg.x; msg.res := 0 END
+					ELSIF msg.name = "M20" THEN
+						IF msg.class = Objects.Real THEN arc.mat[2, 0] := msg.x; msg.res := 0 END
+					ELSIF msg.name = "M21" THEN
+						IF msg.class = Objects.Real THEN arc.mat[2, 1] := msg.x; msg.res := 0 END
+					ELSE
+						HandleSegment(arc, msg)
+					END
+				END
 			END
 		ELSIF msg IS Objects.CopyMsg THEN
 			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # p.stamp THEN
-					NEW(copy); p.dlink := copy; p.stamp := msg.stamp;
-					Figures.CopyShape(msg, p, copy);
-					copy.x := p.x; copy.y := p.y
+				IF msg.stamp # arc.stamp THEN
+					NEW(copy); arc.dlink := copy; arc.stamp := msg.stamp;
+					CopyArc(msg, arc, copy)
 				END;
-				msg.obj := p.dlink
+				msg.obj := arc.dlink
 			END
 		ELSIF msg IS Objects.FileMsg THEN
 			WITH msg: Objects.FileMsg DO
+				HandleSegment(arc, msg);
 				IF msg.id = Objects.store THEN
 					Files.WriteNum(msg.R, 1);
-					Files.WriteReal(msg.R, p.x);
-					Files.WriteReal(msg.R, p.y)
+					Files.Write(msg.R, arc.mode);
+					GfxMatrix.Write(msg.R, arc.mat)
 				ELSIF msg.id = Objects.load THEN
 					Files.ReadNum(msg.R, ver);
-					IF ver > 0 THEN
-						Files.ReadReal(msg.R, p.x);
-						Files.ReadReal(msg.R, p.y)
-					END;
-					p.llx := p.x; p.lly := p.y; p.urx := p.x; p.ury := p.y; p.bw := 0
+					Files.Read(msg.R, arc.mode);
+					GfxMatrix.Read(msg.R, arc.mat);
+					CalcArcBox(arc, GfxMatrix.Identity)
 				END
 			END
 		ELSE
-			Figures.HandleShape(p, msg)
+			HandleSegment(arc, msg)
 		END
-	END HandlePoint;
+	END HandleArc;
 	
-	PROCEDURE InitPoint* (p: Point; x, y: REAL);
+	PROCEDURE InitArc* (arc: Arc; x, y, rx, ry, start, end: REAL; pen: LeoPens.Pen);
+		VAR p0, p1: Point;
 	BEGIN
-		Figures.InitShape(p);
-		p.handle := HandlePoint; p.x := x; p.y := y;
-		p.llx := p.x; p.lly := p.y; p.urx := p.x; p.ury := p.y; p.bw := 0
-	END InitPoint;
+		NEW(p0); InitPoint(p0, x + rx * Math.cos(start), y + ry * Math.sin(start));
+		NEW(p1); InitPoint(p1, x + rx * Math.cos(end), y + ry * Math.sin(end));
+		p0.up := p1; p1.down := p0;
+		InitSegment(arc, HandleArc, p0, p1, start = end, pen);
+		GfxMatrix.Init(arc.mat, rx, 0, 0, ry, x, y);
+		arc.mode := segment;
+		CalcArcBox(arc, GfxMatrix.Identity)
+	END InitArc;
 	
-	PROCEDURE NewPoint*;
-		VAR p: Point;
+	PROCEDURE NewArcX*;
+		VAR arc: Arc;
 	BEGIN
-		NEW(p); InitPoint(p, 0, 0);
-		Objects.NewObj := p
-	END NewPoint;
+		NEW(arc); InitArc(arc, 0, 0, 1, 1, 0, 0, LeoPens.Default);
+		Objects.NewObj := arc
+	END NewArcX;
 	
 	
-	(**--- Curves ---**)
+	(**--- Pathification ---**)
 	
-	PROCEDURE RecordCurve* (curve: Curve);
-		VAR dm: Figures.DrawMsg;
+	PROCEDURE HandlePathifier* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Pathifier; ver: LONGINT;
 	BEGIN
-		dm.all := TRUE;
-		Recorder.do.begin(Recorder, NIL);
-		curve.class.render(curve, Recorder, dm);
-		Recorder.do.end(Recorder)
-	END RecordCurve;
-	
-	PROCEDURE CurveLength* (curve: Curve): REAL;
-	BEGIN
-		RecordCurve(curve);
-		RETURN GfxPaths.Length(Recorder.path, 1)
-	END CurveLength;
-	
-	PROCEDURE InsertInCurve* (curve: Curve; point: Point; prev, next: Figures.Reference; fig: Figures.Figure);
-		VAR ref: Figures.Reference; ca: Figures.ControlAction;
-	BEGIN
-		NEW(ref); ref.shape := point;
-		NEW(ca); Figures.InitControlAction(ca, Figures.Consume, prev, ref, ref, next, curve);
-		Figures.AddAction(fig, ca, Figures.DoControlAction)
-	END InsertInCurve;
-	
-	PROCEDURE RenderCurve* (curve: Curve; VAR dm: Figures.DrawMsg);
-		VAR pen: GfxPens.Pen;
-	BEGIN
-		pen := curve.stroke;
-		IF pen # NIL THEN	(* render curve path *)
-			pen.do.begin(pen, dm.ctxt);
-			curve.class.render(curve, pen, dm);
-			pen.do.end(pen)
-		END
-	END RenderCurve;
-	
-	PROCEDURE RenderSelMarker* (curve: Curve; VAR dm: Figures.DrawMsg);
-		VAR
-			ctxt: Gfx.Context; ctm, inv: GfxMatrix.Matrix; fillCol: Gfx.Color; fillPat: Gfx.Pattern;
-			p: Point; px, py, dx, dy, d: REAL;
-		
-		PROCEDURE triangle (ctxt: Gfx.Context; px, py, dx, dy: REAL);
-		BEGIN
-			Gfx.Enter(ctxt, px - 0.5*dy, py + 0.5*dx, 0, 0);
-			Gfx.LineTo(ctxt, px + 0.5*dy, py - 0.5*dx);
-			Gfx.LineTo(ctxt, px + dx, py + dy);
-			Gfx.LineTo(ctxt, px - 0.5*dy, py + 0.5*dx);
-			Gfx.Exit(ctxt, 0, 0)
-		END triangle;
-		
-	BEGIN
-		IF (dm.id = Figures.Full) & curve.sel & (dm.all OR (curve.stamp = dm.stamp)) THEN	(* render selection markers *)
-			ctxt := dm.ctxt;
-			ctm := ctxt.ctm; fillCol := ctxt.fillCol; fillPat := ctxt.fillPat;
-			Gfx.ResetCTM(ctxt);
-			Gfx.SetFillColor(ctxt, Gfx.DGrey);
-			Gfx.SetFillPattern(ctxt, NIL);
-			GfxMatrix.Invert(ctxt.ctm, inv);
-			GfxMatrix.Concat(ctm, inv, inv);	(* maps from current user coords to default user coords *)
-			Gfx.Begin(ctxt, {Gfx.Fill});
-			p := curve.first.shape(Point);
-			GfxMatrix.Apply(inv, p.x, p.y, px, py);
-			GfxMatrix.ApplyToVector(inv, curve.dx0, curve.dy0, dx, dy);
-			d := 0.5*CurveBorder/Math.sqrt(dx * dx + dy * dy);
-			dx := dx*d; dy := dy*d;
-			triangle(ctxt, px + dy, py - dx, dx, dy);
-			p := curve.last.shape(Point);
-			GfxMatrix.Apply(inv, p.x, p.y, px, py);
-			GfxMatrix.ApplyToVector(inv, curve.dx1, curve.dy1, dx, dy);
-			d := 0.5*CurveBorder/Math.sqrt(dx * dx + dy * dy);
-			dx := dx*d; dy := dy*d;
-			triangle(ctxt, px - dy - dx, py + dx - dy, dx, dy);
-			Gfx.End(ctxt);
-			Gfx.SetCTM(ctxt, ctm);
-			Gfx.SetFillColor(ctxt, fillCol);
-			Gfx.SetFillPattern(ctxt, fillPat)
-		END
-	END RenderSelMarker;
-	
-	PROCEDURE ValidateCurve* (curve: Curve);
-		VAR bw: REAL; p0, p1: Point;
-	BEGIN
-		Figures.ValidateContainer(curve);
-		IF curve.stroke # NIL THEN
-			Attributes.GetReal(curve.stroke, "BorderWidth", bw);
-			IF bw > curve.bw THEN curve.bw := bw END
-		END;
-		IF curve.first = curve.last THEN
-			curve.dx0 := 0; curve.dy0 := 0; curve.dx1 := 0; curve.dy1 := 0;
-			curve.len := 0
-		ELSE
-			p0 := curve.first.shape(Point); p1 := curve.first.next.shape(Point);
-			curve.dx0 := p1.x - p0.x; curve.dy0 := p1.y - p0.y;
-			p0 := curve.last.prev.shape(Point); p1 := curve.last.shape(Point);
-			curve.dx1 := p1.x - p0.x; curve.dy1 := p1.y - p0.y;
-			curve.len := curve.class.length(curve)
-		END;
-		curve.boff := 0; curve.eoff := 0	(* may be overridden if part of path *)
-	END ValidateCurve;
-	
-	PROCEDURE SelectCurve (curve: Curve; VAR sm: Figures.SelectMsg);
-		VAR shapes: Figures.Shape; ref: Figures.Reference;
-	BEGIN
-		IF (sm.id = Figures.Get) & curve.sel THEN
-			shapes := sm.shapes;
-			ref := curve.last;
-			IF (curve.succ # NIL) & curve.succ.sel THEN ref := ref.prev END;	(* don't send message twice to shared point *)
-			WHILE ref # NIL DO
-				Figures.Forward(curve, ref.shape, sm);
-				ref := ref.prev
-			END;
-			IF sm.shapes = shapes THEN
-				curve.slink := shapes; sm.shapes := curve
-			END
-		ELSE
-			Figures.HandleContainer(curve, sm)
-		END
-	END SelectCurve;
-	
-	PROCEDURE LocateCurve (curve: Curve; VAR lm: Figures.LocateMsg);
-		VAR ref, prev, next: Figures.Reference; q, p: Point; px, py: REAL;
-	BEGIN
-		IF lm.stamp # curve.stamp THEN
-			curve.stamp := lm.stamp;
-			IF (lm.llx <= curve.urx) & (curve.llx <= lm.urx) & (lm.lly <= curve.ury) & (curve.lly <= lm.ury) THEN
-				IF lm.id = Figures.Inside THEN
-					IF (lm.llx <= curve.llx) & (curve.urx <= lm.urx) & (lm.lly <= curve.lly) & (curve.ury <= lm.ury) THEN
-						curve.slink := lm.shapes; lm.shapes := curve
-					ELSE
-						Figures.HandleRefs(curve, lm)
-					END
+		pen := obj(Pathifier);
+		IF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF (msg.id = Objects.get) & (msg.name = "Gen") THEN
+					msg.class := Objects.String; msg.s := "LeoPaths.NewPathifier"; msg.res := 0
 				ELSE
-					ref := curve.last; q := NIL;
-					IF curve.succ # NIL THEN ref := ref.prev END;	(* don't treat shared points twice *)
-					WHILE (ref # NIL) & (q = NIL) DO
-						p := ref.shape(Point);
-						IF (lm.llx <= p.x) & (p.x <= lm.urx) & (lm.lly <= p.y) & (p.y <= lm.ury) THEN q := p END;
-						ref := ref.prev
-					END;
-					IF q = NIL THEN
-						curve.class.locate(curve, lm.llx, lm.lly, lm.urx, lm.ury, prev, next, px, py)
-					END;
-					IF lm.id = Figures.Overlap THEN
-						IF (q # NIL) & (curve.sel OR (curve.cont IS Path)) THEN
-							q.slink := lm.shapes; lm.shapes := q
-						ELSIF (q # NIL) OR (prev # NIL) OR (next # NIL) THEN
-							curve.slink := lm.shapes; lm.shapes := curve
-						END
-					ELSIF lm.id = Figures.Project THEN
-						IF q # NIL THEN
-							lm.px := p.x; lm.py := p.y; lm.shapes := q
-						ELSIF (prev # NIL) OR (next # NIL) THEN
-							lm.px := px; lm.py := py; lm.shapes := curve
-						END
-					END
+					LeoPens.Handle(pen, msg)
 				END
-			END
-		END
-	END LocateCurve;
-	
-	PROCEDURE DoUnlinkCurves (fig: Figures.Figure; fa: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR a: Action;
-	BEGIN
-		a := fa(Action);
-		IF undo THEN a.pred.succ := a.succ; a.succ.pred := a.pred
-		ELSE a.pred.succ := NIL; a.succ.pred := NIL
-		END;
-		a.pred.stamp := stamp; a.succ.stamp := stamp
-	END DoUnlinkCurves;
-	
-	PROCEDURE ControlCurve (curve: Curve; VAR cm: Figures.ControlMsg);
-		VAR p: Point; llx, lly, urx, ury: REAL; ref, prev, next: Figures.Reference; px, py: REAL; n: LONGINT; a: Action;
-	BEGIN
-		IF cm.id = Figures.Consume THEN
-			IF cm.dest # curve THEN
-				Figures.HandleRefs(curve, cm)
-			END;
-			IF cm.dest = curve THEN
-				IF cm.shapes IS Curve THEN
-					cm.dest := curve.cont	(* consuming curves is the responsibility of paths *)
-				ELSIF (cm.shapes IS Point) & (cm.shapes.slink = NIL) THEN
-					p := cm.shapes(Point); llx := p.x-1; lly := p.y-1; urx := p.x+1; ury := p.y+1;
-					ref := curve.last;
-					WHILE (ref # NIL) & (cm.dest = curve) DO
-						p := ref.shape(Point);
-						IF (llx <= p.x) & (p.x <= urx) & (lly <= p.y) & (p.y <= ury) THEN cm.dest := p END;
-						ref := ref.prev
-					END;
-					IF cm.dest # curve THEN
-						Figures.Forward(curve, p, cm)
-					ELSE
-						curve.class.locate(curve, p.x-0.5, p.y-0.5, p.x+0.5, p.y+0.5, prev, next, px, py);
-						IF p.cont = NIL THEN	(* insert in curve *)
-							IF (prev = NIL) & (next = NIL) THEN	(* append/insert if not on curve *)
-								IF curve.succ = NIL THEN prev := curve.last; next := NIL
-								ELSE prev := curve.last.prev; next := curve.last
-								END
-							END;
-							curve.class.insert(curve, p, prev, next, cm.fig)
-						ELSIF (prev # NIL) OR (next # NIL) THEN	(* establish point-on-curve constraint *)
-						END
-					END
-				END
-			END
-		ELSIF (cm.id = Figures.Remove) & (cm.stamp # curve.stamp) THEN
-			Figures.HandleContainer(curve, cm);
-			ref := curve.first; n := 0;
-			WHILE ref # NIL DO
-				IF ref.shape.stamp # cm.stamp THEN INC(n) END;
-				ref := ref.next
-			END;
-			IF n < 2 THEN	(* not enough points left => remove curve as well *)
-				curve.stamp := cm.stamp
-			ELSIF (curve.pred # NIL) & (curve.first.shape.stamp = cm.stamp) THEN
-				NEW(a); a.pred := curve.pred; a.succ := curve;
-				Figures.AddAction(cm.fig, a, DoUnlinkCurves)
-			END
-		END
-	END ControlCurve;
-	
-	PROCEDURE DoReverseCurve (fig: Figures.Figure; fa: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR curve, succ: Curve; ref, next: Figures.Reference;
-	BEGIN
-		curve := fa(Action).curve;
-		ref := curve.first; curve.first := curve.last; curve.last := ref;
-		WHILE ref # NIL DO
-			next := ref.next; ref.next := ref.prev; ref.prev := ref.next;
-			ref := next
-		END;
-		succ := curve.succ; curve.succ := curve.pred; curve.pred := succ;
-		curve.stamp := stamp
-	END DoReverseCurve;
-	
-	PROCEDURE ReverseCurve (curve: Curve; fig: Figures.Figure);
-		VAR a: Action;
-	BEGIN
-		IF (curve.pred # NIL) & ~curve.pred.sel THEN
-			SplitPath(curve.pred, curve, NIL, fig)
-		END;
-		IF (curve.succ # NIL) & ~curve.succ.sel THEN
-			SplitPath(curve, curve.succ, NIL, fig)
-		END;
-		NEW(a); a.curve := curve;
-		Figures.AddAction(fig, a, DoReverseCurve)
-	END ReverseCurve;
-	
-	PROCEDURE CopyCurve* (VAR msg: Objects.CopyMsg; from, to: Curve);
-	BEGIN
-		Figures.CopyContainer(msg, from, to);
-		to.class := from.class;
-		LeoPens.CopyRef(msg, from.stroke, to.stroke);
-		to.dx0 := from.dx0; to.dy0 := from.dy0; to.dx1 := from.dx1; to.dy1 := from.dy1;
-		to.len := from.len
-	END CopyCurve;
-	
-	PROCEDURE HandleCurve* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR curve, copy: Curve; ref: Figures.Reference; ver: LONGINT;
-	BEGIN
-		curve := obj(Curve);
-		IF msg IS Figures.ShapeMsg THEN
-			IF msg IS Figures.SelectMsg THEN
-				SelectCurve(curve, msg(Figures.SelectMsg))
-			ELSIF msg IS Figures.LocateMsg THEN
-				LocateCurve(curve, msg(Figures.LocateMsg))
-			ELSIF msg IS Figures.DrawMsg THEN
-				WITH msg: Figures.DrawMsg DO
-					RenderCurve(curve, msg);
-					RenderSelMarker(curve, msg);
-					IF curve.sel OR (curve.cont # NIL) & (curve.cont IS Path) & curve.cont.sel THEN
-						Figures.HandleRefs(curve, msg)
-					END
-				END
-			ELSIF msg IS Figures.ValidateMsg THEN
-				Figures.HandleRefs(curve, msg);
-				IF msg.stamp = curve.stamp THEN
-					WITH msg: Figures.ValidateMsg DO
-						Figures.UpdateShapeRect(curve, msg.fig, msg.mat);
-						ValidateCurve(curve);
-						Figures.HandleShape(curve, msg)
-					END
-				END
-			ELSIF msg IS Figures.ControlMsg THEN
-				ControlCurve(curve, msg(Figures.ControlMsg))
-			ELSIF msg IS Figures.PriorityMsg THEN
-				WITH msg: Figures.PriorityMsg DO
-					IF (msg.id = Figures.Reverse) & curve.sel THEN
-						ReverseCurve(curve, msg.fig)
-					END
-				END
-			ELSIF msg IS Figures.TransformMsg THEN
-				IF (msg(Figures.TransformMsg).id = Figures.Apply) & (msg.stamp = curve.stamp) THEN
-					ref := curve.first;
-					WHILE ref # NIL DO ref.shape.stamp := msg.stamp; ref := ref.next END
-				END;
-				Figures.HandleContainer(curve, msg)
-			ELSE
-				Figures.HandleContainer(curve, msg)
-			END
-		ELSIF msg IS Objects.LinkMsg THEN
-			WITH msg: Objects.LinkMsg DO
-				LeoPens.LinkRef(msg, "StrokePen", TRUE, curve.stroke);
-				Figures.HandleContainer(curve, msg)
 			END
 		ELSIF msg IS Objects.CopyMsg THEN
 			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # curve.stamp THEN
-					NEW(copy); curve.dlink := copy; curve.stamp := msg.stamp;
-					CopyCurve(msg, curve, copy)
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					LeoPens.Copy(msg, pen, copy)
 				END;
-				msg.obj := curve.dlink
+				msg.obj := pen.dlink
 			END
-		ELSIF msg IS Objects.BindMsg THEN
-			IF curve.stroke # NIL THEN Figures.Forward(curve, curve.stroke, msg) END;
-			Figures.HandleContainer(curve, msg)
 		ELSIF msg IS Objects.FileMsg THEN
 			WITH msg: Objects.FileMsg DO
-				Figures.HandleContainer(curve, msg);
+				LeoPens.Handle(pen, msg);
 				IF msg.id = Objects.store THEN
-					Files.WriteNum(msg.R, 1);
-					LeoPens.WriteRef(msg.R, curve.lib, curve.stroke);
-					Gadgets.WriteRef(msg.R, curve.lib, curve.pred);
-					Gadgets.WriteRef(msg.R, curve.lib, curve.succ)
+					Files.WriteNum(msg.R, 1)
 				ELSIF msg.id = Objects.load THEN
-					Files.ReadNum(msg.R, ver);
-					IF ver >= 1 THEN
-						LeoPens.ReadRef(msg.R, curve.lib, curve.stroke);
-						Gadgets.ReadRef(msg.R, curve.lib, obj);
-						IF (obj # NIL) & (obj IS Curve) THEN curve.pred := obj(Curve) END;
-						Gadgets.ReadRef(msg.R, curve.lib, obj);
-						IF (obj # NIL) & (obj IS Curve) THEN curve.succ := obj(Curve) END;
-						ValidateCurve(curve)
-					END
+					Files.ReadNum(msg.R, ver)
 				END
 			END
 		ELSE
-			Figures.HandleContainer(curve, msg)
+			LeoPens.Handle(pen, msg)
 		END
-	END HandleCurve;
+	END HandlePathifier;
 	
-	PROCEDURE InitCurve* (curve: Curve; class: CurveClass; first, last: Figures.Reference; stroke: GfxPens.Pen);
+	PROCEDURE InitPathifier* (pen: Pathifier);
 	BEGIN
-		curve.class := class; curve.stroke := stroke;
-		IF (first # last) & (first.shape = last.shape) THEN
-			curve.pred := curve; curve.succ := curve
-		ELSE
-			curve.pred := NIL; curve.succ := NIL
-		END;
-		curve.first := first; curve.last := last;
-		WHILE first # NIL DO first.shape.cont := curve; first := first.next END;
-		ValidateCurve(curve)
-	END InitCurve;
+		pen.handle := HandlePathifier; pen.do := PathifierMethods;
+		pen.destructive := FALSE; pen.needDist := FALSE; pen.zeroDistOnly := FALSE
+	END InitPathifier;
 	
-	PROCEDURE Append* (curve: Curve; p: Point);
-		VAR ref: Figures.Reference;
+	PROCEDURE NewPathifier*;
+		VAR pen: Pathifier;
 	BEGIN
-		NEW(ref); ref.shape := p; p.cont := curve;
-		IF curve.succ # NIL THEN	(* closed subpath => insert before last point *)
-			ref.prev := curve.last.prev; ref.next := curve.last;
-			ref.prev.next := ref; ref.next.prev := ref
-		ELSE
-			ref.prev := curve.last; curve.last.next := ref; curve.last := ref
-		END
-	END Append;
+		NEW(pen); InitPathifier(pen);
+		Objects.NewObj := pen
+	END NewPathifier;
 	
-	
-	(**--- Paths ---**)
-	
-	PROCEDURE ValidatePath* (path: Path);
-		VAR ref: Figures.Reference; curve: Curve;
+	PROCEDURE BeginPathifier (pen: LeoPens.Pen; ctxt: Gfx.Context);
+		VAR pp: Pathifier;
 	BEGIN
-		Figures.ValidateContainer(path);
-		ref := path.first;
-		WHILE ref # NIL DO
-			curve := ref.shape(Curve);
-			IF (curve.pred = NIL) OR (ref.prev = NIL) OR (curve.pred # ref.prev.shape) THEN
-				curve.boff := 0
+		pp := pen(Pathifier);
+		LeoPens.Begin(pp, ctxt);
+		pp.bot := NIL; pp.top := NIL; pp.elem := GfxPaths.Stop
+	END BeginPathifier;
+	
+	PROCEDURE EnterPathifier (pen: LeoPens.Pen; x, y, dx, dy, bdist: REAL);
+		VAR pp: Pathifier;
+	BEGIN
+		pp := pen(Pathifier);
+		pp.x0 := x; pp.y0 := y; pp.x := x; pp.y := y; pp.elem := GfxPaths.Enter; pp.enter := NIL
+	END EnterPathifier;
+	
+	PROCEDURE ExitPathifier (pen: LeoPens.Pen; dx, dy, dist: REAL);
+		VAR pp: Pathifier;
+	BEGIN
+		pp := pen(Pathifier);
+		IF (pp.enter # NIL) & ((dx # 0) OR (dy # 0)) & (pp.x = pp.x0) & (pp.y = pp.y0) THEN
+			IF pp.top = pp.enter THEN
+				pp.enter.top := pp.enter.top.down; pp.enter.top.up := NIL;
+				pp.enter.closed := TRUE
 			ELSE
-				curve.boff := curve.pred.boff + curve.pred.len
-			END;
-			ref := ref.next
+				pp.enter.pred := coincident + wrap; pp.top.succ := coincident + wrap
+			END
 		END;
-		ref := path.last;
-		WHILE ref # NIL DO
-			curve := ref.shape(Curve);
-			IF (curve.succ = NIL) OR (ref.next = NIL) OR (curve.succ # ref.next.shape) THEN
-				curve.eoff := 0
+		pp.elem := GfxPaths.Exit
+	END ExitPathifier;
+	
+	PROCEDURE PathifyLine (pen: LeoPens.Pen; x, y: REAL);
+		VAR pp: Pathifier; seg: Segment; p, q: Point;
+	BEGIN
+		pp := pen(Pathifier);
+		IF pp.elem = GfxPaths.Line THEN	(* append to current polyline *)
+			seg := pp.top;
+			NEW(p); InitPoint(p, x, y); p.cont := seg;
+			p.down := seg.top; seg.top.up := p; seg.top := p
+		ELSE
+			NEW(p); InitPoint(p, pp.x, pp.y);
+			NEW(q); InitPoint(q, x, y);
+			p.up := q; q.down := p;
+			NEW(seg); InitPolyline(seg, p, q, FALSE, LeoPens.Default); seg.marked := TRUE;
+			IF pp.bot = NIL THEN
+				pp.bot := seg
 			ELSE
-				curve.eoff := curve.succ.eoff - curve.succ.len
-			END;
-			ref := ref.prev
-		END
-	END ValidatePath;
-	
-	PROCEDURE LocatePath (path: Path; VAR lm: Figures.LocateMsg);
-		VAR shapes: Figures.Shape; ref: Figures.Reference; dm: Figures.DrawMsg; curve: Curve;
-	BEGIN
-		IF lm.stamp # path.stamp THEN
-			path.stamp := lm.stamp;
-			IF (lm.llx <= path.urx) & (path.llx <= lm.urx) & (lm.lly <= path.ury) & (path.lly <= lm.ury) THEN
-				IF lm.id = Figures.Inside THEN
-					IF (lm.llx <= path.llx) & (path.urx <= lm.urx) & (lm.lly <= path.lly) & (path.ury <= lm.ury) THEN
-						path.slink := lm.shapes; lm.shapes := path
-					ELSE
-						Figures.HandleRefs(path, lm)
-					END
-				ELSIF lm.id = Figures.Overlap THEN
-					shapes := lm.shapes;
-					Figures.HandleRefs(path, lm);
-					IF (lm.shapes # shapes) & ~path.sel THEN
-						lm.shapes := path; path.slink := shapes
-					ELSIF (lm.shapes = shapes) & (path.fill # NIL) THEN	(* check if rect overlaps path interior *)
-						Recorder.do.begin(Recorder, NIL);
-						ref := path.first; dm.id := Figures.Print; dm.all := TRUE;
-						WHILE ref # NIL DO
-							curve := ref.shape(Curve);
-							curve.class.render(curve, Recorder, dm);
-							ref := ref.next
-						END;
-						Recorder.do.end(Recorder);
-						IF GfxPaths.InPath(lm.llx, lm.lly, lm.urx, lm.ury, Recorder.path, FALSE) THEN
-							lm.shapes := path; path.slink := shapes
-						END
-					END
-				ELSIF lm.id = Figures.Project THEN
-					Figures.HandleRefs(path, lm)
+				pp.top.up := seg;
+				IF pp.enter = NIL THEN pp.enter := seg
+				ELSE pp.top.succ := coincident; seg.pred := coincident
 				END
-			END
-		END
-	END LocatePath;
+			END;
+			seg.down := pp.top; pp.top := seg
+		END;
+		pp.x := x; pp.y := y; pp.elem := GfxPaths.Line
+	END PathifyLine;
 	
-	PROCEDURE DrawPath (path: Path; VAR dm: Figures.DrawMsg);
-		VAR pen: GfxPens.Pen; ref: Figures.Reference; curve: Curve;
+	PROCEDURE PathifyArc (pen: LeoPens.Pen; x, y, x0, y0, x1, y1, x2, y2: REAL);
+		VAR pp: Pathifier; p0, p1: Point; arc: Arc;
 	BEGIN
-		IF (dm.llx <= path.urx) & (path.llx <= dm.urx) & (dm.lly <= path.ury) & (path.lly <= dm.ury) THEN
-			IF dm.all & (path.fill # NIL) THEN	(* fill path interior *)
-				pen := path.fill;
-				pen.do.begin(pen, dm.ctxt);
-				ref := path.first;
-				WHILE ref # NIL DO
-					curve := ref.shape(Curve);
-					IF (curve.pred # NIL) & (curve.succ # NIL) THEN
-						curve.class.render(curve, pen, dm)
-					END;
-					ref := ref.next
-				END;
-				pen.do.end(pen)
-			END;
-			Figures.HandleRefs(path, dm)
-		END
-	END DrawPath;
-	
-	PROCEDURE ControlPath (path: Path; VAR cm: Figures.ControlMsg);
-		VAR p: Point; llx, lly, urx, ury, px, py: REAL; cref, pref, prev, next: Figures.Reference; curve: Curve; stamp: LONGINT;
-		
-		PROCEDURE allCurves (obj: Objects.Object): BOOLEAN;
-		BEGIN
-			WHILE obj # NIL DO
-				IF ~(obj IS Curve) THEN RETURN FALSE END;
-				obj := obj.slink
-			END;
-			RETURN TRUE
-		END allCurves;
-		
-	BEGIN
-		IF cm.id = Figures.Consume THEN
-			IF cm.dest # path THEN
-				Figures.HandleRefs(path, cm)
-			END;
-			IF cm.dest = path THEN
-				IF allCurves(cm.shapes) THEN
-					Figures.HandleContainer(path, cm)
-				ELSIF (cm.shapes IS Path) & (cm.shapes.slink = NIL) THEN
-					JoinPaths(path, cm.shapes(Path), cm.fig)
-				ELSIF (cm.shapes IS Point) & (cm.shapes.slink = NIL) THEN
-					p := cm.shapes(Point); llx := p.x-1; lly := p.y-1; urx := p.x+1; ury := p.y+1;
-					cref := path.last;
-					WHILE (cref # NIL) & (cm.dest = path) DO
-						curve := cref.shape(Curve);
-						pref := curve.last;
-						WHILE (pref # NIL) & (cm.dest = path) DO
-							p := pref.shape(Point);
-							IF (llx <= p.x) & (p.x <= urx) & (lly <= p.y) & (p.y <= ury) THEN cm.dest := p END;
-							pref := pref.prev
-						END;
-						IF cm.dest = path THEN
-							curve.class.locate(curve, llx, lly, urx, ury, prev, next, px, py);
-							IF (prev # NIL) OR (next # NIL) THEN
-								cm.dest := curve
-							END
-						END
-					END;
-					IF (cm.dest = path) & (cm.shapes(Point).cont = NIL) THEN
-						curve := path.last.shape(Curve); cm.dest := curve
-					END;
-					IF cm.dest # path THEN
-						Figures.Forward(path, curve, cm)
-					END
-				END
+		pp := pen(Pathifier);
+		NEW(p0); InitPoint(p0, pp.x, pp.y);
+		NEW(p1); InitPoint(p1, x, y);
+		p0.up := p1; p1.down := p0;
+		NEW(arc); InitSegment(arc, HandleArc, p0, p1, FALSE, LeoPens.Default); arc.marked := TRUE;
+		GfxMatrix.Init(arc.mat, x1 - x0, x2 - x0, y1 - y0, y2 - y0, x0, y0);
+		CalcArcBox(arc, GfxMatrix.Identity);
+		IF pp.bot = NIL THEN
+			pp.bot := arc
+		ELSE
+			pp.top.up := arc;
+			IF pp.enter = NIL THEN pp.enter := arc
+			ELSE pp.top.succ := coincident; arc.pred := coincident
 			END
-		ELSIF (cm.id = Figures.Remove) & (cm.stamp # path.stamp) THEN
-			Figures.HandleContainer(path, cm);
-			stamp := path.stamp; path.stamp := cm.stamp;
-			cref := path.first;
-			WHILE cref # NIL DO
-				IF cref.shape.stamp = cm.stamp THEN
-					curve := cref.shape(Curve);
-					IF curve.pred # NIL THEN SplitPath(curve.pred, curve, NIL, cm.fig) END;
-					IF curve.succ # NIL THEN SplitPath(curve, curve.succ, NIL, cm.fig) END
-				ELSE
-					path.stamp := stamp	(* path is only deleted if all its curves are *)
-				END;
-				cref := cref.next
-			END
-		END
-	END ControlPath;
+		END;
+		arc.down := pp.top; pp.top := arc;
+		pp.x := x; pp.y := y; pp.elem := GfxPaths.Arc
+	END PathifyArc;
 	
-	PROCEDURE CopyPath (VAR msg: Objects.CopyMsg; from, to: Path);
-		VAR cm: Objects.CopyMsg; fref, tref: Figures.Reference; fc, tc: Curve;
+	PROCEDURE PathifyBezier (pen: LeoPens.Pen; x, y, x1, y1, x2, y2: REAL);
+		VAR pp: Pathifier; p0, p1, p2, p: Point; seg: Segment;
 	BEGIN
-		Figures.CopyContainer(msg, from, to);
-		LeoPens.CopyRef(msg, from.fill, to.fill);
-		cm.stamp := msg.stamp; cm.id := Objects.shallow;	(* use identical stamp to link to already copied curves *)
-		fref := from.first; tref := to.first;
-		WHILE fref # NIL DO
-			fc := fref.shape(Curve); tc := tref.shape(Curve);
-			IF fc.pred # NIL THEN
-				fc.pred.handle(fc.pred, cm);
-				tc.pred := cm.obj(Curve)
-			END;
-			IF fc.succ # NIL THEN
-				fc.succ.handle(fc.succ, cm);
-				tc.succ := cm.obj(Curve)
-			END;
-			tc.boff := fc.boff; tc.eoff := fc.eoff;
-			fref := fref.next; tref := tref.next
-		END
-	END CopyPath;
+		pp := pen(Pathifier);
+		NEW(p0); InitPoint(p0, pp.x, pp.y);
+		NEW(p1); InitPoint(p1, x1, y1);
+		NEW(p2); InitPoint(p2, x2, y2);
+		NEW(p); InitPoint(p, x, y);
+		p0.up := p1; p1.down := p0; p1.up := p2; p2.down := p1; p2.up := p; p.down := p2;
+		NEW(seg); InitBezier(seg, p0, p, FALSE, LeoPens.Default); seg.marked := TRUE;
+		IF pp.bot = NIL THEN
+			pp.bot := seg
+		ELSE
+			pp.top.up := seg;
+			IF pp.enter = NIL THEN pp.enter := seg
+			ELSE pp.top.succ := coincident; seg.pred := coincident
+			END
+		END;
+		seg.down := pp.top; pp.top := seg;
+		pp.x := x; pp.y := y; pp.elem := GfxPaths.Bezier
+	END PathifyBezier;
 	
-	PROCEDURE ReadCurves (VAR r: Files.Rider; path: Path);
+	PROCEDURE InitPathifiers;
+	BEGIN
+		NEW(PathifierMethods);
+		PathifierMethods.begin := BeginPathifier; PathifierMethods.end := LeoPens.End;
+		PathifierMethods.enter := EnterPathifier; PathifierMethods.exit := ExitPathifier;
+		PathifierMethods.line := PathifyLine; PathifierMethods.arc := PathifyArc; PathifierMethods.bezier := PathifyBezier;
+		PathifierMethods.render := LeoPens.RenderPath
+	END InitPathifiers;
+	
+	PROCEDURE Realize* (path: Path);
+		VAR fig: Leonardo.Figure; pen: Pathifier; rm: RenderMsg; cur, down: Leonardo.Shape;
+	BEGIN
+		fig := Leonardo.ContainingFigure(path);
+		Leonardo.DisableUpdate(fig); Leonardo.BeginCommand(fig);
+		NEW(pen); InitPathifier(pen);
+		Objects.Stamp(rm); rm.fig := fig; rm.pen := pen;
+		cur := path.bottom; down := NIL;
+		WHILE cur # NIL DO
+			IF cur IS Segment THEN
+				down := cur
+			ELSE
+				pen.do.begin(pen, NIL);
+				cur.handle(cur, rm);
+				pen.do.end(pen);
+				Leonardo.AddDeleteAction(fig, down, cur, cur, cur.up, path);
+				Leonardo.AddConsumeAction(fig, down, pen.bot, pen.top, cur.up, path);
+				down := pen.top
+			END;
+			cur := cur.up
+		END;
+		Leonardo.EndCommand(fig); Leonardo.EnableUpdate(fig)
+	END Realize;
+	
+	
+	(**--- Legacy Code ---**)
+	
+	PROCEDURE NewPolygon*;
+	BEGIN
+		Objects.NewObj := Gadgets.CreateObject("LeoCurves.NewPolygon")
+	END NewPolygon;
+	
+	PROCEDURE NewArc*;
+	BEGIN
+		Objects.NewObj := Gadgets.CreateObject("LeoCurves.NewArc")
+	END NewArc;
+	
+	PROCEDURE NewBezier*;
+	BEGIN
+		Objects.NewObj := Gadgets.CreateObject("LeoCurves.NewBezier")
+	END NewBezier;
+	
+	PROCEDURE NewSpline*;
+	BEGIN
+		Objects.NewObj := Gadgets.CreateObject("LeoSplines.NewSpline")
+	END NewSpline;
+	
+	PROCEDURE ReadLegacyCurves (VAR r: Files.Rider; path: Path);
 		VAR
-			n, i, m: LONGINT; key: INTEGER; name: ARRAY 64 OF CHAR; obj: Objects.Object;
-			cv: ARRAY 64 OF Curve; succ, pred, last: ARRAY 64 OF LONGINT; ref: Figures.Reference; curve: Curve;
+			n, i, succ, pred, j, m: LONGINT; key: INTEGER; name: ARRAY 64 OF CHAR; obj: Objects.Object;
+			cv: ARRAY 64 OF Segment; last: ARRAY 64 OF LONGINT; p: Leonardo.Shape;
+			curve: Segment; cm: Objects.CopyMsg;
 	BEGIN
-		(* compatibility code *)
 		Files.ReadNum(r, n);
 		i := 0;
 		WHILE i < n DO
@@ -1152,1226 +2852,111 @@ MODULE LeoPaths;	(** eos   **)
 			ELSE
 				obj := Gadgets.CreateObject("LeoPaths.NewPolygon")
 			END;
-			cv[i] := obj(Curve);
-			LeoPens.ReadRef(r, path.lib, cv[i].stroke);
-			Files.ReadNum(r, succ[i]);
-			Files.ReadNum(r, pred[i]);
+			IF (obj # NIL) & (obj IS Segment) THEN
+				cv[i] := obj(Segment)
+			END;
+			Gadgets.ReadRef(r, path.lib, obj);
+			IF (cv[i] # NIL) & (obj # NIL) & (obj IS LeoPens.Pen) THEN
+				cv[i].pen := obj(LeoPens.Pen)
+			END;
+			Files.ReadNum(r, succ); Files.ReadNum(r, pred);	(* successor and predecessor currently unused *)
 			Files.ReadNum(r, last[i]);
 			INC(i)
 		END;
-		cv[n] := NIL;
-		i := 0; ref := path.first; m := 0;
+		
+		p := path.bottom;
+		i := 0; WHILE (i < n) & (cv[i] = NIL) DO INC(i) END;
+		path.bottom := cv[i]; path.top := cv[i];
+		WHILE i < n DO
+			j := i+1; WHILE (j < n) & (cv[j] = NIL) DO INC(j) END;
+			IF j < n THEN
+				cv[i].up := cv[j]; cv[j].down := cv[i];
+				path.top := cv[j]
+			END;
+			i := j
+		END;
+		
+		i := 0; m := 0;
 		WHILE i < n DO
 			curve := cv[i];
-			curve.pred := cv[pred[i]]; curve.succ := cv[succ[i]];
-			curve.first := ref; ref.prev := NIL;
-			WHILE m < last[i] DO ref := ref.next; INC(m) END;
-			curve.last := ref; ref := ref.next; curve.last.next := NIL;
-			IF curve.succ # NIL THEN	(* need to create new first ref for successor *)
-				NEW(ref.prev); ref.prev.next := ref; ref := ref.prev; ref.shape := curve.last.shape
+			IF curve # NIL THEN
+				curve.bottom := p; p.down := NIL
 			END;
-			INC(i);
-			curve.slink := cv[i]
-		END;
-		Figures.MakeRefs(cv[0], path.first, path.last)
-	END ReadCurves;
-	
-	PROCEDURE HandlePath* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR path, copy: Path; ref: Figures.Reference; ver: LONGINT;
-	BEGIN
-		path := obj(Path);
-		IF msg IS Figures.ShapeMsg THEN
-			IF msg IS Figures.LocateMsg THEN
-				LocatePath(path, msg(Figures.LocateMsg))
-			ELSIF msg IS Figures.DrawMsg THEN
-				DrawPath(path, msg(Figures.DrawMsg))
-			ELSIF msg IS Figures.ValidateMsg THEN
-				Figures.HandleRefs(path, msg);
-				IF msg.stamp = path.stamp THEN
-					WITH msg: Figures.ValidateMsg DO
-						IF path.fill # NIL THEN
-							Figures.UpdateShapeRect(path, msg.fig, msg.mat)
-						END;
-						ValidatePath(path);
-						IF path.fill # NIL THEN
-							Figures.UpdateShapeRect(path, msg.fig, msg.mat)
-						END;
-						path.cont.stamp := msg.stamp
-					END
-				END
-			ELSIF msg IS Figures.ControlMsg THEN
-				ControlPath(path, msg(Figures.ControlMsg))
-			ELSIF msg IS Figures.TransformMsg THEN
-				IF (msg(Figures.TransformMsg).id = Figures.Apply) & (msg.stamp = path.stamp) THEN
-					ref := path.first;
-					WHILE ref # NIL DO ref.shape.stamp := path.stamp; ref := ref.next END
+			WHILE m < last[i] DO p := p.up; INC(m) END;
+			IF curve # NIL THEN
+				curve.top := p; p := p.up; curve.top.up := NIL;
+				IF p # NIL THEN	(* copy shared point *)
+					Objects.Stamp(cm); cm.id := Objects.shallow; cm.obj := curve.top; curve.top.handle(curve.top, cm);
+					cm.obj(Leonardo.Shape).up := p; p := cm.obj(Leonardo.Shape)
 				END;
-				Figures.HandleContainer(path, msg)
-			ELSE
-				Figures.HandleContainer(path, msg)
-			END
-		ELSIF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewPath")
-		ELSIF msg IS Objects.LinkMsg THEN
-			WITH msg: Objects.LinkMsg DO
-				LeoPens.LinkRef(msg, "FillPen", TRUE, path.fill);
-			END
-		ELSIF msg IS Objects.CopyMsg THEN
-			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # path.stamp THEN
-					NEW(copy); path.dlink := copy; path.stamp := msg.stamp;
-					CopyPath(msg, path, copy)
-				END;
-				msg.obj := path.dlink
-			END
-		ELSIF msg IS Objects.BindMsg THEN
-			IF path.fill # NIL THEN Figures.Forward(path, path.fill, msg) END;
-			Figures.HandleContainer(path, msg)
-		ELSIF msg IS Objects.FileMsg THEN
-			WITH msg: Objects.FileMsg DO
-				Figures.HandleContainer(path, msg);
-				IF msg.id = Objects.store THEN
-					Files.WriteNum(msg.R, 2);
-					LeoPens.WriteRef(msg.R, path.lib, path.fill)
-				ELSIF msg.id = Objects.load THEN
-					Files.ReadNum(msg.R, ver);
-					IF ver >= 1 THEN
-						LeoPens.ReadRef(msg.R, path.lib, path.fill)
-					END;
-					IF ver = 1 THEN	(* convert old style path *)
-						ReadCurves(msg.R, path)
-					END
-				END
-			END
+				Leonardo.GetComponentsBox(curve.bottom, curve.llx, curve.lly, curve.urx, curve.ury, curve.bw)
+			END;
+			INC(i)
 		END
-	END HandlePath;
+	END ReadLegacyCurves;
 	
-	PROCEDURE InitPath* (path: Path; curve: Curve; fill: GfxPens.Pen);
+	PROCEDURE HandleLegacyPath (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR path: Path; ver: LONGINT; i: INTEGER; real: REAL; cm: Objects.CopyMsg; s: Leonardo.Shape; bool: BOOLEAN;
 	BEGIN
-		Figures.InitContainer(path);
-		path.handle := HandlePath;
-		IF curve # NIL THEN
-			NEW(path.first); path.first.shape := curve; curve.cont := path; path.last := path.first;
-			Figures.ValidateContainer(path)
-		END;
-		path.fill := fill
-	END InitPath;
+		IF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				ASSERT(msg.id = Objects.load, 110);
+				path := obj(Path);
+				
+				(* shape part *)
+				Files.ReadNum(msg.R, ver);
+				ASSERT(ver IN {1, 2}, 111);
+				IF ver = 1 THEN
+					Files.ReadInt(msg.R, i); Files.ReadInt(msg.R, i); Files.ReadInt(msg.R, i); Files.ReadInt(msg.R, i);
+					Files.ReadReal(msg.R, real)
+				END;
+				
+				(* container part *)
+				Files.ReadNum(msg.R, ver);
+				ASSERT(ver IN {1, 2}, 112);
+				REPEAT
+					Gadgets.ReadRef(msg.R, path.lib, obj);
+					IF (obj # NIL) & (obj IS Leonardo.Shape) THEN
+						Objects.Stamp(cm); cm.id := Objects.shallow; cm.obj := obj; obj.handle(obj, cm);
+						s := cm.obj(Leonardo.Shape); s.cont := path;
+						IF path.bottom = NIL THEN path.bottom := s ELSE path.top.up := s END;
+						s.down := path.top; path.top := s
+					END
+				UNTIL obj = NIL;
+				IF ver = 1 THEN
+					Files.ReadBool(msg.R, bool)
+				END;
+				Leonardo.GetComponentsBox(path.bottom, path.llx, path.lly, path.urx, path.ury, path.bw);
+				
+				(* area part *)
+				Files.ReadNum(msg.R, ver);
+				ASSERT(ver IN {1, 2}, 113);
+				Gadgets.ReadRef(msg.R, path.lib, obj);
+				IF (obj # NIL) & (obj IS LeoPens.Pen) THEN
+					path.pen := obj(LeoPens.Pen)
+				END;
+				IF ver = 1 THEN
+					ReadLegacyCurves(msg.R, path)
+				END;
+				
+				path.handle := HandlePath
+			END
+		ELSE
+			HandlePath(obj, msg)
+		END
+	END HandleLegacyPath;
 	
 	PROCEDURE NewPath*;
 		VAR path: Path;
 	BEGIN
-		NEW(path); InitPath(path, NIL, NIL);
+		NEW(path); path.handle := HandleLegacyPath; path.pen := LeoPens.Default;
 		Objects.NewObj := path
 	END NewPath;
-	
-	
-	(*--- Tool Routines ---*)
-	
-	PROCEDURE DrawCross (x, y: INTEGER);
-	BEGIN
-		DEC(x, 8); DEC(y, 8);
-		Effects.OpenCursor(x, y, 17, 17);
-		Display.CopyPattern(Display3.textbackC, CrossBG, x, y, Display.paint);
-		Display.CopyPattern(Display3.black, CrossFG, x, y, Display.paint)
-	END DrawCross;
-	
-	PROCEDURE FadeCross (x, y: INTEGER);
-	BEGIN
-		Effects.CloseCursor
-	END FadeCross;
-	
-	PROCEDURE InitCross;
-		VAR p: ARRAY 17 OF SET; i: LONGINT;
-	BEGIN
-		p[0] := {}; p[8] := {1..7, 9..15}; p[16] := {};
-		FOR i := 1 TO 7 DO p[i] := {8} END;
-		FOR i := 9 TO 15 DO p[i] := {8} END;
-		CrossFG := Display.NewPattern(17, 17, p);
-		p[0] := {7..9}; p[7] := {0..7, 9..16}; p[8] := {0, 16}; p[9] := {0..7, 9..16}; p[16] := {7..9};
-		FOR i := 1 TO 6 DO p[i] := {7, 9} END;
-		FOR i := 10 TO 15 DO p[i] := {7, 9} END;
-		CrossBG := Display.NewPattern(17, 17, p);
-		Cross.Draw := DrawCross; Cross.Fade := FadeCross
-	END InitCross;
-	
-	PROCEDURE GetPointPair (x, y: REAL; VAR first, last: Figures.Reference; VAR p: Point);
-	BEGIN
-		NEW(p); InitPoint(p, x, y);
-		NEW(first); first.shape := p;
-		NEW(p); InitPoint(p, x, y);
-		NEW(last); last.shape := p;
-		first.next := last; last.prev := first;
-		IF ClosedCurve.val THEN
-			NEW(last.next); last.next.prev := last; last := last.next;
-			last.shape := first.shape
-		END
-	END GetPointPair;
-	
-	PROCEDURE FillPen (): GfxPens.Pen;
-	BEGIN
-		IF ClosedCurve.val THEN
-			RETURN LeoPens.Filler
-		ELSE
-			RETURN NIL
-		END
-	END FillPen;
-	
-	PROCEDURE DragPoint (frame: LeoFrames.Frame; fx, fy: INTEGER; curve: Curve; p: Point; px, py: REAL; VAR keys: SET);
-		VAR fig: Figures.Figure; dm: Figures.DrawMsg; mx, my, x, y: INTEGER; mkeys: SET;
-	BEGIN
-		fig := frame.obj(Figures.Figure);
-		Oberon.FadeCursor(Oberon.Mouse);
-		dm.fig := fig; dm.id := Figures.Full; dm.all := TRUE; dm.ctxt := LeoFrames.DragCtxt; dm.mat := dm.ctxt.ctm;
-		Gfx.GetClipRect(dm.ctxt, dm.llx, dm.lly, dm.urx, dm.ury);
-		curve.handle(curve, dm);
-		mx := -1; my := -1; mkeys := keys;
-		Input.Mouse(keys, x, y);
-		Oberon.DrawCursor(Oberon.Mouse, Cross, x, y);
-		WHILE keys = mkeys DO
-			IF (x # mx) OR (y # my) THEN
-				Oberon.FadeCursor(Oberon.Mouse);
-				curve.handle(curve, dm);
-				LeoFrames.PixelToPoint(frame, x - fx, y - fy, p.x, p.y);
-				LeoFrames.AlignPoint(frame, px, py, p.x, p.y);
-				curve.handle(curve, dm);
-				Oberon.DrawCursor(Oberon.Mouse, Cross, x, y);
-				mx := x; my := y
-			END;
-			Input.Mouse(keys, x, y)
-		END;
-		p.llx := p.x; p.lly := p.y; p.urx := p.x; p.ury := p.y;
-		Oberon.FadeCursor(Oberon.Mouse);
-		curve.handle(curve, dm)
-	END DragPoint;
-	
-	PROCEDURE HandleTool (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR frame: LeoFrames.Frame;
-	BEGIN
-		frame := obj(LeoFrames.Frame);
-		IF msg IS Oberon.InputMsg THEN
-			WITH msg: Oberon.InputMsg DO
-				IF msg.id = Oberon.track THEN
-					IF msg.keys = {ML} THEN
-						Track(frame, msg)
-					ELSIF msg.keys = {} THEN
-						Oberon.DrawCursor(Oberon.Mouse, Marker, msg.X, msg.Y);
-						msg.res := 0
-					ELSE
-						LeoFrames.HandleTool(frame, msg)
-					END
-				ELSE
-					LeoFrames.HandleTool(frame, msg)
-				END
-			END
-		ELSE
-			LeoFrames.HandleTool(frame, msg)
-		END
-	END HandleTool;
-	
-	
-	(**--- Polygons ---**)
-	
-	PROCEDURE PolygonLength (poly: Curve): REAL;
-		VAR len, dx, dy: REAL; ref: Figures.Reference; p1, p0: Point;
-	BEGIN
-		len := 0;
-		ref := poly.first; p1 := ref.shape(Point);
-		WHILE ref # poly.last DO
-			p0 := p1;
-			ref := ref.next; p1 := ref.shape(Point);
-			dx := p1.x - p0.x; dy := p1.y - p0.y;
-			len := len + Math.sqrt(dx * dx + dy * dy)
-		END;
-		RETURN len
-	END PolygonLength;
-	
-	PROCEDURE RenderPolygon (poly: Curve; pen: GfxPens.Pen; VAR dm: Figures.DrawMsg);
-		VAR ref: Figures.Reference; p0, p1, p2: Point; all: BOOLEAN;
-	BEGIN
-		ref := poly.first; p0 := ref.shape(Point);
-		ref := ref.next; p1 := ref.shape(Point);
-		all := dm.all OR (poly.stamp = dm.stamp);
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) THEN
-			IF poly.pred = NIL THEN pen.do.enter(pen, p0.x, p0.y, 0, 0, 0)
-			ELSE pen.do.enter(pen, p0.x, p0.y, poly.pred.dx1, poly.pred.dy1, poly.boff)
-			END;
-			pen.do.line(pen, p1.x, p1.y)
-		END;
-		ref := ref.next;
-		WHILE ref # NIL DO
-			p2 := ref.shape(Point);
-			IF all THEN
-				pen.do.line(pen, p2.x, p2.y)
-			ELSIF p1.stamp = dm.stamp THEN
-				pen.do.line(pen, p2.x, p2.y)
-			ELSIF p2.stamp = dm.stamp THEN
-				IF p0.stamp # dm.stamp THEN
-					pen.do.enter(pen, p1.x, p1.y, p1.x - p0.x, p1.y - p0.y, 0)	(* offset? *)
-				END;
-				pen.do.line(pen, p2.x, p2.y)
-			ELSIF p0.stamp = dm.stamp THEN
-				pen.do.exit(pen, p2.x - p1.x, p2.y - p1.y, 0)	(* offset? *)
-			END;
-			p0 := p1; p1 := p2; ref := ref.next
-		END;
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) THEN
-			IF poly.succ = NIL THEN pen.do.exit(pen, 0, 0, 0)
-			ELSE pen.do.exit(pen, poly.succ.dx0, poly.succ.dy0, poly.eoff)
-			END
-		END
-	END RenderPolygon;
-	
-	PROCEDURE LocatePolygon (poly: Curve; llx, lly, urx, ury: REAL; VAR prev, next: Figures.Reference; VAR px, py: REAL);
-		VAR ref: Figures.Reference; p, q: Point;
-	BEGIN
-		prev := NIL; next := NIL;
-		ref := poly.last; p := ref.shape(Point);
-		WHILE ref # poly.first DO
-			q := p; ref := ref.prev; p := ref.shape(Point);
-			IF OnLine(p.x, p.y, q.x, q.y, llx, lly, urx, ury, px, py) THEN
-				prev := ref; next := ref.next;
-				RETURN
-			END
-		END
-	END LocatePolygon;
-	
-	PROCEDURE InitPolygonClass;
-	BEGIN
-		NEW(PolygonClass);
-		PolygonClass.length := PolygonLength;
-		PolygonClass.render := RenderPolygon; PolygonClass.locate := LocatePolygon;
-		PolygonClass.insert := InsertInCurve; PolygonClass.split := SplitCurve
-	END InitPolygonClass;
-	
-	PROCEDURE HandlePolygon* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-	BEGIN
-		IF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewPolygon")
-		END;
-		HandleCurve(obj, msg)
-	END HandlePolygon;
-	
-	PROCEDURE NewPolygon*;
-		VAR poly: Curve;
-	BEGIN
-		NEW(poly); poly.handle := HandlePolygon; poly.class := PolygonClass;
-		Objects.NewObj := poly
-	END NewPolygon;
-	
-	PROCEDURE TrackPolygon (frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		VAR fx, fy, mx, my: INTEGER; px, py: REAL; first, last: Figures.Reference; p: Point; poly: Curve; keysum, keys: SET; path: Path;
-	BEGIN
-		fx := msg.x + frame.X; fy := msg.y + frame.Y;
-		LeoFrames.PixelToPoint(frame, msg.X - fx, msg.Y - fy, px, py);
-		LeoFrames.AlignPoint(frame, px, py, px, py);
-		GetPointPair(px, py, first, last, p);
-		NEW(poly); InitCurve(poly, PolygonClass, first, last, LeoPens.Stroker); poly.handle := HandlePolygon; poly.sel := TRUE;
-		LeoFrames.ResetDragCtxt(frame, fx, fy);
-		keysum := msg.keys; keys := msg.keys;
-		REPEAT
-			DragPoint(frame, fx, fy, poly, p, px, py, keys);
-			keysum := keysum + keys;
-			IF (keys = {ML, MM}) & (keysum # {ML, MM, MR}) THEN
-				DragPoint(frame, fx, fy, poly, p, px, py, keys);
-				keysum := keysum + keys;
-				px := p.x; py := p.y;
-				NEW(p); InitPoint(p, px, py);
-				Append(poly, p)
-			END
-		UNTIL keys = {};
-		IF keysum # {ML, MM, MR} THEN
-			ValidateCurve(poly);
-			IF ClosedCurve.val THEN
-				NEW(path); InitPath(path, poly, FillPen());
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, path)
-			ELSE
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, poly)
-			END
-		END;
-		Input.Mouse(keys, mx, my);
-		Oberon.DrawCursor(Oberon.Mouse, Cross, mx, my);
-		msg.res := 0
-	END TrackPolygon;
-	
-	PROCEDURE SetPolygonTool*;
-	BEGIN
-		Track := TrackPolygon; Marker := Cross;
-		LeoFrames.SetTool(HandleTool)
-	END SetPolygonTool;
-	
-	
-	(**--- Arcs ---**)
-	
-	PROCEDURE RenderArc (arc: Curve; pen: GfxPens.Pen; VAR dm: Figures.DrawMsg);
-		VAR ref: Figures.Reference; p0, p1, p2, p3, p4: Point; all: BOOLEAN;
-	BEGIN
-		ref := arc.first; p0 := ref.shape(Point);
-		ref := ref.next; p1 := ref.shape(Point);
-		IF ref = arc.last THEN
-			RenderPolygon(arc, pen, dm);
-			RETURN
-		END;
-		ref := ref.next; p2 := ref.shape(Point);
-		all := dm.all OR (arc.stamp = dm.stamp);
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) THEN
-			IF arc.pred = NIL THEN pen.do.enter(pen, p0.x, p0.y, 0, 0, 0)
-			ELSE pen.do.enter(pen, p0.x, p0.y, arc.pred.dx1, arc.pred.dy1, arc.boff)
-			END;
-			pen.do.arc(pen, p2.x, p2.y, p0.x + p2.x - p1.x, p0.y + p2.y - p1.y, p0.x, p0.y, p2.x, p2.y)
-		END;
-		ref := ref.next;
-		WHILE ref # NIL DO
-			p3 := ref.shape(Point); ref := ref.next;
-			IF ref = NIL THEN
-				IF all THEN
-					pen.do.line(pen, p3.x, p3.y)
-				ELSIF p2.stamp = dm.stamp THEN
-					pen.do.line(pen, p3.x, p3.y)
-				ELSIF p3.stamp = dm.stamp THEN
-					IF (p0.stamp # dm.stamp) & (p1.stamp # dm.stamp) THEN
-						pen.do.enter(pen, p2.x, p2.y, p2.x - p1.x, p2.y - p1.y, 0)	(* offset? *)
-					END;
-					pen.do.line(pen, p3.x, p3.y)
-				ELSIF (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) THEN
-					pen.do.exit(pen, p3.x - p2.x, p3.y - p2.y, 0)	(* offset? *)
-				END;
-				p0 := p2; p1 := p2; p2 := p3
-			ELSE
-				p4 := ref.shape(Point); ref := ref.next;
-				IF all THEN
-					pen.do.arc(pen, p4.x, p4.y, p2.x + p4.x - p3.x, p2.y + p4.y - p3.y, p2.x, p2.y, p4.x, p4.y)
-				ELSIF p2.stamp = dm.stamp THEN
-					pen.do.arc(pen, p4.x, p4.y, p2.x + p4.x - p3.x, p2.y + p4.y - p3.y, p2.x, p2.y, p4.x, p4.y)
-				ELSIF (p3.stamp = dm.stamp) OR (p4.stamp = dm.stamp) THEN
-					IF (p0.stamp # dm.stamp) & (p1.stamp # dm.stamp) THEN
-						pen.do.enter(pen, p2.x, p2.y, p2.x - p1.x, p2.y - p1.y, 0)	(* offset? *)
-					END;
-					pen.do.arc(pen, p4.x, p4.y, p2.x + p4.x - p3.x, p2.y + p4.y - p3.y, p2.x, p2.y, p4.x, p4.y)
-				ELSIF (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) THEN
-					pen.do.exit(pen, p3.x - p2.x, p3.y - p2.y, 0)	(* offset? *)
-				END;
-				p0 := p2; p1 := p3; p2 := p4
-			END
-		END;
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) THEN
-			IF arc.succ = NIL THEN pen.do.exit(pen, 0, 0, 0)
-			ELSE pen.do.exit(pen, arc.succ.dx0, arc.succ.dy0, arc.eoff)
-			END
-		END
-	END RenderArc;
-	
-	PROCEDURE DrawArc (arc: Curve; VAR dm: Figures.DrawMsg);
-		VAR ref: Figures.Reference;
-	BEGIN
-		RenderCurve(arc, dm);
-		RenderSelMarker(arc, dm);
-		IF arc.sel OR (arc.cont # NIL) & (arc.cont IS Path) & arc.cont.sel THEN
-			ref := arc.first;
-			LOOP
-				IF dm.all OR (ref.shape.stamp = dm.stamp) THEN
-					RenderPoint(ref.shape(Point), dm.ctxt, dm.id, Gfx.Black)
-				END;
-				ref := ref.next;
-				IF ref = NIL THEN EXIT END;
-				IF (dm.id = Figures.Full) & (ref # arc.last) & (dm.all OR (ref.shape.stamp = dm.stamp)) THEN
-					RenderPoint(ref.shape(Point), dm.ctxt, Figures.Full, Gfx.DGrey);
-					ref := ref.next
-				END
-			END
-		END
-	END DrawArc;
-	
-	PROCEDURE LocateArc (arc: Curve; llx, lly, urx, ury: REAL; VAR prev, next: Figures.Reference; VAR px, py: REAL);
-		VAR ref: Figures.Reference; p0, p1, p2: Point;
-	BEGIN
-		prev := NIL; next := NIL;
-		ref := arc.first; p0 := ref.shape(Point);
-		REPEAT
-			ref := ref.next; p1 := ref.shape(Point);
-			IF ref # arc.last THEN
-				ref := ref.next; p2 := ref.shape(Point);
-				IF OnArc(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, llx, lly, urx, ury, px, py) THEN
-					prev := ref.prev.prev; next := ref
-				END;
-				p0 := p2
-			ELSIF OnLine(p0.x, p0.y, p1.x, p1.y, llx, lly, urx, ury, px, py) THEN
-				prev := ref.prev; next := ref
-			END
-		UNTIL ref = arc.last
-	END LocateArc;
-	
-	PROCEDURE EnumInsertArc (VAR data: GfxPaths.EnumData);
-	BEGIN
-		WITH data: ArcData DO
-			IF data.tracking THEN
-				IF (data.rx * (data.y - data.my) - data.ry * (data.x - data.mx) > 0) # data.sense THEN	(* haven't found point yet *)
-					data.x0 := data.x; data.y0 := data.y
-				ELSE	(* found point *)
-					data.x1 := data.x; data.y1 := data.y;
-					data.tracking := FALSE
-				END
-			END
-		END
-	END EnumInsertArc;
-	
-	PROCEDURE InsertInArc (arc: Curve; point: Point; prev, next: Figures.Reference; fig: Figures.Figure);
-		VAR
-			ca: Figures.ControlAction; p0, p1, p2, p: Point; ax, ay, bx, by, dx, dy, x, y: REAL; data: ArcData;
-			ref, first, last: Figures.Reference;
-	BEGIN
-		IF prev.next = next THEN	(* inserting point in line at tail *)
-			InsertInCurve(arc, point, prev, next, fig);
-			RETURN
-		END;
-		
-		(* remove old control point *)
-		ASSERT(prev.next = next.prev);
-		NEW(ca); Figures.InitControlAction(ca, Figures.Remove, prev, prev.next, next.prev, next, arc);
-		Figures.AddAction(fig, ca, Figures.DoControlAction);
-		
-		(* find parameters of on-curve intersection *)
-		p0 := prev.shape(Point); p1 := prev.next.shape(Point); p2 := next.shape(Point);
-		ax := p1.x - p2.x; ay := p1.y - p2.y;
-		bx := p1.x - p0.x; by := p1.y - p0.y;
-		data.sense := ax * by - ay * bx > 0;
-		data.mx := p0.x - ax; data.my := p0.y - ay;
-		data.rx := point.x - data.mx; data.ry := point.y - data.my;
-		data.x0 := p0.x; data.y0 := p0.y; data.x1 := p2.x; data.y1 := p2.y; data.tracking := TRUE;
-		data.x := p0.x; data.y := p0.y;
-		GfxPaths.EnumArc(data.mx, data.my, p0.x, p0.y, p2.x, p2.y, p2.x, p2.y, 1, EnumInsertArc, data);
-		
-		(* create new off-curve points and insert all three points *)
-		dx := data.x1 - data.x0; dy := data.y1 - data.y0;
-		GfxPaths.IntersectLines(point.x, point.y, dx, dy, p0.x, p0.y, bx, by, x, y);
-		NEW(p); InitPoint(p, x, y);
-		NEW(first); first.shape := p;
-		NEW(ref); ref.shape := point;
-		ref.prev := first; first.next := ref;
-		GfxPaths.IntersectLines(point.x, point.y, dx, dy, p2.x, p2.y, ax, ay, x, y);
-		NEW(p); InitPoint(p, x, y);
-		NEW(last); last.shape := p;
-		last.prev := ref; ref.next := last;
-		NEW(ca); Figures.InitControlAction(ca, Figures.Consume, prev, first, last, next, arc);
-		Figures.AddAction(fig, ca, Figures.DoControlAction)
-	END InsertInArc;
-	
-	PROCEDURE InitArcClass;
-	BEGIN
-		NEW(ArcClass);
-		ArcClass.length := CurveLength; ArcClass.render := RenderArc; ArcClass.locate := LocateArc;
-		ArcClass.insert := InsertInArc; ArcClass.split := SplitCurve
-	END InitArcClass;
-	
-	PROCEDURE HandleArc* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-	BEGIN
-		IF msg IS Figures.DrawMsg THEN
-			DrawArc(obj(Curve), msg(Figures.DrawMsg))
-		ELSIF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewArc");
-			HandleCurve(obj, msg)
-		ELSE
-			HandleCurve(obj, msg)
-		END
-	END HandleArc;
-	
-	PROCEDURE NewArc*;
-		VAR arc: Curve;
-	BEGIN
-		NEW(arc); arc.handle := HandleArc; arc.class := ArcClass;
-		Objects.NewObj := arc
-	END NewArc;
-	
-	PROCEDURE TrackArc (frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		VAR 
-			fx, fy, mx, my: INTEGER; px, py: REAL; first, last: Figures.Reference; p, q: Point;
-			arc: Curve; keysum, keys: SET; path: Path;
-	BEGIN
-		fx := msg.x + frame.X; fy := msg.y + frame.Y;
-		LeoFrames.PixelToPoint(frame, msg.X - fx, msg.Y - fy, px, py);
-		LeoFrames.AlignPoint(frame, px, py, px, py);
-		GetPointPair(px, py, first, last, p);
-		NEW(arc); InitCurve(arc, ArcClass, first, last, LeoPens.Stroker); arc.handle := HandleArc; arc.sel := TRUE;
-		q := NIL;
-		LeoFrames.ResetDragCtxt(frame, fx, fy);
-		keysum := msg.keys; keys := msg.keys;
-		REPEAT
-			DragPoint(frame, fx, fy, arc, p, px, py, keys);
-			keysum := keysum + keys;
-			IF (keys = {ML, MM}) & (keysum # {ML, MM, MR}) THEN
-				DragPoint(frame, fx, fy, arc, p, px, py, keys);
-				keysum := keysum + keys;
-				px := p.x; py := p.y;
-				IF q # NIL THEN	(* MM interclicked more than once *)
-					NEW(p); InitPoint(p, px + (px - q.x), py + (py - q.y));
-					Append(arc, p)
-				END;
-				q := p;
-				NEW(p); InitPoint(p, px, py);
-				Append(arc, p)
-			END
-		UNTIL keys = {};
-		IF keysum # {ML, MM, MR} THEN
-			ValidateCurve(arc);
-			IF ClosedCurve.val THEN
-				NEW(path); InitPath(path, arc, FillPen());
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, path)
-			ELSE
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, arc)
-			END
-		END;
-		Input.Mouse(keys, mx, my);
-		Oberon.DrawCursor(Oberon.Mouse, Cross, mx, my);
-		msg.res := 0
-	END TrackArc;
-	
-	PROCEDURE SetArcTool*;
-	BEGIN
-		Track := TrackArc; Marker := Cross;
-		LeoFrames.SetTool(HandleTool)
-	END SetArcTool;
-	
-	
-	(**--- Beziers ---**)
-	
-	PROCEDURE RenderBezier (bezier: Curve; pen: GfxPens.Pen; VAR dm: Figures.DrawMsg);
-		VAR ref: Figures.Reference; p0, p1, p2, p3, p4, p5, p6: Point; all: BOOLEAN;
-	BEGIN
-		ref := bezier.first; p0 := ref.shape(Point);
-		ref := ref.next; p1 := ref.shape(Point);
-		IF ref = bezier.last THEN
-			RenderPolygon(bezier, pen, dm);
-			RETURN
-		END;
-		ref := ref.next; p2 := ref.shape(Point);
-		IF ref = bezier.last THEN
-			RenderArc(bezier, pen, dm);
-			RETURN
-		END;
-		ref := ref.next; p3 := ref.shape(Point);
-		all := dm.all OR (bezier.stamp = dm.stamp);
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) OR (p3.stamp = dm.stamp) THEN
-			IF bezier.pred = NIL THEN pen.do.enter(pen, p0.x, p0.y, 0, 0, 0)
-			ELSE pen.do.enter(pen, p0.x, p0.y, bezier.pred.dx1, bezier.pred.dy1, bezier.boff)
-			END;
-			pen.do.bezier(pen, p3.x, p3.y, p1.x, p1.y, p2.x, p2.y)
-		END;
-		ref := ref.next;
-		WHILE ref # NIL DO
-			p4 := ref.shape(Point); ref := ref.next;
-			IF ref = NIL THEN
-				IF all THEN
-					pen.do.line(pen, p4.x, p4.y)
-				ELSIF p3.stamp = dm.stamp THEN
-					pen.do.line(pen, p4.x, p4.y)
-				ELSIF p4.stamp = dm.stamp THEN
-					IF (p0.stamp # dm.stamp) & (p1.stamp # dm.stamp) & (p2.stamp # dm.stamp) THEN
-						pen.do.enter(pen, p3.x, p3.y, p3.x - p2.x, p3.y - p2.y, 0)	(* offset? *)
-					END;
-					pen.do.line(pen, p4.x, p4.y)
-				ELSIF (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) THEN
-					pen.do.exit(pen, p4.x - p3.x, p4.y - p3.y, 0)	(* offset? *)
-				END;
-				p0 := p3; p1 := p3; p2 := p4; p3 := p4
-			ELSE
-				p5 := ref.shape(Point); ref := ref.next;
-				IF ref = NIL THEN
-					IF all THEN
-						pen.do.arc(pen, p5.x, p5.y, p3.x + p5.x - p4.x, p3.y + p5.y - p4.y, p3.x, p3.y, p5.x, p5.y)
-					ELSIF p3.stamp = dm.stamp THEN
-						pen.do.arc(pen, p5.x, p5.y, p3.x + p5.x - p4.x, p3.y + p5.y - p4.y, p3.x, p3.y, p5.x, p5.y)
-					ELSIF (p4.stamp = dm.stamp) OR (p5.stamp = dm.stamp) THEN
-						IF (p0.stamp # dm.stamp) & (p1.stamp # dm.stamp) & (p2.stamp # dm.stamp) THEN
-							pen.do.enter(pen, p3.x, p3.y, p3.x - p2.x, p3.y - p2.y, 0)	(* offset *)
-						END;
-						pen.do.arc(pen, p5.x, p5.y, p3.x + p5.x - p4.x, p3.y + p5.y - p4.y, p3.x, p3.y, p5.x, p5.y)
-					ELSIF (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) THEN
-						pen.do.exit(pen, p4.x - p3.x, p4.y - p3.y, 0)	(* offset? *)
-					END;
-					p0 := p3; p1 := p4; p2 := p4; p3 := p5
-				ELSE
-					p6 := ref.shape(Point); ref := ref.next;
-					IF all THEN
-						pen.do.bezier(pen, p6.x, p6.y, p4.x, p4.y, p5.x, p5.y)
-					ELSIF p3.stamp = dm.stamp THEN
-						pen.do.bezier(pen, p6.x, p6.y, p4.x, p4.y, p5.x, p5.y)
-					ELSIF (p4.stamp = dm.stamp) OR (p5.stamp = dm.stamp) OR (p6.stamp = dm.stamp) THEN
-						IF (p0.stamp # dm.stamp) & (p1.stamp # dm.stamp) & (p2.stamp # dm.stamp) THEN
-							pen.do.enter(pen, p3.x, p3.y, p3.x - p2.x, p3.y - p2.y, 0)	(* offset *)
-						END;
-						pen.do.bezier(pen, p6.x, p6.y, p4.x, p4.y, p5.x, p5.y)
-					ELSIF (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) THEN
-						pen.do.exit(pen, p4.x - p3.x, p4.y - p3.y, 0)	(* offset? *)
-					END;
-					p0 := p3; p1 := p4; p2 := p5; p3 := p6
-				END
-			END
-		END;
-		IF all OR (p0.stamp = dm.stamp) OR (p1.stamp = dm.stamp) OR (p2.stamp = dm.stamp) OR (p3.stamp = dm.stamp) THEN
-			IF bezier.succ = NIL THEN pen.do.exit(pen, 0, 0, 0)
-			ELSE pen.do.exit(pen, bezier.succ.dx0, bezier.succ.dy0, bezier.eoff)
-			END
-		END
-	END RenderBezier;
-	
-	PROCEDURE DrawBezier (bezier: Curve; VAR dm: Figures.DrawMsg);
-		VAR ref: Figures.Reference;
-	BEGIN
-		RenderCurve(bezier, dm);
-		RenderSelMarker(bezier, dm);
-		IF bezier.sel OR (bezier.cont # NIL) & (bezier.cont IS Path) & bezier.cont.sel THEN
-			ref := bezier.first;
-			LOOP
-				IF dm.all OR (ref.shape.stamp = dm.stamp) THEN
-					RenderPoint(ref.shape(Point), dm.ctxt, dm.id, Gfx.Black)
-				END;
-				ref := ref.next;
-				IF ref = NIL THEN EXIT END;
-				IF (dm.id = Figures.Full) & (ref # bezier.last) & (dm.all OR (ref.shape.stamp = dm.stamp)) THEN
-					RenderPoint(ref.shape(Point), dm.ctxt, Figures.Full, Gfx.DGrey);
-					ref := ref.next;
-					IF (dm.id = Figures.Full) & (ref # bezier.last) & (dm.all OR (ref.shape.stamp = dm.stamp)) THEN
-						RenderPoint(ref.shape(Point), dm.ctxt, Figures.Full, Gfx.DGrey);
-						ref := ref.next
-					END
-				END
-			END
-		END
-	END DrawBezier;
-	
-	PROCEDURE LocateBezier (bezier: Curve; llx, lly, urx, ury: REAL; VAR prev, next: Figures.Reference; VAR px, py: REAL);
-		VAR ref, r: Figures.Reference; p0, p1, p2, p3: Point;
-	BEGIN
-		prev := NIL; next := NIL;
-		ref := bezier.first; r := ref; p0 := ref.shape(Point);
-		REPEAT
-			ref := ref.next; p1 := ref.shape(Point);
-			IF ref # bezier.last THEN
-				ref := ref.next; p2 := ref.shape(Point);
-				IF ref # bezier.last THEN
-					ref := ref.next; p3 := ref.shape(Point);
-					IF OnBezier(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, llx, lly, urx, ury, px, py) THEN
-						prev := r; next := ref
-					END;
-					p0 := p3; r := ref
-				ELSIF OnArc(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, llx, lly, urx, ury, px, py) THEN
-					prev := ref.prev.prev; next := ref
-				END
-			ELSIF OnLine(p0.x, p0.y, p1.x, p1.y, llx, lly, urx, ury, px, py) THEN
-				prev := ref.prev; next := ref
-			END
-		UNTIL ref = bezier.last
-	END LocateBezier;
-	
-	PROCEDURE InsertInBezier (bezier: Curve; point: Point; prev, next: Figures.Reference; fig: Figures.Figure);
-		VAR
-			p: Point; x0, y0, x1, y1, x2, y2, x3, y3, x, y, t, range, xa, ya, xb, yb, xt, yt, xc, yc, xd, yd, d0, d3: REAL;
-			ca: Figures.ControlAction; first, ref, last: Figures.Reference;
-	BEGIN
-		IF prev.next = next THEN	(* inserting point in line at tail *)
-			InsertInCurve(bezier, point, prev, next, fig);
-			RETURN
-		ELSIF prev.next = next.prev THEN	(* inserting point in arc at tail *)
-			InsertInArc(bezier, point, prev, next, fig);
-			RETURN
-		END;
-		
-		(* find parameter of on-curve intersection *)
-		p := prev.shape(Point); x0 := p.x; y0 := p.y;
-		p := prev.next.shape(Point); x1 := p.x; y1 := p.y;
-		p := next.prev.shape(Point); x2 := p.x; y2 := p.y;
-		p := next.shape(Point); x3 := p.x; y3 := p.y;
-		x := point.x; y := point.y;
-		t := 0.5; range := 0.5;
-		LOOP
-			SubdivideBezier(t, x0, y0, x1, y1, x2, y2, x3, y3, xa, ya, xb, yb, xt, yt, xc, yc, xd, yd);
-			d0 := (ABS(x - x0) + ABS(y - y0)) / (ABS(xt - x0) + ABS(yt - y0));
-			d3 := (ABS(x - x3) + ABS(y - y3)) / (ABS(xt - x3) + ABS(yt - y3));
-			IF range * (ABS(x3 - x0) + ABS(y3 - y0)) < 0.5 THEN EXIT END;
-			range := 0.5*range;
-			IF d0 <= d3 THEN
-				t := t - range
-			ELSE
-				t := t + range
-			END
-		END;
-		
-		(* remove old off-curve points *)
-		NEW(ca); Figures.InitControlAction(ca, Figures.Remove, prev, prev.next, next.prev, next, bezier);
-		Figures.AddAction(fig, ca, Figures.DoControlAction);
-		
-		(* create and insert new off-curve points around new on-curve point *)
-		NEW(p); InitPoint(p, xa, ya);
-		NEW(first); first.shape := p;
-		NEW(p); InitPoint(p, xb, yb);
-		NEW(ref); ref.shape := p;
-		first.next := ref; ref.prev := first;
-		NEW(last); last.shape := point;
-		ref.next := last; last.prev := ref; ref := last;
-		NEW(p); InitPoint(p, xc, yc);
-		NEW(last); last.shape := p;
-		ref.next := last; last.prev := ref; ref := last;
-		NEW(p); InitPoint(p, xd, yd);
-		NEW(last); last.shape := p;
-		ref.next := last; last.prev := ref;
-		NEW(ca); Figures.InitControlAction(ca, Figures.Consume, prev, first, last, next, bezier);
-		Figures.AddAction(fig, ca, Figures.DoControlAction)
-	END InsertInBezier;
-	
-	PROCEDURE InitBezierClass;
-	BEGIN
-		NEW(BezierClass);
-		BezierClass.length := CurveLength; BezierClass.render := RenderBezier; BezierClass.locate := LocateBezier;
-		BezierClass.insert := InsertInBezier; BezierClass.split := SplitCurve
-	END InitBezierClass;
-	
-	PROCEDURE HandleBezier* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-	BEGIN
-		IF msg IS Figures.DrawMsg THEN
-			DrawBezier(obj(Curve), msg(Figures.DrawMsg))
-		ELSIF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewBezier");
-			HandleCurve(obj, msg)
-		ELSE
-			HandleCurve(obj, msg)
-		END
-	END HandleBezier;
-	
-	PROCEDURE NewBezier*;
-		VAR bezier: Curve;
-	BEGIN
-		NEW(bezier); bezier.handle := HandleBezier; bezier.class := BezierClass;
-		Objects.NewObj := bezier
-	END NewBezier;
-	
-	PROCEDURE TrackBezier (frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		VAR
-			fx, fy, mx, my: INTEGER; px, py: REAL; first, last: Figures.Reference; p, q, r: Point;
-			bezier: Curve; keysum, keys: SET; path: Path;
-	BEGIN
-		fx := msg.x + frame.X; fy := msg.y + frame.Y;
-		LeoFrames.PixelToPoint(frame, msg.X - fx, msg.Y - fy, px, py);
-		LeoFrames.AlignPoint(frame, px, py, px, py);
-		GetPointPair(px, py, first, last, p);
-		NEW(bezier); InitCurve(bezier, BezierClass, first, last, LeoPens.Stroker); bezier.handle := HandleBezier; bezier.sel := TRUE;
-		q := NIL; r := NIL;
-		LeoFrames.ResetDragCtxt(frame, fx, fy);
-		keysum := msg.keys; keys := msg.keys;
-		REPEAT
-			DragPoint(frame, fx, fy, bezier, p, px, py, keys);
-			keysum := keysum + keys;
-			IF (keys = {ML, MM}) & (keysum # {ML, MM, MR}) THEN
-				DragPoint(frame, fx, fy, bezier, p, px, py, keys);
-				keysum := keysum + keys;
-				px := p.x; py := p.y;
-				IF r # NIL THEN	(* MM interclicked more than twice *)
-					NEW(p); InitPoint(p, px + (px - q.x), py + (py - q.y));
-					Append(bezier, p);
-					q := NIL
-				END;
-				r := q; q := p;
-				NEW(p); InitPoint(p, px, py);
-				Append(bezier, p)
-			END
-		UNTIL keys = {};
-		IF keysum # {ML, MM, MR} THEN
-			ValidateCurve(bezier);
-			IF ClosedCurve.val THEN
-				NEW(path); InitPath(path, bezier, FillPen());
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, path)
-			ELSE
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, bezier)
-			END
-		END;
-		Input.Mouse(keys, mx, my);
-		Oberon.DrawCursor(Oberon.Mouse, Cross, mx, my);
-		msg.res := 0
-	END TrackBezier;
-	
-	PROCEDURE SetBezierTool*;
-	BEGIN
-		Track := TrackBezier; Marker := Cross;
-		LeoFrames.SetTool(HandleTool)
-	END SetBezierTool;
-	
-	
-	(**--- Splines ---**)
-	
-	PROCEDURE ValidateSpline (spline: Curve);
-		VAR bw, sx, sy: REAL; s: GfxPaths.Scanner;
-	BEGIN
-		RecordCurve(spline);
-		GfxPaths.GetBox(Recorder.path, spline.llx, spline.lly, spline.urx, spline.ury);
-		spline.bw := 0;
-		IF spline.stroke # NIL THEN
-			Attributes.GetReal(spline.stroke, "BorderWidth", bw);
-			spline.bw := bw
-		END;
-		GfxPaths.Open(s, Recorder.path, 0);
-		sx := s.x; sy := s.y;
-		GfxPaths.Scan(s);
-		IF s.elem = GfxPaths.Line THEN
-			spline.dx0 := s.x - sx; spline.dy0 := s.y - sy;
-			spline.dx1 := spline.dx0; spline.dy1 := spline.dy0
-		ELSIF s.elem = GfxPaths.Arc THEN	(* must be circle *)
-			spline.dx0 := s.x2 - sx; spline.dy0 := s.y2 - sy;
-			spline.dx1 := spline.dx0; spline.dy1 := spline.dy0
-		ELSIF s.elem = GfxPaths.Bezier THEN
-			spline.dx0 := s.x1 - sx; spline.dy0 := s.y1 - sy;
-			GfxPaths.Scan(s);
-			WHILE s.elem = GfxPaths.Bezier DO
-				spline.dx1 := s.x - s.x2; spline.dy1 := s.y - s.y2;
-				GfxPaths.Scan(s)
-			END;
-			spline.len := GfxPaths.Length(Recorder.path, 1)
-		ELSE
-			spline.dx0 := 0; spline.dy0 := 0; spline.dx1 := 0; spline.dy1 := 0;
-			spline.len := 0
-		END;
-		spline.boff := 0; spline.eoff := 0
-	END ValidateSpline;
-	
-	PROCEDURE EnumSplineElem (VAR data: GfxPaths.EnumData);
-	BEGIN
-		WITH data: SplineData DO
-			CASE data.elem OF
-			| GfxPaths.Line: data.pen.do.line(data.pen, data.x, data.y);
-			| GfxPaths.Arc: data.pen.do.arc(data.pen, data.x, data.y, data.x0, data.y0, data.x1, data.y1, data.x2, data.y2)
-			| GfxPaths.Bezier: data.pen.do.bezier(data.pen, data.x, data.y, data.x1, data.y1, data.x2, data.y2)
-			END
-		END
-	END EnumSplineElem;
-	
-	PROCEDURE RenderSpline (spline: Curve; pen: GfxPens.Pen; VAR dm: Figures.DrawMsg);
-		VAR
-			ref: Figures.Reference; p: Point; n: LONGINT; x, y: ARRAY GfxPaths.MaxSplinePoints OF REAL;
-			data: SplineData;
-	BEGIN
-		ref := spline.first;
-		IF ~dm.all & (spline.stamp # dm.stamp) THEN
-			WHILE (ref # NIL) & (ref.shape.stamp # dm.stamp) DO ref := ref.next END
-		END;
-		IF ref # NIL THEN	(* at least one point is affected => must render complete spline *)
-			ref := spline.first; p := ref.shape(Point);
-			IF spline.pred = NIL THEN pen.do.enter(pen, p.x, p.y, 0, 0, 0)
-			ELSE pen.do.enter(pen, p.x, p.y, spline.pred.dx1, spline.pred.dy1, spline.boff)
-			END;
-			x[0] := p.x; y[0] := p.y;
-			ref := ref.next; n := 1;
-			WHILE (n < GfxPaths.MaxSplinePoints) & (ref # NIL) DO
-				p := ref.shape(Point);
-				IF ABS(x[n-1] - p.x) + ABS(y[n-1] - p.y) > 1.0E-5 THEN
-					x[n] := p.x; y[n] := p.y; INC(n)
-				END;
-				ref := ref.next
-			END;
-			IF n >= 2 THEN
-				data.x := x[0]; data.y := y[0]; data.pen := pen;
-				GfxPaths.EnumSpline(x, y, n, spline.succ = spline, EnumSplineElem, data)
-			END;
-			IF spline.succ = NIL THEN pen.do.exit(pen, 0, 0, 0)
-			ELSE pen.do.exit(pen, spline.succ.dx0, spline.succ.dy0, spline.eoff)
-			END
-		END
-	END RenderSpline;
-	
-	PROCEDURE LocateSpline (spline: Curve; llx, lly, urx, ury: REAL; VAR prev, next: Figures.Reference; VAR px, py: REAL);
-		VAR ref: Figures.Reference; p: Point; s: GfxPaths.Scanner; x, y: REAL;
-	BEGIN
-		prev := NIL; next := NIL;
-		RecordCurve(spline);
-		ref := spline.first.next; p := ref.shape(Point);	(* next control point *)
-		GfxPaths.Open(s, Recorder.path, 0);
-		x := s.x; y := s.y;
-		GfxPaths.Scan(s);
-		WHILE s.elem # GfxPaths.Exit DO
-			IF (x = p.x) & (y = p.y) THEN	(* reached next control point *)
-				ref := ref.next; p := ref.shape(Point)
-			END;
-			CASE s.elem OF
-			| GfxPaths.Line:
-				IF OnLine(x, y, s.x, s.y, llx, lly, urx, ury, px, py) THEN
-					prev := ref.prev; next := ref
-				END;
-				x := s.x; y := s.y
-			| GfxPaths.Arc:	(* must be circle *)
-				GfxPaths.ProjectToEllipse(s.x1 - s.x0, s.y1 - s.y0, s.x2 - s.x0, s.y2 - s.y0,
-					0.5*(llx + urx) - s.x0, 0.5*(lly + ury) - s.y0, px, py);
-				px := s.x0 + px; py := s.y0 + py;
-				IF (llx <= px) & (px <= urx) & (lly <= py) & (py <= ury) THEN
-					prev := ref.prev; next := ref
-				END
-			| GfxPaths.Bezier:
-				IF OnBezier(x, y, s.x1, s.y1, s.x2, s.y2, s.x, s.y, llx, lly, urx, ury, px, py) THEN
-					prev := ref.prev; next := ref
-				END;
-				x := s.x; y := s.y
-			END;
-			GfxPaths.Scan(s)
-		END
-	END LocateSpline;
-	
-	PROCEDURE InitSplineClass;
-	BEGIN
-		NEW(SplineClass);
-		SplineClass.length := CurveLength; SplineClass.render := RenderSpline; SplineClass.locate := LocateSpline;
-		SplineClass.insert := InsertInCurve; SplineClass.split := SplitCurve
-	END InitSplineClass;
-	
-	PROCEDURE HandleSpline* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR spline: Curve;
-	BEGIN
-		IF msg IS Figures.ValidateMsg THEN
-			WITH msg: Figures.ValidateMsg DO
-				spline := obj(Curve);
-				Figures.HandleRefs(spline, msg);
-				IF msg.stamp = spline.stamp THEN
-					Figures.UpdateShapeRect(spline, msg.fig, msg.mat);
-					ValidateSpline(spline);
-					Figures.HandleShape(spline, msg)
-				END
-			END
-		ELSIF msg IS Objects.AttrMsg THEN
-			Figures.HandleGenAttr(msg(Objects.AttrMsg), "LeoPaths.NewSpline");
-			HandleCurve(obj, msg)
-		ELSE
-			HandleCurve(obj, msg)
-		END
-	END HandleSpline;
-	
-	PROCEDURE NewSpline*;
-		VAR spline: Curve;
-	BEGIN
-		NEW(spline); spline.handle := HandleSpline; spline.class := SplineClass;
-		Objects.NewObj := spline
-	END NewSpline;
-	
-	PROCEDURE TrackSpline (frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		VAR
-			fx, fy, mx, my: INTEGER; px, py: REAL; first, last: Figures.Reference; p: Point; spline: Curve; keysum, keys: SET;
-			path: Path;
-	BEGIN
-		fx := msg.x + frame.X; fy := msg.y + frame.Y;
-		LeoFrames.PixelToPoint(frame, msg.X - fx, msg.Y - fy, px, py);
-		LeoFrames.AlignPoint(frame, px, py, px, py);
-		GetPointPair(px, py, first, last, p);
-		NEW(spline); InitCurve(spline, SplineClass, first, last, LeoPens.Stroker); spline.handle := HandleSpline; spline.sel := TRUE;
-		LeoFrames.ResetDragCtxt(frame, fx, fy);
-		keysum := msg.keys; keys := msg.keys;
-		REPEAT
-			DragPoint(frame, fx, fy, spline, p, px, py, keys);
-			keysum := keysum + keys;
-			IF (keys = {ML, MM}) & (keysum # {ML, MM, MR}) THEN
-				DragPoint(frame, fx, fy, spline, p, px, py, keys);
-				keysum := keysum + keys;
-				px := p.x; py := p.y;
-				NEW(p); InitPoint(p, px, py);
-				Append(spline, p)
-			END
-		UNTIL keys = {};
-		IF keysum # {ML, MM, MR} THEN
-			ValidateSpline(spline);
-			IF ClosedCurve.val THEN
-				NEW(path); InitPath(path, spline, FillPen());
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, path)
-			ELSE
-				LeoFrames.Integrate(frame.obj(Figures.Figure), NIL, spline)
-			END
-		END;
-		Input.Mouse(keys, mx, my);
-		Oberon.DrawCursor(Oberon.Mouse, Cross, mx, my);
-		msg.res := 0
-	END TrackSpline;
-	
-	PROCEDURE SetSplineTool*;
-	BEGIN
-		Track := TrackSpline; Marker := Cross;
-		LeoFrames.SetTool(HandleTool)
-	END SetSplineTool;
-	
-	
-	(**--- Point Tool ---**)
-	
-	PROCEDURE DrawPoint (x, y: INTEGER);
-	BEGIN
-		DEC(x, 8); DEC(y, 8);
-		Effects.OpenCursor(x, y, 17, 17);
-		Display.CopyPattern(Display3.textbackC, PntBG, x, y, Display.paint);
-		Display.CopyPattern(Display3.black, PntFG, x, y, Display.paint)
-	END DrawPoint;
-	
-	PROCEDURE FadePoint (x, y: INTEGER);
-	BEGIN
-		Effects.CloseCursor
-	END FadePoint;
-	
-	PROCEDURE InitPointTool;
-		VAR p: ARRAY 17 OF SET; i: LONGINT;
-	BEGIN
-		p[0] := {}; p[6] := {7..9}; p[7] := {6, 10}; p[8] := {1..6, 10..15}; p[9] := {6, 10}; p[10] := {7..9}; p[16] := {};
-		FOR i := 1 TO 5 DO p[i] := {8} END;
-		FOR i := 11 TO 15 DO p[i] := {8} END;
-		PntFG := Display.NewPattern(17, 17, p);
-		p[0] := {7..9}; p[6] := {6, 10}; p[7] := {0..5, 7..9, 11..16}; p[8] := {0, 7, 9, 16}; p[9] := {0..5, 7..9, 11..16}; p[10] := {6, 10}; p[16] := {7..9};
-		FOR i := 1 TO 5 DO p[i] := {7, 9} END;
-		FOR i := 11 TO 15 DO p[i] := {7, 9} END;
-		PntBG := Display.NewPattern(17, 17, p);
-		Pnt.Draw := DrawPoint; Pnt.Fade := FadePoint
-	END InitPointTool;
-	
-	PROCEDURE TrackPoint (frame: LeoFrames.Frame; VAR msg: Oberon.InputMsg);
-		VAR fx, fy, mx, my, x, y: INTEGER; fig: Figures.Figure;
-			target: Figures.Shape;
-			x0, y0, s, x1, y1: REAL;
-			lm: Figures.LocateMsg;
-			p: Point;
-			keysum, keys: SET;
-			mat: GfxMatrix.Matrix;
-	BEGIN
-		fx := msg.x + frame.X; fy := msg.y + frame.Y;
-		LeoFrames.LocateShapesAt(frame, msg.X - fx, msg.Y - fy, target);
-		IF (target # NIL) & ((target IS Curve) OR (target IS Point)) THEN
-			fig := frame.obj(Figures.Figure);
-			Figures.DisableUpdate(fig);
-			Figures.BeginCommand(fig);
-			LeoFrames.PixelToPoint(frame, msg.X - fx, msg.Y - fy, x0, y0);
-			s := LeoFrames.Tolerance/frame.scale;
-			lm.id := Figures.Project; lm.llx := x0 - s; lm.lly := y0 - s; lm.urx := x0 + s; lm.ury := y0 + s; lm.px := x0; lm.py := y0;
-			Figures.Forward(frame, fig, lm);
-			x0 := lm.px; y0 := lm.py;
-			NEW(p); InitPoint(p, x0, y0);
-			LeoFrames.Integrate(fig, target, p);
-			LeoFrames.ResetDragCtxt(frame, fx, fy);
-			Figures.ComputeTrafo(fig, p, GfxMatrix.Identity);
-			LeoFrames.ApplyTrafo; LeoFrames.Redraw(fig, p.stamp); LeoFrames.DrawAlignBars(frame, fx, fy, x0, y0);
-			keysum := msg.keys; mx := msg.X; my := msg.Y; x1 := x0; y1 := y0;
-			REPEAT
-				Input.Mouse(keys, x, y);
-				keysum := keysum + keys;
-				IF (keys # {}) & ((x # mx) OR (y # my)) THEN
-					Oberon.FadeCursor(Oberon.Mouse);
-					LeoFrames.DrawAlignBars(frame, fx, fy, x1, y1); LeoFrames.Redraw(fig, p.stamp); LeoFrames.ApplyTrafo;
-					LeoFrames.PixelToPoint(frame, x - fx + 0.5, y - fy + 0.5, x1, y1);
-					LeoFrames.AlignPoint(frame, x0, y0, x1, y1);
-					GfxMatrix.Translate(GfxMatrix.Identity, x1 - x0, y1 - y0, mat);
-					Figures.ComputeTrafo(fig, p, mat);
-					LeoFrames.ApplyTrafo; LeoFrames.Redraw(fig, p.stamp); LeoFrames.DrawAlignBars(frame, fx, fy, x1, y1);
-					mx := x; my := y;
-					Oberon.DrawCursor(Oberon.Mouse, Pnt, x, y)
-				END
-			UNTIL keys = {};
-			Oberon.FadeCursor(Oberon.Mouse);
-			LeoFrames.DrawAlignBars(frame, fx, fy, x1, y1); LeoFrames.Redraw(fig, p.stamp); LeoFrames.ApplyTrafo;
-			IF keysum = {ML} THEN
-				Figures.CommitTrafo(fig);
-				Figures.EndCommand(fig)
-			ELSE
-				Figures.CancelCommand(fig)
-			END;
-			Figures.EnableUpdate(fig);
-			Oberon.DrawCursor(Oberon.Mouse, Pnt, x, y)
-		ELSE
-			Oberon.DrawCursor(Oberon.Mouse, Pnt, msg.X, msg.Y)
-		END;
-		msg.res := 0
-	END TrackPoint;
-	
-	PROCEDURE SetPointTool*;
-	BEGIN
-		Track := TrackPoint; Marker := Pnt;
-		LeoFrames.SetTool(HandleTool)
-	END SetPointTool;
 	
 
 BEGIN
 	InitPointImages;
-	NEW(Recorder); GfxPens.InitRecorder(Recorder);
-	InitPolygonClass; InitArcClass; InitBezierClass; InitSplineClass;
-	Leonardo.GetPublicBool("ClosedCurve", ClosedCurve);
-	InitPointTool; InitCross
+	NEW(Rec); LeoPens.InitRecorder(Rec);
+	NEW(ArcPath);
+	InitPathifiers
 END LeoPaths.
-
-
-	(**--- Curve Methods ---**)
-	
-	PROCEDURE DoRemoveCurve (fig: Figures.Figure; fact: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR ra: RemoveAction; curve: Curve; tmp: Figures.Reference;
-	BEGIN
-		ra := fact(RemoveAction); curve := ra.curve;
-		IF undo THEN
-			IF (ra.first = NIL) & (ra.last = NIL) THEN
-				IF curve.prev # NIL THEN curve.prev.next := curve ELSE ra.path.fc := curve END;
-				IF curve.next # NIL THEN curve.next.prev := curve ELSE ra.path.lc := curve END
-			ELSE
-				tmp := curve.first; curve.first := ra.first; ra.first := tmp;
-				tmp := curve.last; curve.last := ra.last; ra.last := tmp;
-				curve.pred := ra.pred; curve.succ := ra.succ
-			END
-		ELSE
-			IF (ra.first = NIL) & (ra.last = NIL) THEN
-				IF curve.prev # NIL THEN curve.prev.next := curve.next ELSE ra.path.fc := curve.next END;
-				IF curve.next # NIL THEN curve.next.prev := curve.prev ELSE ra.path.lc := curve.prev END
-			ELSE
-				tmp := curve.first; curve.first := ra.first; ra.first := tmp;
-				tmp := curve.last; curve.last := ra.last; ra.last := tmp;
-				ra.pred := curve.pred; ra.succ := curve.succ;
-				curve.pred := NIL; curve.succ := NIL
-			END
-		END;
-		ra.path.stamp := stamp
-	END DoRemoveCurve;
-	
-	PROCEDURE RemoveFromCurve (curve: Curve; path: Path; stamp: LONGINT; fig: Figures.Figure);
-		VAR first, last: Figures.Reference; ra: RemoveAction;
-	BEGIN
-		first := curve.first; last := curve.last;
-		IF (first.shape.stamp = stamp) OR (last.shape.stamp = stamp) THEN
-			NEW(ra); ra.path := path; ra.curve := curve;
-			WHILE (first # last.next) & (first.shape.stamp = stamp) DO first := first.next END;
-			WHILE (first # last.next) & (last.shape.stamp = stamp) DO last := last.prev END;
-			IF first # last.next THEN
-				ra.first := first; ra.last := last
-			ELSE
-				ra.first := NIL; ra.last := NIL
-			END;
-			Figures.AddAction(fig, ra, DoRemoveCurve)
-		END
-	END RemoveFromCurve;
-	
-	PROCEDURE RemoveFromBezier (bezier: Curve; path: Path; stamp: LONGINT; fig: Figures.Figure);
-		VAR first, last: Figures.Reference;
-	BEGIN
-		first := bezier.first;
-		WHILE (first # bezier.last) & (first.shape.stamp = stamp) DO
-			first := first.next;
-			IF first # bezier.last THEN
-				first.shape.stamp := stamp;
-				first := first.next;
-				IF first # bezier.last THEN
-					first.shape.stamp := stamp;
-					first := first.next
-				END
-			END
-		END;
-		last := bezier.last;
-		WHILE (last # first) & (last.shape.stamp = stamp) DO
-			last := last.prev;
-		END;
-		WHILE first # last DO
-			first := first.next;
-			IF first = last THEN
-				first.shape.stamp := stamp
-			ELSE
-				first := first.next;
-				IF first = last THEN
-					first.shape.stamp := stamp
-				ELSE
-					first.prev.shape.stamp := path.stamp; first.shape.stamp := path.stamp;
-					first := first.next;
-					first.shape.stamp := path.stamp
-				END
-			END
-		END;
-		RemoveFromCurve(bezier, path, stamp, fig)
-	END RemoveFromBezier;
-	
-	

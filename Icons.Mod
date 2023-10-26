@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Icons;	(** portable *) (** jm 19.1.95 *)
 
@@ -44,7 +32,7 @@ IMPORT
 	
 CONST
 	pinsize = 10; offset = 2;
-
+	
 TYPE
 	(** Simple camera-view. *)
 	View* = POINTER TO ViewDesc;
@@ -222,11 +210,11 @@ BEGIN
 						Texts.WriteString(W, "  sorry, model is not a Display.Frame"); Texts.WriteLn(W);
 						Texts.Append(Oberon.Log, W.buf)
 					END
-				ELSE Gadgets.framehandle(F, M);
+				ELSE Gadgets.framehandle(F, M)
 				END
 			END
-		ELSE Gadgets.framehandle(F, M);
-		END;
+		ELSE Gadgets.framehandle(F, M)
+		END
 	END
 END ViewHandle;
 
@@ -429,7 +417,7 @@ BEGIN
 			obj.handle(obj, PM)
 		END
 	END;
-	Printer3.FilledRect3D(R, Display3.topC, Display3.bottomC, F.col, M.x, M.y, P(w), P(F.h + 2), 1, Display.replace);
+	Printer3.FilledRect3D(R, Display3.topC, Display3.bottomC, F.col, M.x, M.y, P(w), P(F.h + 2), P(1), Display.replace);
 	Printer3.String(R, Display3.textC, M.x+P(3), M.y + P(ABS(Fonts.Default.minY) + 2), Fonts.Default, F.caption, Display3.textmode)
 END PrintIcon;
 
@@ -975,7 +963,7 @@ VAR px, py: INTEGER; D: Display.DisplayMsg; block: Views.Block;
 	L: Display.LocateMsg; ls: Display.Frame; A: Objects.AttrMsg;
 	of: Gadgets.Frame; keysum, fstate: SET;
 	R, R0: Display3.Mask; CM: Display.ControlMsg;
-	mdlink, fdlink: Objects.Object;
+	mdlink, fdlink: Objects.Object; wasLocked: BOOLEAN;
 
 	PROCEDURE Select(f: Display.Frame; state: BOOLEAN);
 	VAR D: Display.DisplayMsg;
@@ -1000,7 +988,7 @@ VAR px, py: INTEGER; D: Display.DisplayMsg; block: Views.Block;
 	PROCEDURE CalcPlace(VAR px, py: INTEGER);
 	VAR cx, cy, cw, ch: INTEGER; (* clipping area *) f: Objects.Object;
 	BEGIN
-		cx := 0; cy := 0; cw := Display.Width + Display.ColLeft; ch := Display.Height;
+		cx := 0; cy := 0; cw := Display.Width; ch := Display.Height;
 		f := M.dlink;
 		WHILE (f # NIL) DO
 			IF f IS Gadgets.View THEN
@@ -1032,6 +1020,17 @@ BEGIN
 		CM.id := Display.restore; CM.F := NIL; CM.x := 0; CM.y := 0; CM.res := -1; CM.dlink := NIL;
 		of.handle(of, CM);
 		
+		wasLocked := TRUE;
+		IF Oberon.New THEN
+			Objects.Stamp(A); A.id := Objects.get; A.name := "Locked";
+			A.res := -1; A.class := Objects.Inval; of.handle(of, A);
+			IF (A.res >= 0) & (A.class = Objects.Bool) & ~A.b THEN	(* lock it *)
+				Objects.Stamp(A); A.id := Objects.set; A.name := "Locked";
+				A.res := -1; A.b := TRUE; of.handle(of, A);
+				wasLocked := FALSE
+			END
+		END;
+		
 		F.poping := TRUE; F.px := px - (x + of.X); F.py := py - (y + h  - 1 + of.Y);
 		of.mask := NIL;
 		D.device := Display.screen; D.id := Display.full; D.F := of; D.res := -1;
@@ -1053,22 +1052,27 @@ BEGIN
 					END
 				ELSE
 					DoSelect(NIL)
-				END;
+				END
 			ELSE
 				M.x := px - of.X; M.y := py - of.Y; of.handle(of, M)
 			END;
 			Input.Mouse(M.keys, M.X, M.Y); keysum := keysum + M.keys;
 			Oberon.DrawCursor(Oberon.Mouse, Effects.Arrow, M.X, M.Y)
 		END;
-		IF ls # NIL THEN Select(ls, FALSE) END;
+		(* IF ls # NIL THEN Select(ls, FALSE) END; *)
 		F.state := fstate; M.dlink := mdlink; F.dlink := fdlink; (* jm / ps *)
 
+		IF Oberon.New & ~wasLocked THEN
+			Objects.Stamp(A); A.id := Objects.set; A.name := "Locked";
+			A.res := -1; A.class := Objects.Bool; A.b := FALSE; of.handle(of, A)
+		END;
+		
 		Oberon.FadeCursor(Oberon.Mouse);
 		F.poping := FALSE; of.mask := NIL; 
 		Views.RestoreBlock(block);
 
 		(* Effects.CloseMenu; *)
-		IF (ls # NIL) & (keysum = {1}) THEN 
+		IF (ls # NIL) & ((keysum = {1}) OR (Oberon.New & (keysum = {2}))) THEN 
 			A.id := Objects.get; A.name := "Cmd"; A.res := -1; A.class := Objects.Inval; ls.handle(ls, A);
 			IF (A.res >= 0) & (A.class = Objects.String) THEN
 				Gadgets.Execute(A.s, ls, M.dlink, NIL, NIL)
@@ -1093,7 +1097,7 @@ BEGIN
 	
 	IF F.closed THEN d := F.closedF ELSE d := F.openF END;
 	IF d = NIL THEN
-		Printer3.FilledRect3D(R, Display3.FG, Display3.FG, Display3.textbackC, x, y, w, h, 1, Display.replace);
+		Printer3.FilledRect3D(R, Display3.FG, Display3.FG, Display3.textbackC, x, y, w, h, P(1), Display.replace);
 		IF F.closed THEN
 			Printer3.CenterString(R, Display3.textC, x, y, w, h, Fonts.Default, "Closed", Display3.textmode);
 		ELSE
@@ -1109,7 +1113,7 @@ BEGIN
 	IF F.pin THEN
 		a := x + P(offset); b := y + h - P(pinsize + offset);
 		Printer3.FilledRect3D(R, Display3.bottomC, Display3.topC, Display3.groupC, a, b,
-			P(pinsize), P(pinsize), 2, Display.replace);
+			P(pinsize), P(pinsize), P(1), Display.replace);
 		IF ~F.closed THEN
 			Printer3.Line(R, Display.FG, Display.solid, a+P(1), b+P(1), a + P(pinsize-2), b + P(pinsize-2), P(1), Display.replace);
 			Printer3.Line(R, Display.FG, Display.solid, a+P(1), b+P(pinsize-2), a + P(pinsize-2), b+P(1), P(1), Display.replace)
@@ -1270,16 +1274,16 @@ PROCEDURE TrackIconizer (F: Iconizer; x, y, w, h: INTEGER; VAR M: Oberon.InputMs
 VAR R: Display3.Mask; stack: StackDesc;
 BEGIN
 	IF (M.id = Oberon.track) & ~(Gadgets.selected IN F.state) & Effects.Inside(M.X, M.Y, x, y, w, h) THEN
-		IF (M.keys = {1}) & F.pin & Effects.Inside(M.X, M.Y, x + offset, y + h - pinsize - offset, pinsize, pinsize) THEN
+		IF ((M.keys = {1}) OR (Oberon.New & (M.keys = {2}))) & F.pin & Effects.Inside(M.X, M.Y, x + offset, y + h - pinsize - offset, pinsize, pinsize) THEN
 			Gadgets.MakeMask(F, x, y, M.dlink, R);
 			TrackHighlight(R, M.X, M.Y, x + offset + 1, y + h - pinsize - offset + 1, pinsize - 2, pinsize - 2, M.keys);
 			IF Effects.Inside(M.X, M.Y, x + offset + 1, y + h - pinsize - offset + 1, pinsize - 2, pinsize - 2) &
-				(M.keys = {1}) THEN
+				((M.keys = {1}) OR (Oberon.New & (M.keys = {2}))) THEN
 				Push(stack, F); Flip; Pop(stack)
 			END;
 			M.res := 0
-		ELSIF F.popup & (M.keys = {1}) & F.closed & Gadgets.InActiveArea(F, M) THEN
-			TrackPopup(F, x, y, w, h, M);
+		ELSIF F.popup & ((M.keys = {1}) OR (Oberon.New & (M.keys = {2}))) & F.closed & Gadgets.InActiveArea(F, M) THEN
+			TrackPopup(F, x, y, w, h, M)
 		ELSIF (F.obj # NIL) & Gadgets.InActiveArea(F, M) & ~(Gadgets.selected IN F.state) THEN
 			Push(stack, F);  To(F, x, y + h - 1, M); Pop(stack)
 		ELSE Gadgets.framehandle(F, M)
@@ -1530,5 +1534,4 @@ The camera-view gadget can be provided with caption by combining it with an icon
 	NEW(F);
 	Icons.MakeIcon(F, "My caption", Icons.ViewOf(obj(Gadgets.Frame)));
 	Gadgets.Integrate(F);
-
 *)

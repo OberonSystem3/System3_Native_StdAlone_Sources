@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich.  e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract.  The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;type=A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 	IMPORT Files, Objects, Fonts, Display, NetSystem, Strings, HyperDocs, NetTools, Input, Texts, Display3, Oberon,
@@ -217,10 +205,10 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 		Failed: NetSystem.hostIP not set *)
 	PROCEDURE Open*(server, user, passwd: ARRAY OF CHAR; port: INTEGER; log: Texts.Text; VAR S: Session);
 	BEGIN
-		GetLogin(server, user, passwd);
 		NEW(S); S.dataC := NIL;
 		COPY(server, S.host); S.port := port; S.dataPort := -1;
 		COPY(user, S.usr); COPY(passwd, S.passw);
+		GetLogin(server, S.usr, S.passw);
 		IF NetSystem.hostIP = NetSystem.anyIP THEN
 			S.C := NIL;
 			S.reply := "invalid NetSystem.hostIP";
@@ -232,7 +220,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 		S.portIPAddress := "";
 		S.log := log;
 		S.ack := TRUE;
-		IF (user = "") OR (passwd = "") THEN
+		IF (S.usr = "") OR (S.passw = "") THEN
 			S.res := Failed;
 			S.reply := "no password or username specified";
 			RETURN
@@ -240,10 +228,10 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 		IF NetTools.Connect(S.C, port, server, FALSE) THEN
 			ReadResponse(S, S.reply);
 			IF (S.status >= 200) & (S.status < 300) THEN
-				line := "USER "; Strings.Append(line, user);
+				line := "USER "; Strings.Append(line, S.usr);
 				SendCmd(S, line); ReadResponse(S, line);
 				IF (S.status = 330) OR (S.status = 331) THEN
-					line := "PASS "; Strings.Append(line, passwd);
+					line := "PASS "; Strings.Append(line, S.passw);
 					SendCmd(S, line); ReadResponse(S, line);
 					IF (S.status = 230) OR (S.status= 330) THEN
 						S.res := Done
@@ -258,7 +246,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 					S.res := Done
 				END;
 				IF S.res # Done THEN
-					NetSystem.DelPassword("ftp", user, server)
+					NetSystem.DelPassword("ftp", S.usr, server)
 				END
 			ELSE
 				S.res := NotReady;
@@ -358,9 +346,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 	END SetDataPort;
 
 	PROCEDURE WaitDataCon(S: Session): NetSystem.Connection;
-		VAR
-			time: LONGINT;
-			C1: NetSystem.Connection;
+		VAR C1: NetSystem.Connection; time: LONGINT;
 	BEGIN
 		IF S.dataIP = NetSystem.anyIP THEN
 			time := Input.Time();
@@ -393,11 +379,9 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			TimeOut: server did not answer in time
 			Failed: see S.reply(Line) *)
 	PROCEDURE EnumDir*(S: Session; enum: EnumProc);
-		VAR
-			C: NetSystem.Connection;
-			len: LONGINT;
+		VAR C: NetSystem.Connection; len: LONGINT;
 	BEGIN
-		S.reply := ""; SetDataPort(S);
+		S.reply := ""; SetDataPort(S); C := NIL;
 		IF S.res = Interrupted THEN RETURN END;
 		IF S.dataIP = NetSystem.anyIP THEN
 			ReadResponse(S, line)
@@ -423,14 +407,15 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 							enum(line)
 						END;
 						len := NetSystem.Available(C)
-					END;
-					NetTools.Disconnect(C)
+					END
 				END;
+				NetTools.Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply)
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN NetTools.Disconnect(C) END;
 		IF S.dataC # NIL THEN NetTools.Disconnect(S.dataC) END
 	END EnumDir;
 
@@ -460,7 +445,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 	PROCEDURE GetF(S: Session; remName: ARRAY OF CHAR; VAR R: Files.Rider);
 		VAR C: NetSystem.Connection;
 	BEGIN
-		S.reply := ""; SetDataPort(S);
+		S.reply := ""; SetDataPort(S); C := NIL;
 		IF S.res = Interrupted THEN RETURN END;
 		IF S.dataIP = NetSystem.anyIP THEN
 			ReadResponse(S, line)
@@ -478,17 +463,16 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 				IF S.dataIP = NetSystem.anyIP THEN C := WaitDataCon(S) END;
 				IF S.res = Done THEN
 					ScanLen(S.reply, NetTools.curLen); NetTools.curPos := 0;
-					NetTools.ReadData(C, R, MAX(LONGINT));
-					NetTools.Disconnect(C)
+					NetTools.ReadData(C, R, MAX(LONGINT))
 				END;
+				NetTools.Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply);
-				IF S.res = Interrupted THEN
-					ReadResponse(S, line)
-				END
+				IF S.res = Interrupted THEN ReadResponse(S, line) END
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN NetTools.Disconnect(C) END;
 		IF S.dataC # NIL THEN NetTools.Disconnect(S.dataC) END
 	END GetF;
 
@@ -516,11 +500,9 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			TimeOut: server did not answer in time
 			Failed: file not found or no permission, see S.reply(Line) *)
 	PROCEDURE GetText*(S: Session; remName: ARRAY OF CHAR; VAR W: Texts.Writer);
-		VAR
-			C: NetSystem.Connection;
-			in: Streams.Stream;
+		VAR C: NetSystem.Connection; in: Streams.Stream;
 	BEGIN
-		S.reply := "";
+		S.reply := ""; C := NIL;
 		SendCmd(S, "TYPE A"); S.bin := FALSE;
 		ReadResponse(S, line);
 		SetDataPort(S);
@@ -542,17 +524,16 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 				IF S.res = Done THEN
 					ScanLen(S.reply, NetTools.curLen); NetTools.curPos := 0;
 					in := NetTools.OpenStream(C); MIME.textCont.len := MAX(LONGINT);
-					MIME.ReadText(in, W, MIME.textCont, FALSE);
-					NetTools.Disconnect(C)
+					MIME.ReadText(in, W, MIME.textCont, FALSE)
 				END;
+				NetTools.Disconnect(C);	(* before ReadResponse *)
 				ReadResponse(S, S.reply);
-				IF S.res = Interrupted THEN
-					ReadResponse(S, line)
-				END
+				IF S.res = Interrupted THEN ReadResponse(S, line) END
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN NetTools.Disconnect(C) END;
 		IF S.dataC # NIL THEN NetTools.Disconnect(S.dataC) END;
 		SendCmd(S, "TYPE I");
 		ReadResponse(S, line)
@@ -565,12 +546,9 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			Failed: no permission or bad file name
 			LocFileNotFound: could not open the local file *)
 	PROCEDURE PutFile*(S: Session; remName, locName: ARRAY OF CHAR);
-		VAR
-			F: Files.File;
-			R: Files.Rider;
-			C: NetSystem.Connection;
+		VAR C: NetSystem.Connection; F: Files.File; R: Files.Rider;
 	BEGIN
-		S.reply := ""; S.bin := TRUE;
+		S.reply := ""; S.bin := TRUE; C := NIL;
 		F := Files.Old(locName);
 		IF F # NIL THEN
 			SetDataPort(S);
@@ -591,9 +569,9 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 					IF S.res = Done THEN
 						NetTools.curLen := Files.Length(F); NetTools.curPos := 0;
 						Files.Set(R, F, 0);
-						NetTools.WriteData(C, R);
-						NetTools.Disconnect(C)
+						NetTools.WriteData(C, R)
 					END;
+					NetTools.Disconnect(C);
 					ReadResponse(S, S.reply)
 				ELSE
 					S.res := Failed
@@ -604,6 +582,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			Strings.Append(S.reply, " not found");
 			S.res := LocFileNotFound
 		END;
+		IF C # NIL THEN NetTools.Disconnect(C) END;
 		IF S.dataC # NIL THEN NetTools.Disconnect(S.dataC) END
 	END PutFile;
 
@@ -618,7 +597,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			C: NetSystem.Connection;
 			out: Streams.Stream;
 	BEGIN
-		S.reply := "";
+		S.reply := ""; C := NIL;
 		SendCmd(S, "TYPE A"); S.bin := FALSE;
 		ReadResponse(S, line);
 		IF (S.status < 200) OR (S.status >= 300) THEN
@@ -642,14 +621,15 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 				IF S.res = Done THEN
 					NetTools.curLen := text.len; NetTools.curPos := 0;
 					out := NetTools.OpenStream(C); MIME.textCont.len := MAX(LONGINT);
-					MIME.WriteText(text, 0, text.len, out, MIME.textCont, FALSE, FALSE);
-					NetTools.Disconnect(C)
+					MIME.WriteText(text, 0, text.len, out, MIME.textCont, FALSE, FALSE)
 				END;
+				NetTools.Disconnect(C);
 				ReadResponse(S, S.reply)
 			ELSE
 				S.res := Failed
 			END
 		END;
+		IF C # NIL THEN NetTools.Disconnect(C) END;
 		IF S.dataC # NIL THEN NetTools.Disconnect(S.dataC) END;
 		SendCmd(S, "TYPE I");
 		ReadResponse(S, line)
@@ -748,7 +728,15 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 	PROCEDURE *DocHandler(D: Objects.Object; VAR M: Objects.ObjMsg);
 	BEGIN
 		WITH D: Documents.Document DO
-			IF M IS Objects.LinkMsg THEN
+			IF M IS Objects.AttrMsg THEN
+				WITH M: Objects.AttrMsg DO
+					IF (M.id = Objects.get) & (M.name = "Gen") THEN
+						M.class := Objects.String; M.s := "FTPDocs.NewDoc"; M.res := 0
+					ELSE
+						TextDocs.DocHandler(D, M)
+					END
+				END
+			ELSIF M IS Objects.LinkMsg THEN
 				WITH M: Objects.LinkMsg DO
 					IF M.id = Objects.get THEN
 						IF M.name = "DeskMenu" THEN
@@ -1132,7 +1120,7 @@ MODULE FTPDocs; (** portable *)	(* ejz,  , some tips by bh & pm *)
 			RETURN
 		END;
 		IF system = UNIX THEN
-			i := 0; beg0 := 0; beg1 := beg0; beg2 := beg1;
+			i := 0; beg0 := 0; beg1 := 0; beg2 := 0;
 			WHILE entry[i] # 0X DO
 				IF entry[i] <= " " THEN
 					beg0 := beg1; beg1 := beg2; beg2 := i

@@ -1,8 +1,16 @@
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
 MODULE OTInt;	(** eos   **)
 
 	(**
 		Interpreter for grid-fitting TrueType font instructions
 	**)
+	
+	(*
+		5.5.1999 - always perform autoFlip test in MIAP and MIRP, not only when cvt value is rounded (eos)
+		10.12.1999 - fix in Skip: EIF may immediately follow IF
+	*)
 	
 	CONST
 		X* = 1; Y* = 0;	(** indices for coordinates into Coord structure **)
@@ -1159,8 +1167,8 @@ MODULE OTInt;	(** eos   **)
 			pt[p].org := xy; pt[p].cur := xy
 		END;
 		d := Project(pt[p].cur, c.proj);
+		IF c.autoFlip & (dist * d < 0) THEN dist := -dist END;	(* got this from TTI; FreeType does nothing similar *)
 		IF ODD(ORD(c.code[c.pc])) THEN	(* round and apply cvt cutin *)
-			IF c.autoFlip & (dist * d < 0) THEN dist := -dist END;	(* got this from TTI; FreeType does nothing similar *)
 			IF ABS(dist - d) > c.cvtCutIn THEN dist := d END;
 			dist := Round(dist, c.period, c.phase, c.threshold)
 		END;
@@ -1213,10 +1221,10 @@ MODULE OTInt;	(** eos   **)
 		END;
 		od := Project(pt[p].org, c.proj2) - Project(c.zp0.pt[c.rp0].org, c.proj2);
 		cd := Project(pt[p].cur, c.proj) - Project(c.zp0.pt[c.rp0].cur, c.proj);
+		IF c.autoFlip & (od * dcvt < 0) THEN
+			dcvt := -dcvt
+		END;
 		IF ODD(ORD(c.code[c.pc]) DIV 4) THEN	(* perform cvtCutIn test and round *)
-			IF c.autoFlip & (od * dcvt < 0) THEN
-				dcvt := -dcvt
-			END;
 			IF c.zp0 = c.zp1 THEN	(* according to FreeType, both points have to be in the same zone *)
 				IF ABS(od - dcvt) >= c.cvtCutIn THEN
 					dcvt := od
@@ -1549,7 +1557,7 @@ MODULE OTInt;	(** eos   **)
 		| 41X: INC(c.pc, LONG(2 + 2*ORD(c.code[c.pc+1])))	(* NPUSHW *)
 		| 0B0X..0B7X: INC(c.pc, LONG(2 + ORD(c.code[c.pc]) MOD 8))	(* PUSHBx *)
 		| 0B8X..0BFX: INC(c.pc, LONG(3 + 2*(ORD(c.code[c.pc]) MOD 8)))	(* PUSHWx *)
-		| 58X: INC(c.pc); REPEAT Skip(c) UNTIL c.code[c.pc] = 59X; INC(c.pc)	(* IF..EIF *)
+		| 58X: INC(c.pc); WHILE c.code[c.pc] # 59X DO Skip(c) END; INC(c.pc)	(* IF..EIF *)
 		ELSE INC(c.pc)
 		END
 	END Skip;

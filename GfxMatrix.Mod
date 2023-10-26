@@ -1,8 +1,16 @@
-MODULE GfxMatrix;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxMatrix; (** portable *)	(* eos   *)
 
 	(**
 		Affine Transformations in 2D
 	**)
+	
+	(*
+		21.02.2000 - bugfix in Scaled: didn't recognize downscaling
+		15.04.2000 - added Atan2
+	*)
 	
 	IMPORT
 		Files, Math;
@@ -155,7 +163,7 @@ MODULE GfxMatrix;	(** eos   **)
 	(** return whether matrix changes vector lengths **)
 	PROCEDURE Scaled* (VAR m: Matrix): BOOLEAN;
 	BEGIN
-		RETURN ABS(m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]) - 1 > Eps
+		RETURN ABS(ABS(m[0, 0] * m[1, 1] - m[0, 1] * m[1, 0]) - 1) > Eps
 	END Scaled;
 	
 	(** return whether matrix includes rotation, shear, or mirror transformation **)
@@ -241,6 +249,24 @@ MODULE GfxMatrix;	(** eos   **)
 		res[2, 0] := m[2, 0] * n[0, 0] + m[2, 1] * n[1, 0] + n[2, 0];
 		res[2, 1] := m[2, 0] * n[0, 1] + m[2, 1] * n[1, 1] + n[2, 1]
 	END Concat;
+	
+	
+	(**--- Arctan of Vector ---**)
+	
+	PROCEDURE Atan2* (x, y: REAL): REAL;
+		VAR phi: REAL;
+	BEGIN
+		IF (ABS(x) < 1.0) & (ABS(y) >= ABS(x * MAX(REAL))) THEN	(* y/x would overflow *)
+			IF y >= 0.0 THEN phi := Math.pi/2
+			ELSE phi := -Math.pi/2
+			END
+		ELSIF x > 0.0 THEN	(* 1st or 4th quadrant *)
+			phi := Math.arctan(y/x)
+		ELSIF x < 0.0 THEN	(* 2nd or 3rd quadrant *)
+			phi := Math.arctan(y/x) + Math.pi
+		END;
+		RETURN phi
+	END Atan2;
 	
 	
 	(**--- Matrix Application ---**)

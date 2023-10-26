@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE Texts; (** portable *)	(*JG 23.8.94*)
 
@@ -22,7 +10,6 @@ characters and objects, with different colors, different fonts, and vertical off
   IMPORT Files, Objects, Display, Fonts, Reals;
 
   CONST
-
     (** Scanner symbol classes.*)
     Inval* = 0;           (** Invalid symbol. *)
     Name* = 1;        (** Name s (of length len).*)
@@ -38,6 +25,8 @@ characters and objects, with different colors, different fonts, and vertical off
 
     (* TextBlock = TextBlockId type hlen run {run} 0 tlen {AsciiCode} [font block].
       run = font [name] col voff len. *)
+    
+    BufSize = 64;
 
 TYPE
     Piece = POINTER TO PieceDesc;
@@ -76,16 +65,19 @@ TYPE
       ref: Piece
     END;
 
-    Reader* = RECORD	(** Character-wise reader of a text strean. *)
+    Reader* = RECORD	(** Character-wise reader of a text stream. *)
       ref: Piece;
       T: Text;
       org: LONGINT;
       off: LONGINT;
       R: Files.Rider;
-      eot*: BOOLEAN;	(** Reader has reached end of the text stream. *)
+      stamp: LONGINT;
+      buf: ARRAY BufSize OF CHAR;
+      bufpos, buflen: LONGINT;
       lib*: Objects.Library;	(** Library of last character/object read. *)
       col*: SHORTINT;	(** Color index of last character read. *)
-      voff*: SHORTINT	(** vertical offset of last character read. *)
+      voff*: SHORTINT;	(** vertical offset of last character read. *)
+      eot*: BOOLEAN	(** Reader has reached end of the text stream. *)
     END;
 
     Scanner* = RECORD (Reader)	(** Scanner for symbol streams. *)
@@ -135,12 +127,19 @@ TYPE
     T.org := -1; T.pce := T.trailer (*init cache*)
   END LoadAscii;
 
-  PROCEDURE ReadDocHeader (VAR R: Files.Rider);
-    VAR ch: CHAR; x, y, w, h: INTEGER; name: ARRAY 32 OF CHAR;
+  PROCEDURE ReadDocHeader(VAR R: Files.Rider; VAR ch: CHAR);
+    VAR len: LONGINT; x, y, w, h: INTEGER; name: ARRAY 32 OF CHAR;
   BEGIN Files.Read(R, ch);
     Files.ReadString(R, name);
     Files.ReadInt(R, x); Files.ReadInt(R, y);
-    Files.ReadInt(R, w); Files.ReadInt(R, h)
+    Files.ReadInt(R, w); Files.ReadInt(R, h);
+	Files.Read(R, ch);
+	IF ch = 0F7X THEN	(* skip meta info *)
+		Files.Read(R, ch);
+		IF ch = 08X THEN
+			Files.ReadLInt(R, len); Files.Set(R, Files.Base(R), Files.Pos(R) + len); Files.Read(R, ch)
+		END
+	END
   END ReadDocHeader;
 
 (** Load text block from file f at position pos to text T (assumes that the text id has been read already). len returns length. *)
@@ -249,7 +248,7 @@ TYPE
     VAR
       p, q: Piece;
       R, W: Files.Rider;
-      hlen, flen, rlen, m, po: LONGINT;
+      hlen, flen, rlen, m: LONGINT;
       id, i: INTEGER;
       N, n: SHORTINT;
       type, ch: CHAR;
@@ -294,8 +293,6 @@ TYPE
         IF p.lib.name[0] = 0X THEN
           SyncPiece(T, p);
           p.lib.GetObj(p.lib, ORD(ch), obj); p.obj := obj;
-          po := Files.Pos(R);
-          ASSERT(obj # NIL);
           curObjs.objs[id MOD 256] := obj;
           i := 0; objs := allObjs;
           WHILE objs.objs[i MOD 256] # obj DO
@@ -380,14 +377,7 @@ TYPE
     f := Files.Old(name);
     IF f # NIL THEN
       Files.Set(R, f, 0); Files.Read(R, ch);
-      IF ch = DocBlockId THEN
-      	ReadDocHeader(R);
-      	Files.Read(R, ch);
-      	IF ch = 0F7X THEN	(* skip meta info *)
-      		Files.Read(R, ch);
-      		IF ch = 08X THEN Files.ReadLInt(R, len); Files.Set(R, f, Files.Pos(R) + len); Files.Read(R, ch) END
-      	END 
-      END;
+      IF ch = DocBlockId THEN ReadDocHeader(R, ch) END;
       IF (ch = TextBlockId) OR (ch = OldTextBlockId) THEN Load(T, f, Files.Pos(R), len)
         ELSE LoadAscii(T, f)
       END
@@ -402,7 +392,7 @@ TYPE
   END New;
 
   PROCEDURE FindPiece (T: Text; pos: LONGINT; VAR org: LONGINT; VAR p: Piece);
-    VAR n: INTEGER;
+	VAR n: LONGINT;
   BEGIN
     IF pos < T.org THEN T.org := -1; T.pce := T.trailer END;
     org := T.org; p := T.pce; (*from cache*)
@@ -445,7 +435,7 @@ TYPE
     T.len := T.len + B.len;
     M.text := T; M.F := NIL; M.beg := pos; M.end := pos; M.len := B.len;
     B.last := B.header; B.last.next := NIL; B.len := 0;
-    Display.Broadcast(M)
+    Display.Broadcast(M); T.stamp := M.stamp
   END Insert;
 
 (** Append buffer to the end of text T. B is emptied. *)
@@ -468,7 +458,7 @@ TYPE
       per.prev := pbr.prev; pbr.prev.next := per;
       T.len := T.len - end + beg;
       M.text := T; M.F := NIL; M.beg := beg; M.end := end; M.len := 0;
-      Display.Broadcast(M)
+      Display.Broadcast(M); T.stamp := M.stamp
     END
   END Delete;
 
@@ -496,7 +486,7 @@ TYPE
       T.len := T.len - end + beg + B.len;
       M.text := T; M.F := NIL; M.beg := beg; M.end := end; M.len := B.len;
       B.last := B.header; B.last.next := NIL; B.len := 0;
-      Display.Broadcast(M)
+      Display.Broadcast(M); T.stamp := M.stamp
     END
   END Replace;
 
@@ -538,7 +528,7 @@ TYPE
         p := p.next
       UNTIL p = pe;
       M.text := T; M.F := NIL; M.beg := beg; M.end := end; M.len := end - beg;
-      Display.Broadcast(M)
+      Display.Broadcast(M); T.stamp := M.stamp
     END
   END ChangeLooks;
 
@@ -608,7 +598,7 @@ TYPE
       ELSIF M IS Objects.FileMsg THEN
         WITH M: Objects.FileMsg DO
           IF M.id = Objects.load THEN Files.Read(M.R, ch);
-            IF ch = DocBlockId THEN ReadDocHeader(R); Files.Read(R, ch) END;
+            IF ch = DocBlockId THEN ReadDocHeader(R, ch) END;
             IF (ch = TextBlockId) OR (ch = OldTextBlockId) THEN
               Load(obj, Files.Base(M.R), Files.Pos(M.R), len);
               Files.Set(M.R, Files.Base(M.R), Files.Pos(M.R) + len)
@@ -653,28 +643,36 @@ TYPE
     VAR p: Piece; org: LONGINT;
   BEGIN
     FindPiece(T, pos, org, p); R.T := T; R.lib := NIL;
+	R.stamp := T.stamp; R.bufpos := 0; R.buflen := 0;
     R.ref := p; R.org := org; R.off := pos - org;
-    IF p.ref >= 0 THEN (* load object *)
-		SyncPiece(T, p)
-    END;
-    Files.Set(R.R, R.ref.f, R.ref.off + R.off); R.eot := FALSE
+	R.lib := p.lib; R.col := p.col; R.voff := p.voff;
+    IF p.ref >= 0 THEN SyncPiece(T, p) END;
+    Files.Set(R.R, p.f, p.off + R.off); R.eot := p.f = Wfile
   END OpenReader;
   
 (** Read next character into ch. R.eot is set when the last character is read. The fields lib, voff and col of R give 
 information about the last character read. *)
   PROCEDURE Read* (VAR R: Reader; VAR ch: CHAR);
+	VAR ref: Piece;
   BEGIN
-    Files.Read(R.R, ch);
-    R.lib := R.ref.lib; R.col := R.ref.col; R.voff := R.ref.voff;
-    INC(R.off);
-    IF R.off >= R.ref.len THEN
-      IF R.ref.f = Wfile THEN R.eot := TRUE END;
-      R.org := R.org + R.ref.len; R.ref := R.ref.next; R.off := 0;
-      IF R.ref.ref >= 0 THEN (* load object *)
-  		SyncPiece(R.T, R.ref)
-      END;
-      Files.Set(R.R, R.ref.f, R.ref.off)
-    END
+	IF (R.stamp # R.T.stamp) OR (R.bufpos >= R.buflen) THEN
+		IF R.stamp = R.T.stamp THEN
+			ref := R.ref; R.bufpos := 0; R.buflen := ref.len-R.off;
+			IF R.buflen <= 0 THEN
+				R.org := R.org + ref.len; R.off := 0; ref := ref.next; R.ref := ref;
+				R.lib := ref.lib; R.col := ref.col; R.voff := ref.voff;
+				IF ref.ref >= 0 THEN SyncPiece(R.T, ref) END;
+				Files.Set(R.R, ref.f, ref.off);
+				R.buflen := ref.len; IF ref.f = Wfile THEN R.eot := TRUE END
+			END;
+			IF R.buflen > BufSize THEN R.buflen := BufSize END;
+			Files.ReadBytes(R.R, R.buf, R.buflen)
+		ELSE
+			OpenReader(R, R.T, R.org + R.off);
+			Read(R, ch); RETURN
+		END
+	END;
+	ch := R.buf[R.bufpos]; INC(R.bufpos); INC(R.off)
   END Read;
 
 (** Return reader's position within the text. *)
@@ -684,7 +682,7 @@ information about the last character read. *)
 
 (** Open text scanner S and set it up at position pos in text T. *)
   PROCEDURE OpenScanner* (VAR S: Scanner; T: Text; pos: LONGINT);
-  BEGIN OpenReader(S, T, pos); S.line := 0; Read(S, S.nextCh)
+  BEGIN OpenReader(S, T, pos); S.line := 0; S.class := Inval; Read(S, S.nextCh)
   END OpenScanner;
 
   (* Scanners --------------- NW --------------- *)
@@ -700,8 +698,7 @@ information about the last character read. *)
     CONST maxD = 32; (* fixed size: maxD <= LEN(S.s)! *)
     VAR ch, E: CHAR;
       neg, negE, hex, sign: BOOLEAN;
-      i, j, h: SHORTINT;
-      e: INTEGER; k, k1, k2, k3: LONGINT;
+      i, j, h, e, k, k1, k2, k3: LONGINT;
       y: LONGREAL;
       d: ARRAY maxD OF CHAR;
 
@@ -717,7 +714,7 @@ information about the last character read. *)
       S.class := Inval; S.eot := TRUE; Read(S, ch)
     ELSIF ~(S.lib IS Fonts.Font) THEN
       S.class := Object; S.lib.GetObj(S.lib, ORD(ch), S.obj); Read(S, ch)
-    ELSIF ("A" <= CAP(ch)) & (CAP(ch) <= "Z") OR (ch = ".") OR (ch = "/") OR (ch = ":") THEN (*name*)
+    ELSIF ("A" <= CAP(ch)) & (CAP(ch) <= "Z") OR (ch = ".") OR (ch = "/") (*OR (ch = ":")*) THEN (*name*)
       REPEAT
         S.s[i] := ch; INC(i); Read(S, ch)
       UNTIL ~(nameChars[ORD(ch)]) OR ~(S.lib IS Fonts.Font) OR (i = LEN(S.s)-1);
@@ -725,7 +722,7 @@ information about the last character read. *)
       IF (i = 1) & ((CAP(S.s[0]) < "A") OR (CAP(S.s[0]) > "Z")) THEN
       	S.c := S.s[0]; S.class := Char
       ELSE
-      	S.len := i; S.class := Name
+      	S.len := SHORT(SHORT(i)); S.class := Name
       END
     ELSIF ch = 22X THEN (*literal string*)
       Read(S, ch); 
@@ -733,7 +730,7 @@ information about the last character read. *)
         S.s[i] := ch; INC(i); Read(S, ch)
       END;
       WHILE (ch # 22X) & (ch >= " ") & (S.lib IS Fonts.Font) DO Read(S, ch) END;
-      S.s[i] := 0X; S.len := i; Read(S, ch); S.class := String
+      S.s[i] := 0X; S.len := SHORT(SHORT(i)); Read(S, ch); S.class := String
     ELSE
       IF ch = "-" THEN sign := TRUE; neg := TRUE; Read(S, ch)
       ELSIF ch = "+" THEN sign := TRUE; neg := FALSE; Read(S, ch)
@@ -743,7 +740,7 @@ information about the last character read. *)
         hex := FALSE; j := 0;
         LOOP 
           d[i] := ch; INC(i); Read(S, ch); 
-          IF (ch < "0") OR ~(S.lib IS Fonts.Font) THEN EXIT END;
+          IF (ch < "0") OR ~(S.lib IS Fonts.Font) OR (i >= maxD) THEN EXIT END;
           IF "9" < ch THEN
             IF ("A" <= ch) & (ch <= "F") THEN hex := TRUE; ch := CHR(ORD(ch)-7)
             ELSIF ("a" <= ch) & (ch <= "f") THEN hex := TRUE; ch := CHR(ORD(ch)-27H)
@@ -760,7 +757,7 @@ information about the last character read. *)
           IF neg THEN S.i := -k ELSE S.i := k END 
         ELSIF (ch = ".") & (S.lib IS Fonts.Font) THEN (*read real*)
           Read(S, ch); h := i; 
-          WHILE ("0" <= ch) & (ch <= "9") & (S.lib IS Fonts.Font) DO 
+          WHILE ("0" <= ch) & (ch <= "9") & (S.lib IS Fonts.Font) & (i < maxD) DO 
             d[i] := ch; INC(i); Read(S, ch)
           END;
           (*-------- begin floating-point handling BM 1993.3.10 -----------------------------------*)
@@ -846,7 +843,7 @@ information about the last character read. *)
   BEGIN W.col := col
   END SetColor;
 
-(** Set writer W to verticall offset voff. Vertical offset controls the writing of super- and sub-scripts. *)
+(** Set writer W to vertical offset voff. Vertical offset controls the writing of super- and sub-scripts. *)
   PROCEDURE SetOffset* (VAR W: Writer; voff: SHORTINT);
   BEGIN W.voff := voff
   END SetOffset;
@@ -874,14 +871,14 @@ information about the last character read. *)
   
 (** Write string s to W's buffer. *)
   PROCEDURE WriteString* (VAR W: Writer; s: ARRAY OF CHAR);
-    VAR i: INTEGER;
+	VAR i: LONGINT;
   BEGIN i := 0;
     WHILE s[i] # 0X DO Write(W, s[i]); INC(i) END
   END WriteString;
 
 (** Write integer x to W's buffer. Spaces are padded to the left until the number field is at least n characters long. *)
 PROCEDURE WriteInt* (VAR W: Writer; x, n: LONGINT);
-    VAR i: INTEGER; x0: LONGINT;
+    VAR i, x0: LONGINT;
       a: ARRAY 10 OF CHAR;
   BEGIN i := 0;
     IF x < 0 THEN
@@ -900,7 +897,7 @@ PROCEDURE WriteInt* (VAR W: Writer; x, n: LONGINT);
 
 (** Write a hexadecimal representation of x to W's buffer. *)
 PROCEDURE WriteHex* (VAR W: Writer; x: LONGINT);
-    VAR i: INTEGER; y: LONGINT;
+    VAR i, y: LONGINT;
       a: ARRAY 10 OF CHAR;
   BEGIN i := 0; Write(W, " ");
     REPEAT y := x MOD 10H;
@@ -1245,7 +1242,8 @@ to a text, its contents is emptied.
 4. The scanner classes indicate what token was scanned. The scanner understands
 the following token types:
 
-	Name	Longest sequence consisting of A..Z, a..z, ".", directory separator, and "@".
+	Name	Longest sequence starting with "A".."Z", "a".."z", ".", "/", and containing 
+		"A".."Z", "a".."z", "0".."9", "@", ".", "/", ":", "_", 80X..96X
 	String	Any character sequence surrounded by double quotes, i.e. "string".
 		The quotes are not returned in the s field of the scanner descriptor.
 	Int	Any valid integer number.

@@ -1,1103 +1,1219 @@
-MODULE LeoPens;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE LeoPens; (** portable **)	(* eos   *)
 
 	(**
-		Pen management for Leonardo
+		Leonardo Pen Objects
+		
+		Pens offer an additional level of abstraction compared to using Gfx contexts directly. Instead of
+		setting context state variables directly, clients let a pen decide which attributes have to be modified
+		and/or reset. Clients therefore don't have to keep values for all context attributes either but only
+		need to reference a pen object instead. In addition, pens may implement graphical effects that
+		cannot be done with contexts (e.g. arrow heads) and offer a way for doing partial updates of
+		paths with correct handling of dash offsets etc. Many pens use other pens for doing the
+		actual rendering, effecting in complex but very flexible pen hierarchies.
+		
+		The path model used for pen objects is a refinement of the Gfx path model. Entering a subpath
+		requires an additional parameter 'bdist', exiting it an additional parameter 'edist'. 'bdist' and 'edist'
+		let a client enter and exit a subpath at any control point (not only the first one) without messing up
+		dash offsets, etc.. This may be useful when doing partial updates of a context (and is also used for
+		some less common effects such as dashed arrow heads). 'bdist' is the accumulated length of all curves
+		in the subpath preceding the point of entry, whereas 'edist' is the accumulated length
+		of all curves following the point of exit. The following equation should always hold:
+			
+			bdist + length(rendered subpath) + edist = length(complete subpath)
+		
+		Two boolean flags in the pen object notify a client if distances are taken into account for
+		rendering subpaths ('needDist') and if the pen can deal with non-zero distances at all ('zeroDistOnly').
 	**)
 	
 	IMPORT
-		Files, Objects, Display, Fonts, Pictures, Printer, Strings, Oberon, Display3, Printer3, Attributes, Links, Gadgets,
-		ListRiders, ListGadgets, GfxPens, Figures, Leonardo;
+		Files, Objects, Display, Strings, Gadgets, Colors, Images, GfxMatrix, GfxPaths, Gfx, Leonardo;
 		
 	
 	CONST
-		Replace* = 0;	(** change message id **)
-		StrokePen* = 0; FillPen* = 1;	(** change message destination elements **)
-		
-		EditorName = "Editor";
+		CacheSize = 4;	(* number of temporary paths *)
 		
 	
 	TYPE
-		ChangeMsg* = RECORD (Figures.ShapeMsg)
-			id*: INTEGER;	(** Replace **)
-			res*: INTEGER;	(** result field **)
-			dest*: SET;	(** StrokePen, FillPen **)
-			pen*: ARRAY 2 OF GfxPens.Pen;	(** pens to replace old one with **)
+		DistArray* = POINTER TO ARRAY OF REAL;
+		
+		Methods* = POINTER TO MethodBlock;
+		
+		(** abstract pen object for drawing on a graphical context **)
+		Pen* = POINTER TO PenDesc;
+		PenDesc* = RECORD (Objects.ObjDesc)
+			do*: Methods;	(** pen methods **)
+			ctxt*: Gfx.Context;	(** graphic context the pen is connected to **)
+			destructive*: BOOLEAN;	(** if set, the path destroys the path of its context **)
+			needDist*: BOOLEAN;	(** if set, rendering is dependent on distance from begin/end of subpath **)
+			zeroDistOnly*: BOOLEAN;	(** if set, only zero distances generate correct results **)
 		END;
 		
-		GenFrame = POINTER TO GenFrameDesc;
-		GenFrameDesc = RECORD (Gadgets.FrameDesc)
-			font: Fonts.Font;	(* font for displaying model generator *)
+		MethodBlock* = RECORD
+			(** begin and finish drawing with a pen on a context **)
+			begin*: PROCEDURE (pen: Pen; ctxt: Gfx.Context);
+			end*: PROCEDURE (pen: Pen);
+			
+			(** enter and exit subpath **)
+			enter*: PROCEDURE (pen: Pen; x, y, dxi, dyi, bdist: REAL);
+			exit*: PROCEDURE (pen: Pen; dxo, dyo, edist: REAL);
+			
+			(** append curves to current subpath **)
+			line*: PROCEDURE (pen: Pen; x, y: REAL);
+			arc*: PROCEDURE (pen: Pen; x, y, x0, y0, x1, y1, x2, y2: REAL);
+			bezier*: PROCEDURE (pen: Pen; x, y, x1, y1, x2, y2: REAL);
+			
+			(** append path structure to current path **)
+			render*: PROCEDURE (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
 		END;
 		
-		Item = POINTER TO ItemDesc;
-		ItemDesc = RECORD (ListRiders.DataDesc)
-			pen: GfxPens.Pen;	(* underlying pen object *)
-			name: ARRAY 32 OF CHAR;	(* attribute/link name *)
-			obj: Objects.Object;	(* model object for attribute (if edited) *)
-			prev, next, dsc: Item;	(* links for building hierarchy *)
-			key, pos, stamp, state: LONGINT;	(* rider functionality *)
+		(** pens dealing with different line widths (abstract) **)
+		WidePen* = POINTER TO WidePenDesc;
+		WidePenDesc* = RECORD (PenDesc)
+			width*: REAL;	(** pen width **)
+			limit*: REAL;	(** style limit as defined by Gfx **)
+			capstyle*: Gfx.CapStyle;	(** line cap style to use **)
+			joinstyle*: Gfx.JoinStyle;	(** line join style to use **)
 		END;
 		
-		Model = POINTER TO ModelDesc;
-		ModelDesc = RECORD (Gadgets.ObjDesc)
-			tail: Item;	(* list sentinel *)
-			key: LONGINT;	(* next unique key *)
+		(** pen recording the visited path **)
+		Recorder* = POINTER TO RecorderDesc;
+		RecorderDesc* = RECORD (PenDesc)
+			path*: GfxPaths.Path;	(** recorded path **)
 		END;
 		
-		PenAction = POINTER TO PenActionDesc;
-		PenActionDesc = RECORD (Figures.ActionDesc)
-			name: ARRAY 32 OF CHAR;
-			shape, pen: Objects.Object;
+		(** basic stroke pen **)
+		Stroker* = POINTER TO StrokerDesc;
+		StrokerDesc* = RECORD (WidePenDesc)
+			col*: Gfx.Color;	(** stroke color **)
+			img*: Images.Image;	(** stroke pattern image **)
+			px*, py*: REAL;	(** stroke pattern pinpoint **)
+			pat: Gfx.Pattern;
+		END;
+		
+		(** basic fill pen **)
+		Filler* = POINTER TO FillerDesc;
+		FillerDesc* = RECORD (PenDesc)
+			col*: Gfx.Color;	(** fill color **)
+			img*: Images.Image;	(** fill pattern image **)
+			px*, py*: REAL;	(** fill pattern pinpoint **)
+			pat: Gfx.Pattern;
+		END;
+		
+		(** pen rendering dashes using another pen **)
+		Dasher* = POINTER TO DasherDesc;
+		DasherDesc* = RECORD (PenDesc)
+			base*: Pen;	(** pen for rendering dashes **)
+			on*, off*, onbak, offbak: ARRAY Gfx.MaxDashPatSize OF REAL;	(** dash pattern **)
+			len*, lenbak: LONGINT;	(** number of entries in the dash pattern **)
+			phase*, phasebak: REAL;	(** offset into pattern **)
+			continuous*: BOOLEAN;	(** unless true, each dash is treated like an independent subpath **)
+		END;
+		
+		(** pen forwarding visited path to two pens **)
+		Forker* = POINTER TO ForkerDesc;
+		ForkerDesc* = RECORD (PenDesc)
+			lower*, upper*: Pen;	(** pens that the visited path is forwarded to **)
+			bdist, edist: DistArray;	(* distance offsets for each subpath *)
+			n: LONGINT;
+		END;
+		
+		(** pen update notification (called by undoable action) **)
+		UpdateMsg* = RECORD (Leonardo.BroadcastMsg)
+			pen*: Pen;	(** all referencing shapes and pens should update themselves upon receiving this message **)
 		END;
 		
 	
 	VAR
-		Filler*: GfxPens.Pen;	(** current fill pen **)
-		Stroker*: GfxPens.Pen;	(** current stroke pen **)
-		
-		RMethods: ListRiders.Method;
-		UniqueKey: LONGINT;
-		EnumTail: Item;
-		
-		FMethods: ListGadgets.Method;
-		FoldedPict, UnfoldedPict: Pictures.Picture;
-		PictWidth: INTEGER;
+		Default*: Pen;	(** default pen **)
+		RecorderMethods, StrokerMethods, FillerMethods, DasherMethods, ForkerMethods: Methods;
+		Path: ARRAY CacheSize OF GfxPaths.Path;	(* temporary path structures *)
+		PathNo: LONGINT;	(* number of path to allocate next *)
 		
 	
-	(**--- Legacy from GfxPens ---**)
+	(**--- Distance Arrays ---**)
 	
-	PROCEDURE LinkRef* (VAR msg: Objects.LinkMsg; name: ARRAY OF CHAR; allowNIL: BOOLEAN; VAR pen: GfxPens.Pen);
+	PROCEDURE Append* (VAR d: DistArray; pos: LONGINT; val: REAL);
+		VAR t: DistArray; i: LONGINT;
+	BEGIN
+		IF d = NIL THEN
+			NEW(d, (pos DIV 32 + 1) * 32)
+		ELSIF LEN(d^) <= pos THEN
+			NEW(t, (pos DIV 32 + 1) * 32);
+			i := 0; WHILE i < LEN(d^) DO t[i] := d[i]; INC(i) END;
+			d := t
+		END;
+		d[pos] := val
+	END Append;
+	
+	
+	(**--- Pen Updates ---**)
+	
+	(** notify all objects in all figures of update to pen **)
+	PROCEDURE Update* (pen: Pen);
+		VAR um: UpdateMsg;
+	BEGIN
+		Objects.Stamp(um); um.pen := pen; Display.Broadcast(um)
+	END Update;
+	
+	
+	(**--- Pens ---**)
+	
+	PROCEDURE Copy* (VAR msg: Objects.CopyMsg; from, to: Pen);
+	BEGIN
+		to.handle := from.handle; to.do := from.do; to.ctxt := NIL;
+		to.destructive := from.destructive; to.needDist := from.needDist; to.zeroDistOnly := from.zeroDistOnly
+	END Copy;
+	
+	PROCEDURE Handle* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen: Pen;
+	BEGIN
+		pen := obj(Pen);
+		IF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Border")
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Border" THEN msg.class := Objects.Real; msg.x := 0; msg.res := 0 END
+				END
+			END
+		ELSIF msg IS Objects.BindMsg THEN
+			Gadgets.BindObj(pen, msg(Objects.BindMsg).lib)
+		END
+	END Handle;
+	
+	PROCEDURE Begin* (pen: Pen; ctxt: Gfx.Context);
+	BEGIN
+		pen.ctxt := ctxt
+	END Begin;
+	
+	PROCEDURE End* (pen: Pen);
+	BEGIN
+		pen.ctxt := NIL
+	END End;
+	
+	PROCEDURE Enter* (pen: Pen; x, y, dxi, dyi, bdist: REAL);
+	BEGIN
+		Gfx.Enter(pen.ctxt, x, y, dxi, dyi)
+	END Enter;
+	
+	PROCEDURE Exit* (pen: Pen; dxo, dyo, edist: REAL);
+	BEGIN
+		Gfx.Exit(pen.ctxt, dxo, dyo)
+	END Exit;
+	
+	PROCEDURE Line* (pen: Pen; x, y: REAL);
+	BEGIN
+		Gfx.LineTo(pen.ctxt, x, y)
+	END Line;
+	
+	PROCEDURE Arc* (pen: Pen; x, y, x0, y0, x1, y1, x2, y2: REAL);
+	BEGIN
+		Gfx.ArcTo(pen.ctxt, x, y, x0, y0, x1, y1, x2, y2)
+	END Arc;
+	
+	PROCEDURE Bezier* (pen: Pen; x, y, x1, y1, x2, y2: REAL);
+	BEGIN
+		Gfx.BezierTo(pen.ctxt, x, y, x1, y1, x2, y2)
+	END Bezier;
+	
+	PROCEDURE GetTempPath* (VAR path: GfxPaths.Path);
+	BEGIN
+		IF PathNo = CacheSize THEN
+			NEW(path)
+		ELSE
+			IF Path[PathNo] = NIL THEN NEW(Path[PathNo]) END;
+			path := Path[PathNo];
+			INC(PathNo)
+		END
+	END GetTempPath;
+	
+	PROCEDURE ReleaseTempPath* (path: GfxPaths.Path);
+	BEGIN
+		IF path = Path[PathNo-1] THEN DEC(PathNo) END
+	END ReleaseTempPath;
+	
+	PROCEDURE RenderPath* (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+		VAR path: GfxPaths.Path; inv: GfxMatrix.Matrix; s: GfxPaths.Scanner; i: LONGINT;
+	BEGIN
+		path := ctxt.path;
+		IF pen.destructive THEN
+			GetTempPath(path); GfxPaths.Copy(ctxt.path, path)
+		END;
+		GfxMatrix.Invert(ctxt.ctm, inv); GfxPaths.Apply(path, inv);
+		pen.do.begin(pen, ctxt);
+		GfxPaths.Open(s, path, 0); i := 0;
+		WHILE s.elem = GfxPaths.Enter DO
+			pen.do.enter(pen, s.x, s.y, s.dx, s.dy, bdist[i]);
+			GfxPaths.Scan(s);
+			WHILE s.elem IN {GfxPaths.Line, GfxPaths.Arc, GfxPaths.Bezier} DO
+				IF s.elem = GfxPaths.Line THEN
+					pen.do.line(pen, s.x, s.y)
+				ELSIF s.elem = GfxPaths.Arc THEN
+					pen.do.arc(pen, s.x, s.y, s.x0, s.y0, s.x1, s.y1, s.x2, s.y2)
+				ELSE
+					pen.do.bezier(pen, s.x, s.y, s.x1, s.y1, s.x2, s.y2)
+				END;
+				GfxPaths.Scan(s)
+			END;
+			IF s.elem = GfxPaths.Exit THEN
+				pen.do.exit(pen, s.dx, s.dy, edist[i])
+			END;
+			INC(i)
+		END;
+		pen.do.end(pen);
+		IF pen.destructive THEN
+			ReleaseTempPath(path)
+		END
+	END RenderPath;
+	
+	
+	(**--- Wide Pens ---**)
+	
+	PROCEDURE CopyWidePen* (VAR msg: Objects.CopyMsg; from, to: WidePen);
+	BEGIN
+		Copy(msg, from, to);
+		to.width := from.width; to.capstyle := from.capstyle; to.joinstyle := from.joinstyle; to.limit := from.limit
+	END CopyWidePen;
+	
+	PROCEDURE WidePenAttr* (pen: WidePen; VAR msg: Objects.AttrMsg);
+		VAR i: LONGINT;
 	BEGIN
 		IF msg.id = Objects.enum THEN
-			msg.Enum(name)
-		ELSIF (msg.id = Objects.get) & (msg.name = name) THEN
-			msg.obj := pen; msg.res := 0
-		ELSIF (msg.id = Objects.set) & (msg.name = name) THEN
-			IF (msg.obj = NIL) & allowNIL THEN pen := NIL; msg.res := 0
-			ELSIF (msg.obj # NIL) & (msg.obj IS GfxPens.Pen) THEN pen := msg.obj(GfxPens.Pen); msg.res := 0
+			msg.Enum("Width"); msg.Enum("Limit"); msg.Enum("CapStyle"); msg.Enum("JoinStyle");
+			Handle(pen, msg)
+		ELSIF msg.id = Objects.get THEN
+			IF msg.name = "Width" THEN msg.class := Objects.Real; msg.x := pen.width; msg.res := 0
+			ELSIF msg.name = "Limit" THEN msg.class := Objects.Real; msg.x := pen.limit; msg.res := 0
+			ELSIF msg.name = "Border" THEN msg.class := Objects.Real; msg.x := 0.5*pen.width * pen.limit; msg.res := 0
+			ELSIF msg.name = "CapStyle" THEN msg.class := Objects.Int; msg.i := pen.capstyle; msg.res := 0
+			ELSIF msg.name = "JoinStyle" THEN msg.class := Objects.Int; msg.i := pen.joinstyle; msg.res := 0
+			ELSE Handle(pen, msg)
+			END
+		ELSIF msg.id = Objects.set THEN
+			IF msg.name = "Width" THEN
+				IF msg.class = Objects.Int THEN pen.width := msg.i; msg.res := 0
+				ELSIF msg.class = Objects.Real THEN pen.width := msg.x; msg.res := 0
+				ELSIF msg.class = Objects.LongReal THEN pen.width := SHORT(msg.y); msg.res := 0
+				END
+			ELSIF msg.name = "Limit" THEN
+				IF msg.class = Objects.Int THEN pen.limit := msg.i; msg.res := 0
+				ELSIF msg.class = Objects.Real THEN pen.limit := msg.x; msg.res := 0
+				ELSIF msg.class = Objects.LongReal THEN pen.limit := SHORT(msg.y); msg.res := 0
+				END
+			ELSIF msg.name = "CapStyle" THEN
+				IF (msg.class = Objects.Int) & (Gfx.NoCap <= msg.i) & (msg.i <= Gfx.RoundCap) THEN
+					pen.capstyle := SHORT(SHORT(msg.i)); msg.res := 0
+				END
+			ELSIF msg.name = "JoinStyle" THEN
+				IF (msg.class = Objects.Int) & (Gfx.NoJoin <= msg.i) & (msg.i <= Gfx.RoundJoin) THEN
+					pen.joinstyle := SHORT(SHORT(msg.i)); msg.res := 0
+				END
+			ELSE
+				Handle(pen, msg)
 			END
 		END
-	END LinkRef;
+	END WidePenAttr;
 	
-	PROCEDURE WriteRef* (VAR r: Files.Rider; lib: Objects.Library; pen: GfxPens.Pen);
+	PROCEDURE WriteWidePen* (pen: WidePen; VAR r: Files.Rider);
 	BEGIN
-		Gadgets.WriteRef(r, lib, pen)
-	END WriteRef;
+		Files.WriteNum(r, 1);
+		Files.WriteReal(r, pen.width); Files.WriteReal(r, pen.limit);
+		Files.Write(r, pen.capstyle); Files.Write(r, pen.joinstyle)
+	END WriteWidePen;
 	
-	PROCEDURE ReadRef* (VAR r: Files.Rider; lib: Objects.Library; VAR pen: GfxPens.Pen);
-		VAR obj: Objects.Object;
+	PROCEDURE ReadWidePen* (pen: WidePen; VAR r: Files.Rider);
+		VAR n, ver: LONGINT;
 	BEGIN
-		Gadgets.ReadRef(r, lib, obj);
-		IF (obj # NIL) & (obj IS GfxPens.Pen) THEN pen := obj(GfxPens.Pen)
-		ELSE pen := NIL
-		END
-	END ReadRef;
+		Files.ReadNum(r, ver);
+		Files.ReadReal(r, pen.width); Files.ReadReal(r, pen.limit);
+		Files.Read(r, pen.capstyle); Files.Read(r, pen.joinstyle)
+	END ReadWidePen;
 	
-	PROCEDURE Bind* (obj: Objects.Object; lib: Objects.Library);
-	BEGIN
-		Gadgets.BindObj(obj, lib)
-	END Bind;
 	
-	PROCEDURE CopyRef* (VAR msg: Objects.CopyMsg; from: GfxPens.Pen; VAR to: GfxPens.Pen);
-		VAR obj: Objects.Object;
+	(**--- Recorders ---**)
+	
+	PROCEDURE HandleRecorder* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Recorder; ver: LONGINT;
 	BEGIN
-		IF msg.id = Objects.shallow THEN
-			to := from
-		ELSIF msg.id = Objects.deep THEN
-			IF from = NIL THEN to := NIL
-			ELSE obj := Gadgets.CopyPtr(msg, from); to := obj(GfxPens.Pen)
+		pen := obj(Recorder);
+		IF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF (msg.id = Objects.get) & (msg.name = "Gen") THEN msg.class := Objects.String; msg.s := "LeoPens.NewRecorder"; msg.res := 0
+				ELSE Handle(pen, msg)
+				END
 			END
-		END
-	END CopyRef;
-	
-	
-	(*--- Generator Frames ---*)
-	
-	PROCEDURE GetGenerator (obj: Objects.Object; VAR s: ARRAY OF CHAR);
-		VAR i, j: LONGINT; ch: CHAR;
-	BEGIN
-		IF obj # NIL THEN
-			Attributes.GetString(obj, "Gen", s);
-			IF Strings.Prefix("GfxPens.New", s) THEN
-				i := 0; j := 11;
-				REPEAT
-					ch := s[j]; s[i] := s[j]; INC(i); INC(j)
-				UNTIL ch = 0X
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					Copy(msg, pen, copy);
+					copy.path := NIL
+				END;
+				msg.obj := pen.dlink
+			END
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver)
+				END
 			END
 		ELSE
-			COPY("NIL", s)
+			Handle(pen, msg)
 		END
-	END GetGenerator;
+	END HandleRecorder;
 	
-	PROCEDURE RestoreGen (gen: GenFrame; x, y: INTEGER; mask: Display3.Mask);
-		VAR name: ARRAY 64 OF CHAR; w, h, dsr: INTEGER;
+	PROCEDURE InitRecorder* (pen: Recorder);
 	BEGIN
-		Oberon.RemoveMarks(x, y, gen.W, gen.H);
-		Display3.FilledRect3D(mask, Display3.bottomC, Display3.topC, Display3.textbackC, x, y, gen.W, gen.H, 1, Display.replace);
-		GetGenerator(gen.obj, name);
-		Display3.StringSize(name, gen.font, w, h, dsr);
-		Display3.String(mask, Display3.textC, x + (gen.W - w) DIV 2, y + (gen.H - h) DIV 2 + dsr, gen.font, name, Display.paint);
-		IF Gadgets.selected IN gen.state THEN
-			Display3.FillPattern(mask, Display3.white, Display3.selectpat, 0, 0, x, y, gen.W, gen.H, Display.paint)
-		END
-	END RestoreGen;
+		pen.handle := HandleRecorder; pen.do := RecorderMethods;
+		pen.destructive := FALSE; pen.needDist := FALSE; pen.zeroDistOnly := FALSE
+	END InitRecorder;
 	
-	PROCEDURE PrintGen (gen: GenFrame; VAR msg: Display.DisplayMsg);
-		VAR gw, gh, w, h, dsr: INTEGER; mask: Display3.Mask; name: ARRAY 64 OF CHAR;
+	PROCEDURE NewRecorder*;
+		VAR pen: Recorder;
 	BEGIN
-		gw := SHORT(LONG(gen.W) * 10000 DIV Printer.Unit);
-		gh := SHORT(LONG(gen.H) * 10000 DIV Printer.Unit);
-		Gadgets.MakePrinterMask(gen, msg.x, msg.y, msg.dlink, mask);
-		Printer3.FilledRect3D(mask, Display3.bottomC, Display3.topC, Display3.textbackC, msg.x, msg.y, gw, gh, 1, Display.replace);
-		GetGenerator(gen.obj, name);
-		Printer3.StringSize(name, gen.font, w, h, dsr);
-		Printer3.String(mask, Display3.textC, msg.x + (gw - w) DIV 2, msg.y + (gh - h) DIV 2 - dsr, gen.font, name, Display.paint);
-		IF Gadgets.selected IN gen.state THEN
-			Printer3.FillPattern(mask, Display3.white, Display3.selectpat, 0, 0, msg.x, msg.y, gw, gh, Display.paint)
-		END
-	END PrintGen;
+		NEW(pen); InitRecorder(pen);
+		Objects.NewObj := pen
+	END NewRecorder;
 	
-	PROCEDURE HandleGen (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR gen, copy: GenFrame; x, y: INTEGER; mask: Display3.Mask; ver: LONGINT; fontName: ARRAY 32 OF CHAR;
+	PROCEDURE BeginRecorder (pen: Pen; ctxt: Gfx.Context);
+		VAR rec: Recorder;
 	BEGIN
-		gen := obj(GenFrame);
-		IF msg IS Display.FrameMsg THEN
-			WITH msg: Display.FrameMsg DO
-				IF (msg.F = NIL) OR (msg.F = gen) THEN
-					IF msg IS Display.DisplayMsg THEN
-						WITH msg: Display.DisplayMsg DO
-							x := msg.x + gen.X; y := msg.y + gen.Y;
-							IF msg.device = Display.screen THEN
-								IF (msg.id = Display.full) OR (msg.F = NIL) THEN
-									Gadgets.MakeMask(gen, x, y, msg.dlink, mask);
-									RestoreGen(gen, x, y, mask)
-								ELSIF msg.id = Display.area THEN
-									Gadgets.MakeMask(gen, x, y, msg.dlink, mask);
-									Display3.AdjustMask(mask, x + msg.u, y + gen.H - 1 + msg.v, msg.w, msg.h);
-									RestoreGen(gen, x, y, mask)
-								END
-							ELSIF msg.device = Display.printer THEN
-								PrintGen(gen, msg)
-							END
+		rec := pen(Recorder);
+		Begin(rec, ctxt);
+		IF rec.path = NIL THEN
+			NEW(rec.path)
+		END;
+		GfxPaths.Clear(rec.path)
+	END BeginRecorder;
+	
+	PROCEDURE EnterRecorder (pen: Pen; x, y, dxi, dyi, bdist: REAL);
+	BEGIN
+		GfxPaths.AddEnter(pen(Recorder).path, x, y, dxi, dyi)
+	END EnterRecorder;
+	
+	PROCEDURE ExitRecorder (pen: Pen; dxo, dyo, edist: REAL);
+	BEGIN
+		GfxPaths.AddExit(pen(Recorder).path, dxo, dyo)
+	END ExitRecorder;
+	
+	PROCEDURE RecordLine (pen: Pen; x, y: REAL);
+	BEGIN
+		GfxPaths.AddLine(pen(Recorder).path, x, y)
+	END RecordLine;
+	
+	PROCEDURE RecordArc (pen: Pen; x, y, x0, y0, x1, y1, x2, y2: REAL);
+	BEGIN
+		GfxPaths.AddArc(pen(Recorder).path, x, y, x0, y0, x1, y1, x2, y2)
+	END RecordArc;
+	
+	PROCEDURE RecordBezier (pen: Pen; x, y, x1, y1, x2, y2: REAL);
+	BEGIN
+		GfxPaths.AddBezier(pen(Recorder).path, x, y, x1, y1, x2, y2)
+	END RecordBezier;
+	
+	PROCEDURE RecordPath (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+	BEGIN
+		GfxPaths.Copy(ctxt.path, pen(Recorder).path)
+	END RecordPath;
+	
+	PROCEDURE InitRecorders;
+	BEGIN
+		NEW(RecorderMethods);
+		RecorderMethods.begin := BeginRecorder; RecorderMethods.end := End;
+		RecorderMethods.enter := EnterRecorder; RecorderMethods.exit := ExitRecorder;
+		RecorderMethods.line := RecordLine; RecorderMethods.arc := RecordArc; RecorderMethods.bezier := RecordBezier;
+		RecorderMethods.render := RecordPath
+	END InitRecorders;
+	
+	
+	(**--- Stroker ---**)
+	
+	PROCEDURE HandleStroker* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Stroker; ver: LONGINT; ch: CHAR;
+	BEGIN
+		pen := obj(Stroker);
+		IF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Color"); msg.Enum("Red"); msg.Enum("Green"); msg.Enum("Blue");
+					msg.Enum("PinX"); msg.Enum("PinY");
+					WidePenAttr(pen, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPens.NewStroker"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Stroker"; msg.res := 0
+					ELSIF msg.name = "Color" THEN
+						msg.class := Objects.Int; msg.res := 0;
+						msg.i := Colors.Match(Colors.DisplayIndex, Colors.DisplayBits, pen.col.r, pen.col.g, pen.col.b)
+					ELSIF msg.name = "Red" THEN msg.class := Objects.Int; msg.i := pen.col.r; msg.res := 0
+					ELSIF msg.name = "Green" THEN msg.class := Objects.Int; msg.i := pen.col.g; msg.res := 0
+					ELSIF msg.name = "Blue" THEN msg.class := Objects.Int; msg.i := pen.col.b; msg.res := 0
+					ELSIF msg.name = "PinX" THEN msg.class := Objects.Real; msg.x := pen.px; msg.res := 0
+					ELSIF msg.name = "PinY" THEN msg.class := Objects.Real; msg.x := pen.py; msg.res := 0
+					ELSE WidePenAttr(pen, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Color" THEN
+						IF msg.class = Objects.Int THEN Display.GetColor(msg.i, pen.col.r, pen.col.g, pen.col.b); msg.res := 0 END
+					ELSIF msg.name = "Red" THEN
+						IF msg.class = Objects.Int THEN pen.col.r := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "Green" THEN
+						IF msg.class = Objects.Int THEN pen.col.g := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "Blue" THEN
+						IF msg.class = Objects.Int THEN pen.col.b := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "PinX" THEN
+						IF msg.class = Objects.Int THEN pen.px := msg.i; msg.res := 0
+						ELSIF msg.class = Objects.Real THEN pen.px := msg.x; msg.res := 0
+						ELSIF msg.class = Objects.LongReal THEN pen.px := SHORT(msg.y); msg.res := 0
+						END
+					ELSIF msg.name = "PinY" THEN
+						IF msg.class = Objects.Int THEN pen.py := msg.i; msg.res := 0
+						ELSIF msg.class = Objects.Real THEN pen.py := msg.x; msg.res := 0
+						ELSIF msg.class = Objects.LongReal THEN pen.py := SHORT(msg.y); msg.res := 0
 						END
 					ELSE
-						Gadgets.framehandle(gen, msg)
+						WidePenAttr(pen, msg)
 					END
+				END
+			END
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Image")
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Image" THEN msg.obj := pen.img; msg.res := 0 END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Image" THEN
+						IF msg.obj = NIL THEN pen.img := NIL; msg.res := 0
+						ELSIF msg.obj IS Images.Image THEN pen.img := msg.obj(Images.Image); msg.res := 0
+						END
+					END
+				END
+			END
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					CopyWidePen(msg, pen, copy);
+					copy.col := pen.col; copy.px := pen.px; copy.py := pen.py; copy.img := pen.img
+				END;
+				msg.obj := pen.dlink
+			END
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					Files.Write(msg.R, CHR(pen.col.r)); Files.Write(msg.R, CHR(pen.col.g)); Files.Write(msg.R, CHR(pen.col.b));
+					WriteWidePen(pen, msg.R);
+					Gadgets.WriteRef(msg.R, pen.lib, pen.img);
+					IF pen.img # NIL THEN
+						Files.WriteReal(msg.R, pen.px); Files.WriteReal(msg.R, pen.py)
+					END
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Files.Read(msg.R, ch); pen.col.r := ORD(ch);
+					Files.Read(msg.R, ch); pen.col.g := ORD(ch);
+					Files.Read(msg.R, ch); pen.col.b := ORD(ch);
+					ReadWidePen(pen, msg.R);
+					Gadgets.ReadRef(msg.R, pen.lib, obj);
+					IF (obj # NIL) & (obj IS Images.Image) THEN
+						pen.img := obj(Images.Image);
+						Files.ReadReal(msg.R, pen.px); Files.ReadReal(msg.R, pen.py)
+					END
+				END
+			END
+		ELSE
+			Handle(pen, msg)
+		END
+	END HandleStroker;
+	
+	PROCEDURE InitStroker* (pen: Stroker; col: Gfx.Color; width: REAL);
+	BEGIN
+		pen.handle := HandleStroker; pen.do := StrokerMethods;
+		pen.destructive := FALSE; pen.needDist := FALSE; pen.zeroDistOnly := FALSE;
+		pen.col := col; pen.img := NIL;
+		pen.width := width; pen.limit := 5; pen.capstyle := Gfx.DefaultCap; pen.joinstyle := Gfx.DefaultJoin
+	END InitStroker;
+	
+	PROCEDURE NewStroker*;
+		VAR pen: Stroker;
+	BEGIN
+		NEW(pen); InitStroker(pen, Gfx.Black, 1);
+		Objects.NewObj := pen
+	END NewStroker;
+	
+	PROCEDURE UseStroker (pen: Stroker; ctxt: Gfx.Context);
+	BEGIN
+		Gfx.SetStrokeColor(ctxt, pen.col);
+		IF pen.pat = NIL THEN
+			IF pen.img # NIL THEN pen.pat := Gfx.NewPattern(ctxt, pen.img, pen.px, pen.py) END
+		ELSIF pen.img = NIL THEN
+			pen.pat := NIL
+		ELSIF (pen.img # pen.pat.img) OR (pen.px # pen.pat.px) OR (pen.py # pen.pat.py) THEN
+			pen.pat := Gfx.NewPattern(ctxt, pen.img, pen.px, pen.py)
+		END;
+		IF pen.pat # ctxt.strokePat THEN
+			Gfx.SetStrokePattern(ctxt, pen.pat)
+		END;
+		Gfx.SetLineWidth(ctxt, pen.width); Gfx.SetStyleLimit(ctxt, pen.limit);
+		Gfx.SetCapStyle(ctxt, pen.capstyle); Gfx.SetJoinStyle(ctxt, pen.joinstyle);
+	END UseStroker;
+	
+	PROCEDURE BeginStroker (pen: Pen; ctxt: Gfx.Context);
+		VAR p: Stroker;
+	BEGIN
+		p := pen(Stroker);
+		Begin(p, ctxt);
+		UseStroker(p, ctxt);
+		Gfx.Begin(ctxt, {Gfx.Stroke})
+	END BeginStroker;
+	
+	PROCEDURE EndStroker (pen: Pen);
+	BEGIN
+		Gfx.End(pen.ctxt);
+		End(pen)
+	END EndStroker;
+	
+	PROCEDURE RenderStroker (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+		VAR p: Stroker;
+	BEGIN
+		p := pen(Stroker);
+		UseStroker(p, ctxt);
+		Gfx.Render(ctxt, {Gfx.Stroke})
+	END RenderStroker;
+	
+	PROCEDURE InitStrokers;
+	BEGIN
+		NEW(StrokerMethods);
+		StrokerMethods.begin := BeginStroker; StrokerMethods.end := EndStroker;
+		StrokerMethods.enter := Enter; StrokerMethods.exit := Exit;
+		StrokerMethods.line := Line; StrokerMethods.arc := Arc; StrokerMethods.bezier := Bezier;
+		StrokerMethods.render := RenderStroker
+	END InitStrokers;
+	
+	
+	(**--- Fillers ---**)
+	
+	PROCEDURE HandleFiller* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Filler; ver: LONGINT; ch: CHAR;
+	BEGIN
+		pen := obj(Filler);
+		IF msg IS Objects.AttrMsg THEN
+			WITH msg: Objects.AttrMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Color"); msg.Enum("Red"); msg.Enum("Green"); msg.Enum("Blue");
+					msg.Enum("PinX"); msg.Enum("PinY");
+					Handle(pen, msg)
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPens.NewFiller"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Filler"; msg.res := 0
+					ELSIF msg.name = "Color" THEN
+						msg.class := Objects.Int; msg.res := 0;
+						msg.i := Colors.Match(Colors.DisplayIndex, Colors.DisplayBits, pen.col.r, pen.col.g, pen.col.b)
+					ELSIF msg.name = "Red" THEN msg.class := Objects.Int; msg.i := pen.col.r; msg.res := 0
+					ELSIF msg.name = "Green" THEN msg.class := Objects.Int; msg.i := pen.col.g; msg.res := 0
+					ELSIF msg.name = "Blue" THEN msg.class := Objects.Int; msg.i := pen.col.b; msg.res := 0
+					ELSIF msg.name = "PinX" THEN msg.class := Objects.Real; msg.x := pen.px; msg.res := 0
+					ELSIF msg.name = "PinY" THEN msg.class := Objects.Real; msg.x := pen.py; msg.res := 0
+					ELSE Handle(pen, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Color" THEN
+						IF msg.class = Objects.Int THEN Display.GetColor(msg.i, pen.col.r, pen.col.g, pen.col.b); msg.res := 0 END
+					ELSIF msg.name = "Red" THEN
+						IF msg.class = Objects.Int THEN pen.col.r := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "Green" THEN
+						IF msg.class = Objects.Int THEN pen.col.g := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "Blue" THEN
+						IF msg.class = Objects.Int THEN pen.col.b := SHORT(msg.i MOD 100H); msg.res := 0 END
+					ELSIF msg.name = "PinX" THEN
+						IF msg.class = Objects.Int THEN pen.px := msg.i; msg.res := 0
+						ELSIF msg.class = Objects.Real THEN pen.px := msg.x; msg.res := 0
+						ELSIF msg.class = Objects.LongReal THEN pen.px := SHORT(msg.y); msg.res := 0
+						END
+					ELSIF msg.name = "PinY" THEN
+						IF msg.class = Objects.Int THEN pen.py := msg.i; msg.res := 0
+						ELSIF msg.class = Objects.Real THEN pen.py := msg.x; msg.res := 0
+						ELSIF msg.class = Objects.LongReal THEN pen.py := SHORT(msg.y); msg.res := 0
+						END
+					ELSE
+						Handle(pen, msg)
+					END
+				END
+			END
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Image")
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Image" THEN msg.obj := pen.img; msg.res := 0 END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Image" THEN
+						IF msg.obj = NIL THEN pen.img := NIL; msg.res := 0
+						ELSIF msg.obj IS Images.Image THEN pen.img := msg.obj(Images.Image); msg.res := 0
+						END
+					END
+				END
+			END
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					Copy(msg, pen, copy);
+					copy.col := pen.col; copy.px := pen.px; copy.py := pen.py; copy.img := pen.img
+				END;
+				msg.obj := pen.dlink
+			END
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					Files.Write(msg.R, CHR(pen.col.r)); Files.Write(msg.R, CHR(pen.col.g)); Files.Write(msg.R, CHR(pen.col.b));
+					Gadgets.WriteRef(msg.R, pen.lib, pen.img);
+					IF pen.img # NIL THEN
+						Files.WriteReal(msg.R, pen.px); Files.WriteReal(msg.R, pen.py)
+					END
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Files.Read(msg.R, ch); pen.col.r := ORD(ch);
+					Files.Read(msg.R, ch); pen.col.g := ORD(ch);
+					Files.Read(msg.R, ch); pen.col.b := ORD(ch);
+					Gadgets.ReadRef(msg.R, pen.lib, obj);
+					IF (obj # NIL) & (obj IS Images.Image) THEN
+						pen.img := obj(Images.Image);
+						Files.ReadReal(msg.R, pen.px); Files.ReadReal(msg.R, pen.py)
+					END
+				END
+			END
+		ELSE
+			Handle(pen, msg)
+		END
+	END HandleFiller;
+	
+	PROCEDURE InitFiller* (pen: Filler; col: Gfx.Color);
+	BEGIN
+		pen.handle := HandleFiller; pen.do := FillerMethods; pen.col := col;
+		pen.destructive := FALSE; pen.needDist := FALSE; pen.zeroDistOnly := TRUE
+	END InitFiller;
+	
+	PROCEDURE NewFiller*;
+		VAR pen: Filler;
+	BEGIN
+		NEW(pen); InitFiller(pen, Gfx.White);
+		Objects.NewObj := pen
+	END NewFiller;
+	
+	PROCEDURE UseFiller (pen: Filler; ctxt: Gfx.Context);
+	BEGIN
+		Gfx.SetFillColor(ctxt, pen.col);
+		IF pen.pat = NIL THEN
+			IF pen.img # NIL THEN pen.pat := Gfx.NewPattern(ctxt, pen.img, pen.px, pen.py) END
+		ELSIF pen.img = NIL THEN
+			pen.pat := NIL
+		ELSIF (pen.img # pen.pat.img) OR (pen.px # pen.pat.px) OR (pen.py # pen.pat.py) THEN
+			pen.pat := Gfx.NewPattern(ctxt, pen.img, pen.px, pen.py)
+		END;
+		IF pen.pat # ctxt.fillPat THEN
+			Gfx.SetFillPattern(ctxt, pen.pat)
+		END
+	END UseFiller;
+	
+	PROCEDURE BeginFiller (pen: Pen; ctxt: Gfx.Context);
+		VAR p: Filler;
+	BEGIN
+		p := pen(Filler);
+		Begin(p, ctxt);
+		UseFiller(p, ctxt);
+		Gfx.Begin(ctxt, {Gfx.Fill})
+	END BeginFiller;
+	
+	PROCEDURE EndFiller (pen: Pen);
+	BEGIN
+		Gfx.End(pen.ctxt);
+		End(pen)
+	END EndFiller;
+	
+	PROCEDURE RenderFiller (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+		VAR p: Filler;
+	BEGIN
+		p := pen(Filler);
+		UseFiller(p, ctxt);
+		Gfx.Render(ctxt, {Gfx.Fill})
+	END RenderFiller;
+	
+	PROCEDURE InitFillers;
+	BEGIN
+		NEW(FillerMethods);
+		FillerMethods.begin := BeginFiller; FillerMethods.end := EndFiller;
+		FillerMethods.enter := Enter; FillerMethods.exit := Exit;
+		FillerMethods.line := Line; FillerMethods.arc := Arc; FillerMethods.bezier := Bezier;
+		FillerMethods.render := RenderFiller
+	END InitFillers;
+	
+	
+	(**--- Dasher ---**)
+	
+	PROCEDURE HandleDasher* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Dasher; n, ver: LONGINT;
+	BEGIN
+		pen := obj(Dasher);
+		IF msg IS UpdateMsg THEN
+			WITH msg: UpdateMsg DO
+				IF msg.pen = pen.base THEN
+					Update(pen)
 				END
 			END
 		ELSIF msg IS Objects.AttrMsg THEN
 			WITH msg: Objects.AttrMsg DO
 				IF msg.id = Objects.enum THEN
-					msg.Enum("Font");
-					Gadgets.framehandle(gen, msg)
+					msg.Enum("Length"); msg.Enum("Phase"); msg.Enum("Continuous");
+					Handle(pen, msg)
 				ELSIF msg.id = Objects.get THEN
-					IF msg.name = "Gen" THEN
-						msg.class := Objects.String; msg.s := "LeoPens.NewGen"; msg.res := 0
-					ELSIF msg.name = "Font" THEN
-						msg.class := Objects.String; COPY(gen.font.name, msg.s); msg.res := 0
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPens.NewDasher"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Dasher"; msg.res := 0
+					ELSIF msg.name = "Length" THEN msg.class := Objects.Int; msg.i := pen.len; msg.res := 0
+					ELSIF msg.name = "Phase" THEN msg.class := Objects.Real; msg.x := pen.phase; msg.res := 0
+					ELSIF msg.name = "Continuous" THEN msg.class := Objects.Bool; msg.b := pen.continuous; msg.res := 0
+					ELSIF msg.name = "Border" THEN pen.base.handle(pen.base, msg)
+					ELSIF (msg.name[0] = "O") & (msg.name[1] = "n") & (msg.name[3] = 0X) THEN
+						n := ORD(msg.name[2]) - ORD("0");
+						IF (0 <= n) & (n < Gfx.MaxDashPatSize) THEN msg.class := Objects.Real; msg.x := pen.on[n]; msg.res := 0 END
+					ELSIF (msg.name[0] = "O") & (msg.name[1] = "f") & (msg.name[2] = "f") & (msg.name[4] = 0X) THEN
+						n := ORD(msg.name[3]) - ORD("0");
+						IF (0 <= n) & (n < Gfx.MaxDashPatSize) THEN msg.class := Objects.Real; msg.x := pen.off[n]; msg.res := 0 END
+					ELSE Handle(pen, msg)
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Length" THEN
+						IF (msg.class = Objects.Int) & (0 <= msg.i) & (msg.i < Gfx.MaxDashPatSize) THEN
+							WHILE pen.len < msg.i DO
+								pen.on[pen.len] := 0; pen.off[pen.len] := 0; INC(pen.len)
+							END;
+							pen.len := msg.i; msg.res := 0	(* msg.i could be < pen.len *)
+						END
+					ELSIF msg.name = "Phase" THEN
+						IF msg.class = Objects.Int THEN pen.phase := msg.i; msg.res := 0
+						ELSIF msg.class = Objects.Real THEN pen.phase := msg.x; msg.res := 0
+						ELSIF msg.class = Objects.LongReal THEN pen.phase := SHORT(msg.y); msg.res := 0
+						END
+					ELSIF msg.name = "Continuous" THEN
+						IF msg.class = Objects.Bool THEN pen.continuous := msg.b; msg.res := 0 END
+					ELSIF (msg.name[0] = "O") & (msg.name[1] = "n") & (msg.name[3] = 0X) THEN
+						n := ORD(msg.name[2]) - ORD("0");
+						IF (0 <= n) & (n < Gfx.MaxDashPatSize) THEN
+							IF msg.class = Objects.Int THEN pen.on[n] := msg.i; msg.res := 0
+							ELSIF msg.class = Objects.Real THEN pen.on[n] := msg.x; msg.res := 0
+							ELSIF msg.class = Objects.LongReal THEN pen.on[n] := SHORT(msg.y); msg.res := 0
+							ELSIF msg.class = Objects.String THEN Strings.StrToReal(msg.s, msg.y); pen.on[n] := SHORT(msg.y); msg.res := 0
+							END
+						END
+					ELSIF (msg.name[0] = "O") & (msg.name[1] = "f") & (msg.name[2] = "f") & (msg.name[4] = 0X) THEN
+						n := ORD(msg.name[3]) - ORD("0");
+						IF (0 <= n) & (n < Gfx.MaxDashPatSize) THEN
+							IF msg.class = Objects.Int THEN pen.off[n] := msg.i; msg.res := 0
+							ELSIF msg.class = Objects.Real THEN pen.off[n] := msg.x; msg.res := 0
+							ELSIF msg.class = Objects.LongReal THEN pen.off[n] := SHORT(msg.y); msg.res := 0
+							ELSIF msg.class = Objects.String THEN Strings.StrToReal(msg.s, msg.y); pen.off[n] := SHORT(msg.y); msg.res := 0
+							END
+						END
 					ELSE
-						Gadgets.framehandle(gen, msg)
+						Handle(pen, msg)
 					END
-				ELSIF (msg.id = Objects.set) & (msg.name = "Font") & (msg.class = Objects.String) THEN
-					gen.font := Fonts.This(msg.s); msg.res := 0
-				ELSE
-					Gadgets.framehandle(gen, msg)
-				END
-			END
-		ELSIF msg IS Objects.CopyMsg THEN
-			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # gen.stamp THEN
-					NEW(copy); gen.dlink := copy; gen.stamp := msg.stamp;
-					Gadgets.CopyFrame(msg, gen, copy);
-					copy.font := gen.font
-				END;
-				msg.obj := gen.dlink
-			END
-		ELSIF msg IS Objects.FileMsg THEN
-			WITH msg: Objects.FileMsg DO
-				Gadgets.framehandle(gen, msg);
-				IF msg.id = Objects.store THEN
-					Files.WriteNum(msg.R, 1);
-					Files.WriteString(msg.R, gen.font.name)
-				ELSIF msg.id = Objects.load THEN
-					Files.ReadNum(msg.R, ver);
-					IF ver >= 1 THEN
-						Files.ReadString(msg.R, fontName);
-						gen.font := Fonts.This(fontName)
-					END
-				END
-			END
-		ELSE
-			Gadgets.framehandle(gen, msg)
-		END
-	END HandleGen;
-	
-	PROCEDURE InitGen (gen: GenFrame; obj: Objects.Object);
-	BEGIN
-		gen.handle := HandleGen; gen.W := 100; gen.H := 20; gen.obj := obj;
-		gen.font := Fonts.Default
-	END InitGen;
-	
-	PROCEDURE NewGen*;
-		VAR gen: GenFrame;
-	BEGIN
-		NEW(gen); InitGen(gen, NIL);
-		Objects.NewObj := gen
-	END NewGen;
-	
-	
-	(*--- Items & Riders ---*)
-	
-	PROCEDURE NewKey (): LONGINT;
-	BEGIN
-		INC(UniqueKey);
-		RETURN UniqueKey
-	END NewKey;
-	
-	PROCEDURE NewItem (name: ARRAY OF CHAR; key: LONGINT; pen: GfxPens.Pen): Item;
-		VAR item: Item;
-	BEGIN
-		NEW(item); COPY(name, item.name); item.key := key; item.stamp := -1; item.pen := pen;
-		RETURN item
-	END NewItem;
-	
-	PROCEDURE NewTail (pen: GfxPens.Pen): Item;
-		VAR item: Item;
-	BEGIN
-		NEW(item); item.key := -1; item.stamp := -1; item.pos := -1;
-		item.next := item; item.prev := item;
-		item.pen := pen;
-		RETURN item
-	END NewTail;
-	
-	PROCEDURE Append (tail, item: Item);
-	BEGIN
-		item.next := tail; item.prev := tail.prev;
-		tail.prev := item; item.prev.next := item;
-		item.pos := item.prev.pos+1
-	END Append;
-	
-	PROCEDURE EnumAttr (name: ARRAY OF CHAR);
-		VAR item: Item;
-	BEGIN
-		item := NewItem(name, NewKey(), EnumTail.pen); item.dsc := NIL;
-		Append(EnumTail, item)
-	END EnumAttr;
-	
-	PROCEDURE EnumLink (name: ARRAY OF CHAR);
-		VAR lm: Objects.LinkMsg; item: Item;
-	BEGIN
-		lm.id := Objects.get; COPY(name, lm.name); lm.res := -1;
-		EnumTail.pen.handle(EnumTail.pen, lm);
-		IF (lm.res >= 0) & ((lm.obj = NIL) OR (lm.obj IS GfxPens.Pen)) THEN
-			item := NewItem(name, NewKey(), EnumTail.pen);
-			IF lm.obj = NIL THEN
-				item.dsc := NewTail(NIL)
-			ELSE
-				item.dsc := NewTail(lm.obj(GfxPens.Pen))
-			END;
-			Append(EnumTail, item)
-		END
-	END EnumLink;
-	
-	PROCEDURE BuildItems (tail: Item);
-		VAR lm: Objects.LinkMsg; am: Objects.AttrMsg;
-	BEGIN
-		ASSERT(tail.next = tail);
-		IF tail.pen # NIL THEN
-			EnumTail := tail;
-			lm.id := Objects.enum; lm.Enum := EnumLink;
-			tail.pen.handle(tail.pen, lm);
-			am.id := Objects.enum; am.Enum := EnumAttr;
-			tail.pen.handle(tail.pen, am)
-		END
-	END BuildItems;
-	
-	PROCEDURE SetItem (r: ListRiders.Rider; item: Item);
-	BEGIN
-		r.d := item; r.eol := item.key < 0; r.dsc := item.dsc # NIL
-	END SetItem;
-	
-	PROCEDURE ConnectRider (r: ListRiders.Rider; base: Model);
-	BEGIN
-		r.do := RMethods; r.base := base;
-		SetItem(r, base.tail.next)
-	END ConnectRider;
-	
-	PROCEDURE Key (r: ListRiders.Rider): LONGINT;
-	BEGIN
-		RETURN r.d(Item).key
-	END Key;
-	
-	PROCEDURE Seek (r: ListRiders.Rider; key: LONGINT);
-		PROCEDURE findItem (tail: Item; key: LONGINT): Item;
-			VAR item, found: Item;
-		BEGIN
-			item := tail.next;
-			WHILE (item # tail) & (item.key # key) DO
-				IF item.dsc = NIL THEN
-					item := item.next
-				ELSE
-					found := findItem(item.dsc, key);
-					IF found.key = key THEN
-						item := found
-					ELSE
-						item := item.next
-					END
-				END
-			END;
-			RETURN item
-		END findItem;
-	BEGIN
-		SetItem(r, findItem(r.base(Model).tail, key))
-	END Seek;
-	
-	PROCEDURE Pos (r: ListRiders.Rider): LONGINT;
-	BEGIN
-		RETURN r.d(Item).pos
-	END Pos;
-	
-	PROCEDURE Set (r: ListRiders.Rider; pos: LONGINT);
-		VAR item: Item;
-	BEGIN
-		item := r.d(Item);
-		IF item.pos > pos THEN
-			REPEAT item := item.prev UNTIL (item.pos = pos) OR (item.key < 0)
-		ELSIF item.pos < pos THEN
-			REPEAT item := item.next UNTIL (item.pos = pos) OR (item.key < 0)
-		END;
-		SetItem(r, item)
-	END Set;
-	
-	PROCEDURE Write (r: ListRiders.Rider; data: ListRiders.Data);
-	END Write;
-	
-	PROCEDURE WriteLink (r, link: ListRiders.Rider);
-	END WriteLink;
-	
-	PROCEDURE DeleteLink (r, link: ListRiders.Rider);
-	END DeleteLink;
-	
-	PROCEDURE Desc (r, old: ListRiders.Rider): ListRiders.Rider;
-		VAR new: ListRiders.Rider; item: Item;
-	BEGIN
-		IF (old = NIL) THEN NEW(new) ELSE new := old END;
-		new.do := r.do; new.base := r.base;
-		item := r.d(Item);
-		IF ~r.eol & (item.dsc # NIL) THEN
-			item := item.dsc;
-			IF item.next = item THEN	(* empty *)
-				BuildItems(item)
-			END;
-			item := item.next
-		END;
-		SetItem(new, item);
-		RETURN new
-	END Desc;
-	
-	PROCEDURE State (r: ListRiders.Rider): LONGINT;
-	BEGIN
-		RETURN r.d(Item).state
-	END State;
-	
-	PROCEDURE SetState (r: ListRiders.Rider; state: LONGINT);
-	BEGIN
-		r.d(Item).state := state
-	END SetState;
-	
-	PROCEDURE GetStamp (r: ListRiders.Rider): LONGINT;
-	BEGIN
-		RETURN r.d(Item).stamp
-	END GetStamp;
-	
-	PROCEDURE SetStamp (r: ListRiders.Rider; stamp: LONGINT);
-	BEGIN
-		r.d(Item).stamp := stamp
-	END SetStamp;
-	
-	PROCEDURE InitRiders;
-	BEGIN
-		NEW(RMethods);
-		RMethods.Key := Key; RMethods.Seek := Seek; RMethods.Pos := Pos; RMethods.Set := Set;
-		RMethods.Write := Write; RMethods.WriteLink := WriteLink; RMethods.DeleteLink := DeleteLink;
-		RMethods.State := State; RMethods.SetState := SetState;
-		RMethods.Desc := Desc;
-		RMethods.GetStamp := GetStamp; RMethods.SetStamp := SetStamp
-	END InitRiders;
-	
-	
-	(*--- Model ---*)
-	
-	PROCEDURE ModelHandler (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR model, copy: Model; ver: LONGINT; r: ListRiders.Rider;
-	BEGIN
-		model := obj(Model);
-		IF msg IS Objects.AttrMsg THEN
-			WITH msg: Objects.AttrMsg DO
-				IF (msg.id = Objects.get) & (msg.name = "Gen") THEN
-					msg.class := Objects.String; msg.s := "LeoPens.NewModel"; msg.res := 0
-				ELSE
-					Gadgets.objecthandle(model, msg)
 				END
 			END
 		ELSIF msg IS Objects.LinkMsg THEN
-			LinkRef(msg(Objects.LinkMsg), "Pen", TRUE, model.tail.pen);
-			Gadgets.objecthandle(model, msg)
-		ELSIF msg IS Objects.CopyMsg THEN
-			WITH msg: Objects.CopyMsg DO
-				IF msg.stamp # model.stamp THEN
-					NEW(copy); model.dlink := copy; model.stamp := msg.stamp;
-					copy.tail := NewTail(model.tail.pen);
-					IF msg.id = Objects.deep THEN CopyRef(msg, model.tail.pen, copy.tail.pen) END;
-					BuildItems(model.tail);
-					copy.key := 0
-				END;
-				msg.obj := copy.dlink
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Base")
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Base" THEN msg.obj := pen.base; msg.res := 0 END
+				ELSIF msg.id = Objects.set THEN
+					IF (msg.name = "Base") & (msg.obj # NIL) & (msg.obj IS Pen) THEN
+						pen.base := msg.obj(Pen); msg.res := 0;
+						pen.destructive := ~(pen.base IS Stroker); pen.zeroDistOnly := pen.base.zeroDistOnly
+					END
+				END
 			END
 		ELSIF msg IS Objects.BindMsg THEN
-			IF model.tail.pen # NIL THEN
-				Bind(model.tail.pen, msg(Objects.BindMsg).lib)
-			END;
-			Gadgets.objecthandle(model, msg)
+			pen.base.handle(pen.base, msg);
+			Handle(pen, msg)
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					Copy(msg, pen, copy);
+					obj := Gadgets.CopyPtr(msg, pen.base);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					copy.base := obj(Pen);
+					copy.on := pen.on; copy.off := pen.off; copy.len := pen.len;
+					copy.phase := pen.phase; copy.continuous := pen.continuous
+				END;
+				msg.obj := pen.dlink
+			END
 		ELSIF msg IS Objects.FileMsg THEN
 			WITH msg: Objects.FileMsg DO
-				Gadgets.objecthandle(model, msg);
 				IF msg.id = Objects.store THEN
 					Files.WriteNum(msg.R, 1);
-					WriteRef(msg.R, model.lib, model.tail.pen)
+					Gadgets.WriteRef(msg.R, pen.lib, pen.base);
+					Files.WriteNum(msg.R, pen.len);
+					n := 0;
+					WHILE n < pen.len DO
+						Files.WriteReal(msg.R, pen.on[n]); Files.WriteReal(msg.R, pen.off[n]); INC(n)
+					END;
+					Files.WriteReal(msg.R, pen.phase);
+					Files.WriteBool(msg.R, pen.continuous)
 				ELSIF msg.id = Objects.load THEN
 					Files.ReadNum(msg.R, ver);
-					IF ver >= 1 THEN
-						model.tail.next := model.tail; model.tail.prev := model.tail;
-						ReadRef(msg.R, model.lib, model.tail.pen);
-						BuildItems(model.tail)
-					END
+					Gadgets.ReadRef(msg.R, pen.lib, obj);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					pen.base := obj(Pen);
+					pen.destructive := ~(pen.base IS Stroker); pen.zeroDistOnly := pen.base.zeroDistOnly;
+					Files.ReadNum(msg.R, pen.len);
+					n := 0;
+					WHILE n < pen.len DO
+						Files.ReadReal(msg.R, pen.on[n]); Files.ReadReal(msg.R, pen.off[n]); INC(n)
+					END;
+					Files.ReadReal(msg.R, pen.phase);
+					Files.ReadBool(msg.R, pen.continuous)
 				END
 			END
-		ELSIF msg IS ListRiders.ConnectMsg THEN
-			NEW(r); ConnectRider(r, model);
-			msg(ListRiders.ConnectMsg).R := r
 		ELSE
-			Gadgets.objecthandle(model, msg)
+			Handle(pen, msg)
 		END
-	END ModelHandler;
+	END HandleDasher;
 	
-	PROCEDURE InitModel (model: Model; pen: GfxPens.Pen);
+	PROCEDURE InitDasher* (pen: Dasher; base: Pen; on, off: ARRAY OF REAL; len: LONGINT);
 	BEGIN
-		model.handle := ModelHandler; model.key := 0; model.tail := NewTail(pen);
-		BuildItems(model.tail)
-	END InitModel;
-	
-	PROCEDURE NewModel*;
-		VAR model: Model;
-	BEGIN
-		NEW(model); InitModel(model, NIL);
-		Objects.NewObj := model
-	END NewModel;
-	
-	
-	(*--- List Gadget ---*)
-	
-	PROCEDURE FormatLine (list: ListGadgets.Frame; r: ListRiders.Rider; line: ListGadgets.Line);
-		VAR item: Item; pict: Pictures.Picture;
-	BEGIN
-		item := r.d(Item);
-		Display3.StringSize(item.name, list.fnt, line.w, line.h, line.dsr);
-		IF item.dsc # NIL THEN
-			IF line.folded THEN pict := FoldedPict ELSE pict := UnfoldedPict END;
-			IF pict.height+2 > line.h THEN line.h := pict.height+2 END
-		END;
-		line.dx := PictWidth + 2 + line.lev * list.tab
-	END FormatLine;
-	
-	PROCEDURE DisplayLine (list: ListGadgets.Frame; mask: Display3.Mask; x, y, w, h: INTEGER; r: ListRiders.Rider; line: ListGadgets.Line);
-		VAR item: Item; pict: Pictures.Picture;
-	BEGIN
-		Display3.ReplConst(mask, list.backC, x, y, w, h, Display.replace);
-		INC(x, line.lev * list.tab);
-		item := r.d(Item);
-		IF item.dsc # NIL THEN
-			IF line.folded THEN pict := FoldedPict ELSE pict := UnfoldedPict END;
-			Display3.Pict(mask, pict, 0, 0, w, h, x, y + (h - pict.height) DIV 2, Display.replace)
-		END;
-		INC(x, PictWidth+2);
-		Display3.String(mask, list.textC, x, y + line.dsr, list.fnt, item.name, Display.paint)
-	END DisplayLine;
-	
-	PROCEDURE P (x: LONGINT): INTEGER;
-	BEGIN
-		RETURN SHORT(x * Display.Unit DIV Printer.Unit)
-	END P;
-	
-	PROCEDURE PrintFormatLine (list: ListGadgets.Frame; r: ListRiders.Rider; line: ListGadgets.Line);
-		VAR item: Item; pict: Pictures.Picture;
-	BEGIN
-		item := r.d(Item);
-		Printer3.StringSize(item.name, list.fnt, line.w, line.h, line.dsr);
-		IF item.dsc # NIL THEN
-			IF line.folded THEN pict := FoldedPict ELSE pict := UnfoldedPict END;
-			IF P(pict.height+2) > line.h THEN line.h := P(pict.height+2) END
-		END;
-		line.dx := P(PictWidth + 2 + line.lev * list.tab)
-	END PrintFormatLine;
-	
-	PROCEDURE PrintLine (list: ListGadgets.Frame; mask: Display3.Mask; x, y, w, h: INTEGER; r: ListRiders.Rider; line: ListGadgets.Line);
-		VAR item: Item; pict: Pictures.Picture;
-	BEGIN
-		Printer3.ReplConst(mask, list.backC, x, y, w, h, Display.replace);
-		INC(x, P(line.lev * list.tab));
-		item := r.d(Item);
-		IF item.dsc # NIL THEN
-			IF line.folded THEN pict := FoldedPict ELSE pict := UnfoldedPict END;
-			Printer3.Pict(mask, pict, x, y + (h - P(pict.height)) DIV 2, P(pict.width), P(pict.height), Display.replace)
-		END;
-		INC(x, P(PictWidth+2));
-		Printer3.String(mask, list.textC, x, y + line.dsr, list.fnt, item.name, Display.paint)
-	END PrintLine;
-	
-	PROCEDURE RemoveEditor (ctxt: Objects.Object);
-		VAR obj: Objects.Object; ocm: Oberon.ControlMsg; dcm: Display.ControlMsg;
-	BEGIN
-		obj := Gadgets.FindObj(ctxt, EditorName);
-		IF (obj # NIL) & (obj IS Display.Frame) THEN
-			ocm.F := obj(Display.Frame); ocm.id := Oberon.defocus;
-			Display.Broadcast(ocm);
-			dcm.F := obj(Display.Frame); dcm.id := Display.remove;
-			Display.Broadcast(dcm)
+		ASSERT(base # NIL, 100);
+		pen.handle := HandleDasher; pen.do := DasherMethods;
+		pen.destructive := ~(base IS Stroker); pen.needDist := TRUE; pen.zeroDistOnly := base.zeroDistOnly;
+		pen.base := base; pen.len := len; pen.phase := 0; pen.continuous := FALSE;
+		WHILE len > 0 DO
+			DEC(len); pen.on[len] := on[len]; pen.off[len] := off[len]
 		END
-	END RemoveEditor;
+	END InitDasher;
 	
-	PROCEDURE Integrate (obj, ctxt: Objects.Object);
-		VAR cm: Display.ConsumeMsg;
+	PROCEDURE NewDasher*;
+		VAR pen: Dasher; on: ARRAY 1 OF REAL;
 	BEGIN
-		IF obj # NIL THEN
-			Attributes.SetString(obj, "Name", EditorName);
-			cm.F := ctxt(Display.Frame); cm.id := Display.drop; cm.u := 0; cm.v := 0; cm.obj := obj;
-			Display.Broadcast(cm)
-		END
-	END Integrate;
+		NEW(pen); on[0] := 10; InitDasher(pen, Default, on, on, 1);
+		Objects.NewObj := pen
+	END NewDasher;
 	
-	PROCEDURE GetSelData (list: ListGadgets.Frame; VAR item: Item);
-		VAR am: Objects.AttrMsg; model: Objects.Object; cm: ListRiders.ConnectMsg; r: ListRiders.Rider;
+	PROCEDURE BeginDasher (pen: Pen; ctxt: Gfx.Context);
+		VAR p: Dasher; n: LONGINT;
 	BEGIN
-		item := NIL;
-		am.id := Objects.get; am.name := "SelKey"; am.res := -1;
-		list.handle(list, am);
-		IF (am.res >= 0) & (am.class = Objects.Int) & (am.i >= 0) & (list.obj # NIL) THEN
-			model := list.obj;
-			Objects.Stamp(cm); cm.R := NIL;
-			model.handle(model, cm);
-			r := cm.R;
-			IF r # NIL THEN
-				r.do.Seek(r, am.i);
-				item := r.d(Item)
-			END
+		p := pen(Dasher);
+		Begin(p, ctxt);
+		n := 0; p.lenbak := ctxt.dashPatLen; p.phasebak := ctxt.dashPhase;
+		WHILE n < p.lenbak DO
+			p.onbak[n] := ctxt.dashPatOn[n]; p.offbak[n] := ctxt.dashPatOff[n]; INC(n)
 		END
-	END GetSelData;
+	END BeginDasher;
 	
-	PROCEDURE InsertEditor (frame: ListGadgets.Frame; ctxt: Objects.Object);
+	PROCEDURE EndDasher (pen: Pen);
+		VAR p: Dasher;
+	BEGIN
+		p := pen(Dasher);
+		Gfx.SetDashPattern(p.ctxt, p.onbak, p.offbak, p.lenbak, p.phasebak);
+		End(p)
+	END EndDasher;
+	
+	PROCEDURE DashSubpath (pen: Pen; bdist, edist: REAL);
 		VAR
-			item: Item;
-			gen: GenFrame;
-			lm: Objects.LinkMsg; am: Objects.AttrMsg;
-			i: LONGINT; x: REAL; b: BOOLEAN; s: ARRAY 64 OF CHAR;
-			obj, link: Objects.Object;
+			p: Dasher; ctxt: Gfx.Context; base: Pen; width, len, beg, end, next: REAL; idx: LONGINT;
+			inv: GfxMatrix.Matrix; path: GfxPaths.Path; s: GfxPaths.Scanner;
 	BEGIN
-		RemoveEditor(ctxt);
-		GetSelData(frame, item);
-		IF item = NIL THEN
-			NEW(gen); InitGen(gen, frame.obj(Model).tail.pen);
-			Attributes.SetString(gen, "Constraints", "0 -20 0 0");
-			Integrate(gen, ctxt)
-		ELSE
-			IF item.dsc # NIL THEN
-				IF item.obj = NIL THEN
-					lm.id := Objects.get; COPY(item.name, lm.name); lm.obj := NIL; lm.res := -1;
-					item.pen.handle(item.pen, lm);
-					item.obj := lm.obj
-				END;
-				NEW(gen); InitGen(gen, item.obj);
-				Attributes.SetString(gen, "Constraints", "0 -20 0 0");
-				Integrate(gen, ctxt)
-			ELSE
-				am.id := Objects.get; COPY(item.name, am.name); am.class := Objects.Inval; am.res := -1;
-				item.pen.handle(item.pen, am);
-				CASE am.class OF
-				| Objects.Int:
-					IF item.obj = NIL THEN
-						item.obj := Gadgets.CreateObject("Integer");
-						Attributes.SetInt(item.obj, "Value", am.i)
-					END;
-					i := 0;
-					Strings.CAPSearch("color", am.name, i);
-					IF i >= 0 THEN	(* assume attribute to be a color index *)
-						obj := Gadgets.CreateObject("ColorWells.NewColorWell");
-						Attributes.SetString(obj, "Constraints", "0 -20 x 0");
-					ELSE
-						obj := Gadgets.CreateObject("TextField");
-						Attributes.SetString(obj, "Constraints", "0 -20 0 0")
-					END;
-					Links.SetLink(obj, "Model", item.obj);
-					Attributes.GetInt(item.obj, "Value", i);
-					Attributes.SetInt(obj, "Value", i);
-					Integrate(obj, ctxt)
-				| Objects.Real:
-					IF item.obj = NIL THEN
-						item.obj := Gadgets.CreateObject("Real");
-						Attributes.SetReal(item.obj, "Value", am.x)
-					END;
-					obj := Gadgets.CreateObject("TextField");
-					Attributes.SetString(obj, "Constraints", "0 -20 0 0");
-					Links.SetLink(obj, "Model", item.obj);
-					Attributes.GetReal(item.obj, "Value", x);
-					Attributes.SetReal(obj, "Value", x);
-					Integrate(obj, ctxt)
-				| Objects.Bool:
-					IF item.obj = NIL THEN
-						item.obj := Gadgets.CreateObject("Boolean");
-						Attributes.SetBool(item.obj, "Value", am.b)
-					END;
-					obj := Gadgets.CreateObject("CheckBox");
-					Attributes.SetString(obj, "Constraints", "0 -20 x 0");
-					Links.SetLink(obj, "Model", item.obj);
-					Attributes.GetBool(item.obj, "Value", b);
-					Attributes.SetBool(obj, "Value", b);
-					Integrate(obj, ctxt)
-				| Objects.String:
-					IF item.obj = NIL THEN
-						item.obj := Gadgets.CreateObject("String");
-						Attributes.SetString(item.obj, "Value", am.s)
-					END;
-					obj := Gadgets.CreateObject("TextField");
-					Attributes.SetString(obj, "Constraints", "0 -20 0 0");
-					Links.SetLink(obj, "Model", item.obj);
-					Attributes.GetString(item.obj, "Value", s);
-					Attributes.SetString(obj, "Value", s);
-					Integrate(obj, ctxt)
-				ELSE
-				END
-			END
-		END
-	END InsertEditor;
-	
-	PROCEDURE SetPen (list: ListGadgets.Frame; pen: GfxPens.Pen);
-		VAR model: Model; ocm: Oberon.ControlMsg;
-	BEGIN
-		RemoveEditor(Gadgets.context);
-		ASSERT((list.obj # NIL) & (list.obj IS Model));
-		model := list.obj(Model);
-		model.tail.next := model.tail; model.tail.prev := model.tail;
-		model.tail.pen := pen;
-		BuildItems(model.tail);
-		Gadgets.Update(model);
-		ocm.F := list; ocm.id := Oberon.neutralize;
-		Display.Broadcast(ocm)	(* force display of pen generator *)
-	END SetPen;
-	
-	PROCEDURE ReplacePen (list: ListGadgets.Frame; item: Item; pen: GfxPens.Pen);
-		VAR line, l: ListGadgets.Line; n: INTEGER; obj: Objects.Object;
-	BEGIN
-		line := list.lines;
-		REPEAT
-			line := line.next
-		UNTIL line.key = item.key;
-		IF ~line.folded THEN	(* oops! fold line before exchanging pen; code taken from ListGadgets.ToggleLine *)
-			l := line.next;
-			WHILE l.lev > line.lev DO l := l.next END;
-			line.next := l; l.prev := line;
-			l := line; n := l.n;
-			WHILE l # list.lines DO
-				l.n := n; INC(n);
-				l := l.next
+		p := pen(Dasher); ctxt := p.ctxt; base := p.base;
+		width := ctxt.lineWidth;
+		Gfx.SetLineWidth(ctxt, 0);
+		len := GfxPaths.Length(ctxt.path, 1);	(* calculate complete length, including dash breaks *)
+		Gfx.Outline(ctxt);	(* path is flattened at the same time *)
+		IF ~GfxPaths.Empty(ctxt.path) THEN
+			ctxt.cam := GfxMatrix.Identity;	(* calculate offsets in user space instead of device space *)
+			Gfx.GetDashOffsets(ctxt, bdist, beg, end, next, idx);
+			GfxMatrix.Invert(ctxt.ctm, inv);
+			GfxPaths.Apply(ctxt.path, inv);	(* transform path back to user space *)
+			GfxMatrix.ApplyToDist(inv, len, len);
+			Gfx.SetDashPattern(ctxt, p.on, p.off, 0, 0);	(* empty pattern *)
+			IF base.destructive THEN GetTempPath(path); GfxPaths.Copy(ctxt.path, path)
+			ELSE path := ctxt.path
 			END;
-			line.folded := TRUE;
-			Links.GetLink(list, "VRange", obj);
-			IF obj # NIL THEN
-				Attributes.SetInt(obj, "Value", n-1);
-				Gadgets.Update(obj)
+			GfxPaths.Open(s, path, 0);
+			base.do.begin(base, ctxt);
+			IF end <= bdist THEN	(* subpath starts between dashes *)
+				base.do.enter(base, s.x, s.y, s.dx, s.dy, next);
+				len := len - (next - bdist);
+				idx := (idx+1) MOD p.len;
+				beg := next; end := beg + p.on[idx]; next := end + p.off[idx]
+			ELSIF p.continuous THEN
+				base.do.enter(base, s.x, s.y, s.dx, s.dy, bdist);
+				beg := bdist
+			ELSE
+				base.do.enter(base, s.x, s.y, s.dx, s.dy, bdist - beg);
+				beg := bdist
+			END;
+			GfxPaths.Scan(s);
+			WHILE s.elem # GfxPaths.Stop DO
+				CASE s.elem OF
+				| GfxPaths.Enter:
+					IF p.continuous THEN base.do.enter(base, s.x, s.y, s.dx, s.dy, beg)
+					ELSE base.do.enter(base, s.x, s.y, s.dx, s.dy, 0)
+					END
+				| GfxPaths.Line:
+					base.do.line(base, s.x, s.y)
+				| GfxPaths.Exit:
+					len := len - (end - beg);
+					IF len > 0 THEN	(* dash end comes before end of subpath *)
+						IF p.continuous THEN base.do.exit(base, s.dx, s.dy, len + edist)
+						ELSE base.do.exit(base, s.dx, s.dy, 0)
+						END;
+						len := len - (next - end);
+						idx := (idx+1) MOD p.len;
+						beg := next; end := beg + p.on[idx]; next := end + p.off[idx]
+					ELSIF p.continuous THEN
+						base.do.exit(base, s.dx, s.dy, edist)
+					ELSE
+						base.do.exit(base, s.dx, s.dy, -len)
+					END
+				END;
+				GfxPaths.Scan(s)
+			END;
+			base.do.end(base);
+			IF path # ctxt.path THEN
+				ReleaseTempPath(path)
 			END
 		END;
-		item.dsc.next := item.dsc; item.dsc.prev := item.dsc; item.dsc.pen := pen; item.obj := pen;
-		line.sel := FALSE;
-		Gadgets.Update(list);
-		InsertEditor(list, Gadgets.context)
-	END ReplacePen;
+		Gfx.SetLineWidth(ctxt, width)
+	END DashSubpath;
 	
-	PROCEDURE HandleListGadget (obj: Objects.Object; VAR msg: Objects.ObjMsg);
-		VAR frame: ListGadgets.Frame;
+	PROCEDURE EnterDasher (pen: Pen; x, y, dxi, dyi, bdist: REAL);
+		VAR p: Dasher; base: Pen; ctxt: Gfx.Context;
 	BEGIN
-		frame := obj(ListGadgets.Frame);
-		IF msg IS Display.FrameMsg THEN
-			WITH msg: Display.FrameMsg DO
-				IF (msg.F = NIL) OR (msg.F = frame) THEN
-					IF msg IS Oberon.InputMsg THEN
-						WITH msg: Oberon.InputMsg DO
-							IF msg.id = Oberon.track THEN
-								IF msg.keys = {0} THEN
-									ListGadgets.FrameHandler(frame, msg);
-									InsertEditor(frame, msg.dlink)
-								ELSIF msg.keys = {1} THEN
-									ListGadgets.FrameHandler(frame, msg)	(* need this to expand on links *)
-								ELSE
-									Gadgets.framehandle(frame, msg)
-								END
-							END
-						END
-					ELSIF msg IS Oberon.ControlMsg THEN
-						WITH msg: Oberon.ControlMsg DO
-							ListGadgets.FrameHandler(frame, msg);
-							IF msg.id = Oberon.neutralize THEN
-								InsertEditor(frame, msg.dlink)
-							END
-						END
-					ELSIF msg IS Display.ControlMsg THEN
-						WITH msg: Display.ControlMsg DO
-							ListGadgets.FrameHandler(frame, msg);
-							IF msg.id = Display.restore THEN
-								InsertEditor(frame, msg.dlink)
-							END
-						END
-					ELSE
-						ListGadgets.FrameHandler(frame, msg)
-					END
+		p := pen(Dasher); base := p.base; ctxt := p.ctxt;
+		Gfx.SetDashPattern(ctxt, p.on, p.off, p.len, p.phase + bdist);
+		IF base IS Stroker THEN base.do.begin(base, ctxt)	(* render directly *)
+		ELSE Gfx.Begin(ctxt, {Gfx.Record})	(* record first *)
+		END;
+		Gfx.Enter(p.ctxt, x, y, dxi, dyi)
+	END EnterDasher;
+	
+	PROCEDURE ExitDasher (pen: Pen; dxo, dyo, edist: REAL);
+		VAR p: Dasher; base: Pen;
+	BEGIN
+		p := pen(Dasher); base := p.base;
+		Gfx.Exit(p.ctxt, dxo, dyo);
+		IF base IS Stroker THEN
+			base.do.end(base)
+		ELSE
+			Gfx.End(p.ctxt);
+			DashSubpath(p, p.ctxt.dashPhase - p.phase, edist)
+		END
+	END ExitDasher;
+	
+	PROCEDURE RenderDasher (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+		VAR p: Dasher; simple: BOOLEAN; i: LONGINT;
+	BEGIN
+		p := pen(Dasher); simple := p.base IS Stroker;
+		IF n = 1 THEN
+			BeginDasher(p, ctxt);
+			Gfx.SetDashPattern(ctxt, p.on, p.off, p.len, p.phase + bdist[0]);
+			IF simple THEN RenderStroker(p.base, ctxt, bdist, edist, 1)
+			ELSE DashSubpath(p, bdist[0], edist[0])
+			END;
+			EndDasher(p)
+		ELSE
+			i := 1;
+			WHILE simple & (i < n) DO simple := (bdist[i] = bdist[0]); INC(i) END;
+			IF simple THEN	(* dash phase remains constant for all subpaths *)
+				BeginDasher(p, ctxt);
+				Gfx.SetDashPattern(ctxt, p.on, p.off, p.len, p.phase + bdist[0]);
+				RenderStroker(p.base, ctxt, bdist, edist, n);
+				EndDasher(p)
+			ELSE	(* worst case: cannot use existing path, must revisit *)
+				RenderPath(p, ctxt, bdist, edist, n)
+			END
+		END
+	END RenderDasher;
+	
+	PROCEDURE InitDashers;
+	BEGIN
+		NEW(DasherMethods);
+		DasherMethods.begin := BeginDasher; DasherMethods.end := EndDasher;
+		DasherMethods.enter := EnterDasher; DasherMethods.exit := ExitDasher;
+		DasherMethods.line := Line; DasherMethods.arc := Arc; DasherMethods.bezier := Bezier;
+		DasherMethods.render := RenderDasher
+	END InitDashers;
+	
+	
+	(**--- Forkers ---**)
+	
+	PROCEDURE HandleForker* (obj: Objects.Object; VAR msg: Objects.ObjMsg);
+		VAR pen, copy: Forker; bw: REAL; ver: LONGINT;
+	BEGIN
+		pen := obj(Forker);
+		IF msg IS UpdateMsg THEN
+			WITH msg: UpdateMsg DO
+				IF (msg.pen = pen.lower) OR (msg.pen = pen.upper) THEN
+					Update(pen)
 				END
 			END
 		ELSIF msg IS Objects.AttrMsg THEN
 			WITH msg: Objects.AttrMsg DO
-				IF (msg.id = Objects.get) & (msg.name = "Gen") THEN
-					msg.class := Objects.String; msg.s := "LeoPens.NewListGadget"; msg.res := 0
+				IF msg.id = Objects.get THEN
+					IF msg.name = "Gen" THEN msg.class := Objects.String; msg.s := "LeoPens.NewForker"; msg.res := 0
+					ELSIF msg.name = "Item" THEN msg.class := Objects.String; msg.s := "Forker"; msg.res := 0
+					ELSIF msg.name = "Border" THEN
+						pen.lower.handle(pen.lower, msg); bw := msg.x;
+						pen.upper.handle(pen.upper, msg);
+						IF bw > msg.x THEN msg.x := bw END
+					END
 				ELSE
-					ListGadgets.FrameHandler(frame, msg)
+					Handle(pen, msg)
 				END
 			END
+		ELSIF msg IS Objects.LinkMsg THEN
+			WITH msg: Objects.LinkMsg DO
+				IF msg.id = Objects.enum THEN
+					msg.Enum("Lower"); msg.Enum("Upper")
+				ELSIF msg.id = Objects.get THEN
+					IF msg.name = "Lower" THEN msg.obj := pen.lower; msg.res := 0
+					ELSIF msg.name = "Upper" THEN msg.obj := pen.upper; msg.res := 0
+					END
+				ELSIF msg.id = Objects.set THEN
+					IF msg.name = "Lower" THEN
+						IF (msg.obj # NIL) & (msg.obj IS Pen) THEN
+							pen.lower := msg.obj(Pen); msg.res := 0;
+							pen.needDist := pen.lower.needDist OR pen.upper.needDist;
+							pen.zeroDistOnly := pen.lower.zeroDistOnly OR pen.upper.zeroDistOnly
+						END
+					ELSIF msg.name = "Upper" THEN
+						IF (msg.obj # NIL) & (msg.obj IS Pen) THEN
+							pen.upper := msg.obj(Pen); msg.res := 0;
+							pen.needDist := pen.lower.needDist OR pen.upper.needDist;
+							pen.zeroDistOnly := pen.lower.zeroDistOnly OR pen.upper.zeroDistOnly
+						END
+					END
+				END
+			END
+		ELSIF msg IS Objects.CopyMsg THEN
+			WITH msg: Objects.CopyMsg DO
+				IF msg.stamp # pen.stamp THEN
+					NEW(copy); pen.dlink := copy; pen.stamp := msg.stamp;
+					Copy(msg, pen, copy);
+					obj := Gadgets.CopyPtr(msg, pen.lower);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					copy.lower := obj(Pen);
+					obj := Gadgets.CopyPtr(msg, pen.upper);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					copy.upper := obj(Pen)
+				END;
+				msg.obj := pen.dlink
+			END
+		ELSIF msg IS Objects.BindMsg THEN
+			pen.lower.handle(pen.lower, msg); pen.upper.handle(pen.upper, msg);
+			Handle(pen, msg)
+		ELSIF msg IS Objects.FileMsg THEN
+			WITH msg: Objects.FileMsg DO
+				IF msg.id = Objects.store THEN
+					Files.WriteNum(msg.R, 1);
+					Gadgets.WriteRef(msg.R, pen.lib, pen.lower);
+					Gadgets.WriteRef(msg.R, pen.lib, pen.upper)
+				ELSIF msg.id = Objects.load THEN
+					Files.ReadNum(msg.R, ver);
+					Gadgets.ReadRef(msg.R, pen.lib, obj);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					pen.lower := obj(Pen);
+					Gadgets.ReadRef(msg.R, pen.lib, obj);
+					IF (obj = NIL) OR ~(obj IS Pen) THEN NewStroker; obj := Objects.NewObj END;
+					pen.upper := obj(Pen);
+					pen.needDist := pen.lower.needDist OR pen.upper.needDist;
+					pen.zeroDistOnly := pen.lower.zeroDistOnly OR pen.upper.zeroDistOnly
+				END
+			END
+		END
+	END HandleForker;
+	
+	PROCEDURE InitForker* (pen: Forker; lower, upper: Pen);
+	BEGIN
+		ASSERT((lower # NIL) & (upper # NIL), 100);
+		pen.handle := HandleForker; pen.do := ForkerMethods;
+		pen.lower := lower; pen.upper := upper;
+		pen.destructive := TRUE;
+		pen.needDist := lower.needDist OR upper.needDist;
+		pen.zeroDistOnly := lower.zeroDistOnly OR upper.zeroDistOnly
+	END InitForker;
+	
+	PROCEDURE NewForker*;
+		VAR pen: Forker;
+	BEGIN
+		NEW(pen); InitForker(pen, Default, Default);
+		Objects.NewObj := pen
+	END NewForker;
+	
+	PROCEDURE BeginForker (pen: Pen; ctxt: Gfx.Context);
+	BEGIN
+		Begin(pen, ctxt);
+		Gfx.Begin(ctxt, {Gfx.Record});
+		pen(Forker).n := 0
+	END BeginForker;
+	
+	PROCEDURE ForkPath (pen: Pen; ctxt: Gfx.Context; VAR bdist, edist: ARRAY OF REAL; n: LONGINT);
+		VAR p: Forker; path: GfxPaths.Path;
+	BEGIN
+		p := pen(Forker);
+		IF p.lower.destructive THEN
+			GetTempPath(path); GfxPaths.Copy(ctxt.path, path);
+			p.lower.do.render(p.lower, ctxt, bdist, edist, n);
+			GfxPaths.Copy(path, ctxt.path); ReleaseTempPath(path)
 		ELSE
-			ListGadgets.FrameHandler(frame, msg)
-		END
-	END HandleListGadget;
-	
-	PROCEDURE NewListGadget*;
-		VAR list: ListGadgets.Frame;
-	BEGIN
-		NEW(list); ListGadgets.InitFrame(list);
-		list.handle := HandleListGadget; list.do := FMethods;
-		list.tab := 8; list.state0 := list.state0 - {ListGadgets.multisel} + {ListGadgets.locked};
-		Objects.NewObj := list
-	END NewListGadget;
-	
-	PROCEDURE InitListGadgets;
-		VAR lib: Objects.Library; ref: INTEGER; obj: Objects.Object;
-	BEGIN
-		NEW(FMethods);
-		FMethods.GetRider := ListGadgets.GetStandardRider;
-		FMethods.Format := FormatLine; FMethods.Display := DisplayLine;
-		FMethods.PrintFormat := PrintFormatLine; FMethods.Print := PrintLine;
-		
-		lib := Objects.ThisLibrary("Leonardo.Lib");
-		IF lib # NIL THEN
-			Objects.GetRef(lib.dict, "FoldedPict", ref);
-			IF ref # MIN(INTEGER) THEN
-				lib.GetObj(lib, ref, obj);
-				IF (obj # NIL) & (obj IS Pictures.Picture) THEN
-					FoldedPict := obj(Pictures.Picture)
-				END
-			END;
-			Objects.GetRef(lib.dict, "UnfoldedPict", ref);
-			IF ref # MIN(INTEGER) THEN
-				lib.GetObj(lib, ref, obj);
-				IF (obj # NIL) & (obj IS Pictures.Picture) THEN
-					UnfoldedPict := obj(Pictures.Picture)
-				END
-			END
+			p.lower.do.render(p.lower, ctxt, bdist, edist, n)
 		END;
-		IF FoldedPict = NIL THEN
-			NEW(FoldedPict); Pictures.Create(FoldedPict, 16, 16, Pictures.colorD)
-		END;
-		IF UnfoldedPict = NIL THEN
-			NEW(UnfoldedPict); Pictures.Create(UnfoldedPict, 16, 16, Pictures.colorD)
-		END;
-		IF FoldedPict.width > UnfoldedPict.width THEN PictWidth := FoldedPict.width
-		ELSE PictWidth := UnfoldedPict.width
-		END
-	END InitListGadgets;
+		p.upper.do.render(p.upper, ctxt, bdist, edist, n)
+	END ForkPath;
 	
-	
-	(**--- Pen List Commands ---**)
-	
-	PROCEDURE GetList (VAR s: Attributes.Scanner; VAR list: ListGadgets.Frame);
-		VAR obj: Objects.Object;
+	PROCEDURE EndForker (pen: Pen);
+		VAR p: Forker;
 	BEGIN
-		list := NIL;
-		Attributes.OpenScanner(s, Oberon.Par.text, Oberon.Par.pos);
-		Attributes.Scan(s);
-		IF s.class = Attributes.Name THEN
-			obj := Gadgets.FindObj(Gadgets.context, s.s);
-			IF (obj # NIL) & (obj IS ListGadgets.Frame) THEN
-				list := obj(ListGadgets.Frame)
-			END
-		END
-	END GetList;
+		p := pen(Forker);
+		Gfx.End(p.ctxt);
+		ForkPath(p, p.ctxt, p.bdist^, p.edist^, p.n);
+		End(p)
+	END EndForker;
 	
-	PROCEDURE GetSelLink (link: ARRAY OF CHAR; VAR pen: GfxPens.Pen; VAR valid: BOOLEAN);
-		VAR fig: Figures.Figure; sel: Figures.Shape; lm: Objects.LinkMsg; obj: Objects.Object;
+	PROCEDURE EnterForker (pen: Pen; x, y, dx, dy, bdist: REAL);
+		VAR p: Forker;
 	BEGIN
-		pen := NIL; valid := FALSE;
-		Leonardo.FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF sel # NIL THEN
-				lm.id := Objects.get; COPY(link, lm.name);
-				obj := sel;
-				WHILE obj # NIL DO
-					lm.res := -1; obj.handle(obj, lm);
-					IF (lm.res >= 0) & (lm.obj # NIL) & (lm.obj IS GfxPens.Pen) THEN
-						IF pen = NIL THEN
-							pen := lm.obj(GfxPens.Pen); valid := TRUE
-						ELSIF pen # lm.obj THEN
-							valid := FALSE
-						END
-					END;
-					obj := obj.slink
-				END
-			END
-		END
-	END GetSelLink;
+		p := pen(Forker);
+		Gfx.Enter(p.ctxt, x, y, dx, dy);
+		Append(p.bdist, p.n, bdist)
+	END EnterForker;
 	
-	PROCEDURE GetPen (VAR s: Attributes.Scanner; VAR pen: GfxPens.Pen; VAR valid: BOOLEAN);
+	PROCEDURE ExitForker (pen: Pen; dx, dy, edist: REAL);
+		VAR p: Forker;
 	BEGIN
-		valid := FALSE;
-		Attributes.Scan(s);
-		IF s.class IN {Attributes.Name, Attributes.String} THEN
-			IF s.s = "Def Filler" THEN
-				pen := Filler; valid := TRUE
-			ELSIF s.s = "Def Stroker" THEN
-				pen := Stroker; valid := TRUE
-			ELSIF s.s = "Sel Filler" THEN
-				GetSelLink("FillPen", pen, valid)
-			ELSIF s.s = "Sel Stroker" THEN
-				GetSelLink("StrokePen", pen, valid)
-			END
-		END
-	END GetPen;
+		p := pen(Forker);
+		Gfx.Exit(p.ctxt, dx, dy);
+		Append(p.edist, p.n, edist);
+		INC(p.n)
+	END ExitForker;
 	
-	PROCEDURE GetNewPen (VAR s: Attributes.Scanner; VAR pen: GfxPens.Pen; VAR valid: BOOLEAN);
-		VAR obj: Objects.Object;
+	PROCEDURE InitForkers;
 	BEGIN
-		valid := FALSE;
-		Attributes.Scan(s);
-		IF s.class IN {Attributes.Name, Attributes.String} THEN
-			IF s.s = "NIL" THEN
-				pen := NIL; valid := TRUE
-			ELSE
-				obj := Gadgets.CreateObject(s.s);
-				IF (obj # NIL) & (obj IS GfxPens.Pen) THEN
-					pen := obj(GfxPens.Pen); valid := TRUE
-				END
-			END
-		END
-	END GetNewPen;
-	
-	PROCEDURE ApplyAttr (model: Model);
-		VAR changed: BOOLEAN;
-		
-		PROCEDURE copy (VAR pen: GfxPens.Pen);
-			VAR cm: Objects.CopyMsg;
-		BEGIN
-			Objects.Stamp(cm); cm.id := Objects.shallow; cm.obj := pen;
-			pen.handle(pen, cm);
-			IF (cm.obj # NIL) & (cm.obj IS GfxPens.Pen) THEN
-				pen := cm.obj(GfxPens.Pen)
-			END
-		END copy;
-		
-		PROCEDURE traverse (tail: Item; VAR changed: BOOLEAN);
-			VAR item: Item; pen: GfxPens.Pen; am: Objects.AttrMsg; c: BOOLEAN; lm: Objects.LinkMsg;
-		BEGIN
-			item := tail.next; changed := FALSE; pen := tail.pen;
-			WHILE item # tail DO
-				IF item.dsc = NIL THEN
-					IF item.obj # NIL THEN
-						IF ~changed THEN
-							copy(pen);
-							changed := TRUE
-						END;
-						am.id := Objects.get; am.name := "Value"; am.res := -1;
-						item.obj.handle(item.obj, am);
-						IF am.res >= 0 THEN
-							IF am.class = Objects.LongReal THEN am.class := Objects.Real; am.x := SHORT(am.y) END;
-							am.id := Objects.set; COPY(item.name, am.name); am.res := -1;
-							pen.handle(pen, am)
-						END
-					END
-				ELSE
-					traverse(item.dsc, c);
-					IF c OR (item.obj # NIL) THEN
-						IF ~changed THEN
-							copy(pen);
-							changed := TRUE
-						END;
-						item.obj := item.dsc.pen; changed := TRUE;
-						lm.id := Objects.set; COPY(item.name, lm.name); lm.obj := item.obj; lm.res := -1;
-						pen.handle(pen, lm)
-					END
-				END;
-				item := item.next
-			END;
-			tail.pen := pen
-		END traverse;
-		
-	BEGIN
-		traverse(model.tail, changed)
-	END ApplyAttr;
-	
-	PROCEDURE DoSetPen (fig: Figures.Figure; act: Figures.Action; stamp: LONGINT; undo: BOOLEAN);
-		VAR a: PenAction; lm: Objects.LinkMsg; old: Objects.Object;
-	BEGIN
-		a := act(PenAction);
-		lm.id := Objects.get; COPY(a.name, lm.name); lm.res := -1; lm.obj := NIL;
-		a.shape.handle(a.shape, lm);
-		old := lm.obj; lm.obj := a.pen; a.pen := old;
-		lm.id := Objects.set; lm.res := -1;
-		a.shape.handle(a.shape, lm);
-		IF lm.res >= 0 THEN
-			a.shape.stamp := stamp; a.shape(Figures.Shape).sel := TRUE
-		END
-	END DoSetPen;
-	
-	PROCEDURE ApplySel (dest: LONGINT; pen: GfxPens.Pen);
-		VAR fig: Figures.Figure; sel: Figures.Shape; cm: ChangeMsg; obj: Objects.Object; a: PenAction;
-	BEGIN
-		Leonardo.FindFigure(fig);
-		IF fig # NIL THEN
-			Figures.GetSelection(fig, sel);
-			IF sel # NIL THEN
-				Figures.DisableUpdate(fig);
-				Figures.BeginCommand(fig);
-				cm.fig := fig; cm.id := Replace; cm.dest := {dest}; cm.pen[dest] := pen;
-				obj := sel;
-				WHILE obj # NIL DO
-					cm.res := -1;
-					obj.handle(obj, cm);
-					IF cm.res < 0 THEN
-						NEW(a); a.shape := obj; a.pen := pen;
-						IF dest = StrokePen THEN a.name := "StrokePen" ELSE a.name := "FillPen" END;
-						Figures.AddAction(fig, a, DoSetPen)
-					END;
-					obj := obj.slink
-				END;
-				Figures.EndCommand(fig);
-				Figures.EnableUpdate(fig)
-			END
-		END
-	END ApplySel;
-	
-	PROCEDURE Apply (VAR s: Attributes.Scanner; pen: GfxPens.Pen);
-	BEGIN
-		Attributes.Scan(s);
-		IF s.class IN {Attributes.Name, Attributes.String} THEN
-			IF s.s = "Def Filler" THEN
-				Filler := pen
-			ELSIF s.s = "Def Stroker" THEN
-				Stroker := pen
-			ELSIF s.s = "Sel Filler" THEN
-				ApplySel(FillPen, pen)
-			ELSIF s.s = "Sel Stroker" THEN
-				ApplySel(StrokePen, pen)
-			END
-		END
-	END Apply;
-	
-	PROCEDURE EditPen*;
-		VAR s: Attributes.Scanner; list: ListGadgets.Frame; pen: GfxPens.Pen; valid: BOOLEAN;
-	BEGIN
-		GetList(s, list);
-		IF list # NIL THEN
-			GetPen(s, pen, valid);
-			IF valid THEN
-				SetPen(list, pen)
-			END
-		END
-	END EditPen;
-	
-	PROCEDURE LinkPen*;
-		VAR s: Attributes.Scanner; list: ListGadgets.Frame; item: Item; pen: GfxPens.Pen; valid: BOOLEAN;
-	BEGIN
-		GetList(s, list);
-		IF list # NIL THEN
-			GetSelData(list, item);
-			IF (item # NIL) & (item.dsc # NIL) THEN
-				GetPen(s, pen, valid);
-				IF valid THEN
-					ReplacePen(list, item, pen)
-				END
-			END
-		END
-	END LinkPen;
-	
-	PROCEDURE ApplyPen*;
-		VAR s: Attributes.Scanner; list: ListGadgets.Frame; model: Model;
-	BEGIN
-		GetList(s, list);
-		IF list # NIL THEN
-			model := list.obj(Model);
-			ApplyAttr(model);
-			Apply(s, model.tail.pen)
-		END
-	END ApplyPen;
-	
-	PROCEDURE NewPen*;
-		VAR s: Attributes.Scanner; list: ListGadgets.Frame; pen: GfxPens.Pen; valid: BOOLEAN;
-	BEGIN
-		GetList(s, list);
-		IF list # NIL THEN
-			GetNewPen(s, pen, valid);
-			IF valid THEN
-				SetPen(list, pen)
-			END
-		END
-	END NewPen;
-	
-	PROCEDURE LinkNewPen*;
-		VAR s: Attributes.Scanner; list: ListGadgets.Frame; item: Item; pen: GfxPens.Pen; valid: BOOLEAN;
-	BEGIN
-		GetList(s, list);
-		IF list # NIL THEN
-			GetSelData(list, item);
-			IF (item # NIL) & (item.dsc # NIL) THEN
-				GetNewPen(s, pen, valid);
-				IF valid THEN
-					ReplacePen(list, item, pen)
-				END
-			END
-		END
-	END LinkNewPen;
-	
-	PROCEDURE EnterAliases;
-		PROCEDURE enter (alias, gen: ARRAY OF CHAR);
-			VAR val: ARRAY 64 OF CHAR;
-		BEGIN
-			Gadgets.GetAlias(alias, val);
-			IF val = "" THEN
-				Gadgets.AddAlias(alias, gen)
-			END
-		END enter;
-	BEGIN
-		enter("SolidStroker", "GfxPens.NewSolidStroker");
-		enter("SolidFiller", "GfxPens.NewSolidFiller");
-		enter("Dasher", "GfxPens.NewDasher");
-		enter("Splitter", "GfxPens.NewSplitter");
-		enter("Forker", "GfxPens.NewForker");
-		enter("Reverser", "GfxPens.NewReverser");
-		enter("Arrow", "GfxPens.NewArrow");
-		enter("Outliner", "GfxPens.NewOutliner");
-		enter("EasyPen", "GfxPens.NewEasyPen")
-	END EnterAliases;
+		NEW(ForkerMethods);
+		ForkerMethods.begin := BeginForker; ForkerMethods.end := EndForker;
+		ForkerMethods.enter := EnterForker; ForkerMethods.exit := ExitForker;
+		ForkerMethods.line := Line; ForkerMethods.arc := Arc; ForkerMethods.bezier := Bezier;
+		ForkerMethods.render := ForkPath
+	END InitForkers;
 	
 
 BEGIN
-	GfxPens.NewSolidFiller; Filler := Objects.NewObj(GfxPens.Pen);
-	GfxPens.NewSolidStroker; Stroker := Objects.NewObj(GfxPens.Pen);
-	InitRiders;
-	InitListGadgets;
-	UniqueKey := -1;
-	EnterAliases
+	InitRecorders; InitStrokers; InitFillers;
+	NewStroker; Default := Objects.NewObj(Pen);
+	InitDashers; InitForkers
 END LeoPens.

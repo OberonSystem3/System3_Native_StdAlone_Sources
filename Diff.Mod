@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Diff;	(** portable *)	(** PS   **)
+MODULE Diff; (** portable *)	(** PS   **)
 
 (* to do
 	?handle hash-structure in a tree?
@@ -133,7 +121,7 @@ VAR obj: Objects.Object; ch: CHAR;
 BEGIN
 	done := FALSE; hash := 0; L.pos := Texts.Pos(R);
 	REPEAT Texts.Read(R, ch) UNTIL (ch > " ") OR (ch = CR) OR R.eot OR ~(R.lib IS Fonts.Font);
-	WHILE (ch # CR) & ~R.eot DO
+	WHILE ~((ch = CR) & (R.lib IS Fonts.Font)) & ~R.eot DO
 		IF R.lib # NIL THEN
 			done := TRUE;
 			IF R.lib IS Fonts.Font THEN hash := BIT.LROT(hash, 3) + ORD(ch)
@@ -278,9 +266,19 @@ VAR l1, l2: Line; dL, dL1, dL2: INTEGER; F: Texts.Finder;
 		Texts.Insert(text, pos+dPos, W.buf)
 	END InsertCR;
 
-	PROCEDURE ColorText (text: Texts.Text; p1, p2, dPos: LONGINT);
-	BEGIN Texts.ChangeLooks(text, p1+dPos, p2+dPos, {1}, NIL, 3, 0)
+	PROCEDURE ColorText (text: Texts.Text; line: Line; dPos: LONGINT);
+	BEGIN
+		IF line.next # NIL THEN
+			Texts.ChangeLooks(text, line.pos+dPos, line.next.pos+dPos, {1}, NIL, 3, 0)
+		ELSE
+			Texts.ChangeLooks(text, line.pos+dPos, text.len, {1}, NIL, 3, 0)
+		END
 	END ColorText;
+	
+	(*PROCEDURE ColorText (text: Texts.Text; p1, p2, dPos: LONGINT);
+	BEGIN
+		Texts.ChangeLooks(text, p1+dPos, p2+dPos, {1}, NIL, 3, 0)
+	END ColorText;*)
 
 	PROCEDURE GrowStyles (text: Texts.Text);
 	VAR F: Texts.Finder; obj: Objects.Object;
@@ -301,7 +299,7 @@ BEGIN
 	Texts.ChangeLooks(d1.text, 0, d1.text.len, {1}, NIL, 15, 0);
 	Texts.ChangeLooks(d2.text, 0, d2.text.len, {1}, NIL, 15, 0);
 	l1 := d1.line; l2 := d2.line; dL1 := 0; dL2 := 0;
-	WHILE (l1.next # NIL) & (l2.next # NIL) DO
+	WHILE (l1(*.next*) # NIL) & (l2(*.next*) # NIL) DO
 		dL:= (l1.absNr + dL1) - (l2.absNr + dL2);
 		IF (l1.corr = l2) & (l2.corr = l1) THEN
 			IF dL < 0 THEN InsertCR(d1.text, l1.pos-1,dL1, -dL); INC(dL1, -dL)
@@ -310,20 +308,24 @@ BEGIN
 			l1 := l1.next; l2:= l2.next
 		ELSIF (l1.corr # NIL) & (l2.corr = NIL) THEN 
 			IF dL = 0 THEN InsertCR(d1.text, l1.pos-1,dL1, 1); INC(dL1) END;
-			ColorText(d2.text, l2.pos, l2.next.pos, dL2);
+			ColorText(d2.text, l2, dL2);
+			(*ColorText(d2.text, l2.pos, l2.next.pos, dL2);*)
 			l2 := l2.next
 		ELSIF (l1.corr = NIL) & (l2.corr # NIL) THEN
 			IF dL = 0 THEN InsertCR(d2.text, l2.pos-1,dL2, 1); INC(dL2) END;
-			ColorText(d1.text, l1.pos, l1.next.pos, dL1);
+			ColorText(d1.text, l1, dL1);
+			(*ColorText(d1.text, l1.pos, l1.next.pos, dL1);*)
 			l1 := l1.next
 		ELSE	(* (l1.corr = NIL) & (l2.corr = NIL) *)
-			ColorText(d1.text, l1.pos, l1.next.pos, dL1);
-			ColorText(d2.text, l2.pos, l2.next.pos, dL2);
+			ColorText(d1.text, l1, dL1);
+			ColorText(d2.text, l2, dL2);
+			(*ColorText(d1.text, l1.pos, l1.next.pos, dL1);
+			ColorText(d2.text, l2.pos, l2.next.pos, dL2);*)
 			l1 := l1.next; l2 := l2.next
 		END
 	END;
-	IF l1 # NIL THEN ColorText(d1.text, l1.pos, d1.text.len-dL1, dL1) END;	(* pjm *)
-	IF l2 # NIL THEN ColorText(d2.text, l2.pos, d2.text.len-dL2, dL2) END
+	(*IF l1 # NIL THEN ColorText(d1.text, l1.pos, d1.text.len-dL1, dL1) END;	(* pjm *)
+	IF l2 # NIL THEN ColorText(d2.text, l2.pos, d2.text.len-dL2, dL2) END*)
 END PrepareTexts;
 
 PROCEDURE ShowTexts (T1, T2: Text);
@@ -445,3 +447,12 @@ END HashThis;
 BEGIN
 	Texts.OpenWriter(W)
 END Diff.
+
+Diff.HashThis ^
+
+Diff.Do OPM.Mod.Bak OPM.Mod
+Diff.Do \S Temp Temp
+
+(* to do:
+o additional lines at end of one text not indicated
+*)

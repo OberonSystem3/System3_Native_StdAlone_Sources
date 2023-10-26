@@ -1,19 +1,7 @@
-(* OBERON System 3, Release 2.3.
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
-
-MODULE Views;	(** portable *) (* jm 19.1.95 *)
+MODULE Views; (** portable *)	(* jm 19.1.95 *)
 
 (** Implementation of camera-views with adjustable viewpoints.
  *)
@@ -293,6 +281,7 @@ BEGIN
 	IF M.id = Objects.get THEN
 		IF M.name = "Gen" THEN M.s := "Views.NewView"; M.class := Objects.String; M.res := 0
 		ELSIF M.name = "Locked" THEN M.class := Objects.Bool; M.b := Gadgets.lockedcontents IN F.state; M.res := 0
+		ELSIF M.name = "Border" THEN M.class := Objects.Int; M.i := F.border; M.res := 0
 		ELSE Gadgets.framehandle(F, M)
 		END
 	ELSIF M.id = Objects.set THEN
@@ -305,10 +294,14 @@ BEGIN
 				END;
 				M.res := 0
 			END
+		ELSIF M.name = "Border" THEN
+			IF (M.class = Objects.Int) & (M.i >= 0) & (M.i < F.W) & (M.i < F.H) THEN
+				F.border := SHORT(M.i); M.res := 0
+			END
 		ELSE Gadgets.framehandle(F, M)
 		END
 	ELSIF M.id = Objects.enum THEN
-		M.Enum("Locked"); Gadgets.framehandle(F, M)
+		M.Enum("Locked"); M.Enum("Border"); Gadgets.framehandle(F, M)
 	END
 END ViewAttr;
 
@@ -319,7 +312,10 @@ BEGIN
 		ELSE Gadgets.framehandle(F, M)
 		END
 	ELSIF M.id = Objects.set THEN
-		IF M.name # "Model" THEN Gadgets.framehandle(F, M) END
+		IF (M.name = "Model") & ((M.obj = NIL) OR (M.obj IS Gadgets.Frame)) THEN
+			F.obj := M.obj; M.res := 0
+		ELSE Gadgets.framehandle(F, M)
+		END
 	ELSIF M.id = Objects.enum THEN
 		M.Enum("Model"); Gadgets.framehandle(F, M)
 	END
@@ -399,37 +395,42 @@ BEGIN
 END CleverAdjust;
 
 PROCEDURE PrintView(F: View; VAR M: Display.DisplayMsg);
-VAR R: Display3.Mask; u, v: INTEGER; f: Display.Frame;
+VAR R: Display3.Mask; u, v: INTEGER; f: Display.Frame; P: Display.DisplayMsg; X, Y: INTEGER;
 
 	PROCEDURE PP(x: INTEGER): INTEGER;
 	BEGIN RETURN SHORT(x * Display.Unit DIV Printer.Unit)
 	END PP;
 
 BEGIN
+		X := F.absX; Y := F.absY; F.absX := M.x; F.absY := M.y;
 		Gadgets.MakePrinterMask(F, M.x, M.y, M.dlink, R);
 		Printer3.Rect(R, 15, Display.solid, M.x, M.y, PP(F.W), PP(F.H), 1, Display3.replace);
 		IF F.obj # NIL THEN
 			f := F.obj(Display.Frame);
-			u := M.x; v := M.y;
+			(* u := M.x; v := M.y;
 			M.x := u + PP(F.vx + f.X); M.y := v + PP(F.H + F.vy - f.H + f.Y);
-			Gadgets.Send(F, u, v, f, M)
+			Gadgets.Send(F, u, v, f, M) *)
+			P.res := -1; Objects.Stamp(P); P.device := Display.printer; P.id := Display.full; P.F := f; P.dlink := F;
+			P.x := M.x + PP(f.X); P.y := M.y + PP(F.H+f.Y-f.H);
+			f.handle(f, P)
 		ELSE
 			Printer3.CenterString(R, Display3.FG, M.x, M.y, PP(F.W), PP(F.H), Fonts.Default, "Empty View", Display.paint)
-		END
+		END;
+		F.absX := X; F.absY := Y
 END PrintView;
 
 PROCEDURE Neutralize(F: View; x, y, w, h: INTEGER; VAR M: Oberon.ControlMsg);
 VAR S: Display.SelectMsg;
 BEGIN
 	F.stamp := M.stamp;
-	IF (F.time # 0) & (F.obj # NIL) THEN (* selected *)
+	IF (F.time # -1) & (F.obj # NIL) THEN (* selected *)
 		Oberon.RemoveMarks(x, y, w, h);
 		S.obj := F.obj; S.F := F.obj(Display.Frame); S.res := -1; Objects.Stamp(S);
 		S.id := Display.reset; S.dlink := M.dlink;
 		ToFrame(F, x, y + h - 1, S);
 		Gadgets.Update(F.obj)
 	END;
-	F.time := 0
+	F.time := -1
 END Neutralize;
 
 PROCEDURE Locate(F: View; x, y, w,h :INTEGER; VAR M: Display.LocateMsg);
@@ -453,7 +454,7 @@ END Locate;
 PROCEDURE Select(F: View; x, y, w, h: INTEGER; VAR M: Display.SelectMsg);
 BEGIN
 	IF M.id = Display.get THEN
-		IF (F.time > M.time) & (F.obj # NIL) & (Gadgets.selected IN F.obj(Gadgets.Frame).state) THEN
+		IF (((M.time-F.time) < 0) OR (M.time = -1)) & (F.obj # NIL) & (Gadgets.selected IN F.obj(Gadgets.Frame).state) THEN
 			M.obj := F.obj; M.time := F.time; M.sel := F
 		END;
 		ToFrame(F, x, y + h - 1, M)
@@ -544,7 +545,7 @@ BEGIN
 			IF M.res < 0 THEN (* viewed object did not respond *)
 				IF (M.keys = {0}) & (F.obj IS Gadgets.Frame) THEN (* select *)
 					S.F := F.obj(Gadgets.Frame); S.res := -1; Objects.Stamp(S);
-					IF Gadgets.selected IN F.obj(Gadgets.Frame).state THEN S.id := Display.reset; F.time := 0;
+					IF Gadgets.selected IN F.obj(Gadgets.Frame).state THEN S.id := Display.reset; F.time := -1;
 					ELSE S.id := Display.set; F.time := Oberon.Time();
 					END;
 					keysum := M.keys; S.dlink := M.dlink;
@@ -597,7 +598,7 @@ BEGIN
 	END
 END TrackMouse;
 
-PROCEDURE *ViewHandler(F: Objects.Object; VAR M: Objects.ObjMsg);
+PROCEDURE ViewHandler*(F: Objects.Object; VAR M: Objects.ObjMsg);
 VAR x, y, w, h, u, v: INTEGER; F0: View;
 BEGIN
 	WITH F: View DO

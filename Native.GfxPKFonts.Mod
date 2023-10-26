@@ -1,11 +1,19 @@
-MODULE GfxPKFonts;	(** eos   **)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
+MODULE GfxPKFonts; (** portable *)	(* eos   *)
 
 	(**
 		Make TeX's packed raster fonts available to Gfx
 	**)
 	
+	(*
+		22.02.2000 - made name matching more robust to be compatible with device specifiers in Native
+		23.02.2000 - downscale large bitmaps by halving them as long as they are at least twice the requested size
+	*)
+	
 	IMPORT
-		Files, FileDir, Math, Display, Strings, GfxMatrix, GfxMaps, GfxPaths, GfxFonts;
+		Files, FileDir, Math, Display, Strings, Images, GfxMatrix, GfxImages, GfxPaths, GfxFonts;
 		
 	
 	TYPE
@@ -26,20 +34,20 @@ MODULE GfxPKFonts;	(** eos   **)
 		FontDesc* = RECORD (GfxFonts.FontDesc)
 			base: Base;	(* pk font where font is derived from *)
 			bmat: GfxMatrix.Matrix;	(* matrix to apply to base characters *)
-			fmt: GfxMaps.Format;	(* format to use for character maps *)
+			fmt: Images.Format;	(* format to use for character maps *)
 		END;
 		
 	
 	VAR
 		Bases: Base;	(* base cache *)
-		Src, Dst: GfxMaps.Map;	(* temporary maps *)
+		Src, Dst: Images.Image;	(* temporary maps *)
 		Inv: ARRAY 100H OF CHAR;	(* inverted bit patterns *)
 		
 		Class: GfxFonts.Methods;
 		
 		SizeScale, BestSizeScale, BestScale: REAL;
 		Name: ARRAY 32 OF CHAR;
-		BestSize, Len: LONGINT;
+		BestSize: LONGINT;
 		
 	
 	(*--- Bases ---*)
@@ -116,7 +124,7 @@ MODULE GfxPKFonts;	(** eos   **)
 		END
 	END GetBaseDim;
 	
-	PROCEDURE GetBaseMap (base: Base; ch: CHAR; VAR x, y: LONGINT; VAR map: GfxMaps.Map);
+	PROCEDURE GetBaseMap (base: Base; ch: CHAR; VAR x, y: LONGINT; VAR map: Images.Image);
 		VAR pos, w, h, dynf, j, bit, len, bits, i, repeat, byte: LONGINT; buf: ARRAY 32 OF CHAR; set: BOOLEAN;
 		
 		PROCEDURE getnib (VAR nib: LONGINT);
@@ -156,10 +164,10 @@ MODULE GfxPKFonts;	(** eos   **)
 		BEGIN
 			IF set THEN
 				WHILE len > 8*LEN(buf) DO
-					GfxMaps.Copy(Src, Dst, 0, 0, 8*LEN(buf), 1, SHORT(i), SHORT(j), GfxMaps.SrcCopy);
+					Images.Copy(Src, Dst, 0, 0, 8*LEN(buf), 1, SHORT(i), SHORT(j), Images.SrcCopy);
 					INC(i, 8*LEN(buf)); DEC(len, 8*LEN(buf))
 				END;
-				GfxMaps.Copy(Src, Dst, 0, 0, SHORT(len), 1, SHORT(i), SHORT(j), GfxMaps.SrcCopy)
+				Images.Copy(Src, Dst, 0, 0, SHORT(len), 1, SHORT(i), SHORT(j), Images.SrcCopy)
 			END
 		END fill;
 		
@@ -168,13 +176,13 @@ MODULE GfxPKFonts;	(** eos   **)
 		IF pos >= 0 THEN
 			GetBaseDim(base, ch, x, y, w, h);
 			IF w * h # 0 THEN
-				GfxMaps.Create(Dst, SHORT(w), SHORT(h), GfxMaps.A1);
+				Images.Create(Dst, SHORT(w), SHORT(h), Images.A1);
 				CASE ORD(base.flag[ORD(ch)]) MOD 8 OF
 				| 0..3: INC(pos, 8)	(* short format *)
 				| 4..6: INC(pos, 13)	(* extended short format *)
 				| 7: INC(pos, 28)	(* long format *)
 				END;
-				GfxMaps.InitBuf(Src, 8*LEN(buf), 1, GfxMaps.A1, LEN(buf), buf);
+				Images.InitBuf(Src, 8*LEN(buf), 1, Images.A1, LEN(buf), 0, buf);
 				dynf := ORD(base.flag[ORD(ch)]) DIV 10H;
 				IF dynf = 14 THEN	(* bitmapped character data (no runs) *)
 					j := h; bit := 0; len := 0; bits := 0;
@@ -182,12 +190,12 @@ MODULE GfxPKFonts;	(** eos   **)
 						DEC(j); i := 0;
 						WHILE i + bits < w DO
 							IF len = LEN(buf) THEN	(* flush buffer *)
-								GfxMaps.Copy(Src, Dst, SHORT(bit), 0, SHORT(bits), 1, SHORT(i), SHORT(j), GfxMaps.SrcCopy);
+								Images.Copy(Src, Dst, SHORT(bit), 0, SHORT(bits), 1, SHORT(i), SHORT(j), Images.SrcCopy);
 								INC(i, bits); bits := 0; bit := 0; len := 0
 							END;
 							buf[len] := Inv[ORD(base.buf[pos])]; INC(len); INC(pos); INC(bits, 8)
 						END;
-						GfxMaps.Copy(Src, Dst, SHORT(bit), 0, SHORT(bit + w - i), 1, SHORT(i), SHORT(j), GfxMaps.SrcCopy);
+						Images.Copy(Src, Dst, SHORT(bit), 0, SHORT(bit + w - i), 1, SHORT(i), SHORT(j), Images.SrcCopy);
 						bit := (bit + w - i) MOD 8;
 						IF bit = 0 THEN len := 0; bits := 0
 						ELSE buf[0] := buf[len-1]; len := 1; bits := 8-bit
@@ -205,7 +213,7 @@ MODULE GfxPKFonts;	(** eos   **)
 						ELSE	(* advance to next row *)
 							fill(i, j, w - i); DEC(len, w - i);	(* complete current row *)
 							WHILE repeat > 0 DO	(* duplicate row *)
-								GfxMaps.Copy(Dst, Dst, 0, SHORT(j), SHORT(w), SHORT(j+1), 0, SHORT(j-1), GfxMaps.SrcCopy);
+								Images.Copy(Dst, Dst, 0, SHORT(j), SHORT(w), SHORT(j+1), 0, SHORT(j-1), Images.SrcCopy);
 								DEC(j); DEC(repeat)
 							END;
 							DEC(j);
@@ -314,7 +322,8 @@ MODULE GfxPKFonts;	(** eos   **)
 
 	BEGIN
 		IF ~isDir THEN
-			i := Len; pt := 0;
+			i := 0; pt := 0;
+			WHILE (name[i] # 0X) & (name[i] < "0") OR ("9" < name[i]) DO INC(i) END;
 			WHILE ("0" <= name[i]) & (name[i] <= "9") DO
 				pt := 10*pt + ORD(name[i]) - ORD("0");
 				INC(i)
@@ -340,14 +349,14 @@ MODULE GfxPKFonts;	(** eos   **)
 		VAR size: ARRAY 6 OF CHAR; pat: ARRAY 64 OF CHAR; base: Base;
 	BEGIN
 		(* first try with correct point size *)
-		SizeScale := ptsize * scale; BestSizeScale := -1; Name := ""; Len := Strings.Length(name);
+		SizeScale := ptsize * scale; BestSizeScale := -1; Name := "";
 		Strings.IntToStr(ptsize, size);
-		COPY(name, pat); Strings.Append(name, size); Strings.Append(pat, "*pk");
+		COPY(name, pat); Strings.Append(pat, size); Strings.Append(pat, "*pk");
 
 		FileDir.Enumerate(pat, FALSE, EnumFile);
 
 		
-		(* try any font of requested family *)
+		(* try any font of requested family (problematic because encoding may be different, e.g. cmr5 # cmr10) *)
 		IF Name = "" THEN
 			COPY(name, pat); Strings.Append(pat, "*pk");
 
@@ -391,8 +400,8 @@ MODULE GfxPKFonts;	(** eos   **)
 		GfxMatrix.ApplyToVector(font.bmat, bdx, bdy, dx, dy)
 	END GetWidth;
 	
-	PROCEDURE GetMap (gfont: GfxFonts.Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: GfxMaps.Map);
-		VAR font: Font; bdx, bdy, bx, by: LONGINT; bmap: GfxMaps.Map; llx, lly, urx, ury: REAL; m: GfxMatrix.Matrix;
+	PROCEDURE GetMap (gfont: GfxFonts.Font; ch: CHAR; VAR x, y, dx, dy: REAL; VAR map: Images.Image);
+		VAR font: Font; bdx, bdy, bx, by: LONGINT; bmap, tmp: Images.Image; m: GfxMatrix.Matrix; llx, lly, urx, ury: REAL;
 	BEGIN
 		font := gfont(Font);
 		GetBaseWidth(font.base, ch, bdx, bdy);
@@ -401,11 +410,18 @@ MODULE GfxPKFonts;	(** eos   **)
 		IF bmap = NIL THEN
 			map := NIL
 		ELSE
+			m := font.bmat; tmp := bmap;
+			WHILE GfxMatrix.Det(m) <= 0.25 DO
+				NEW(map); Images.Create(map, (tmp.width+1) DIV 2, (tmp.height+1) DIV 2, Images.A8);
+				GfxImages.Scale(tmp, map, 0.5, 0.5, 0, 0, GfxImages.LinearFilter);
+				GfxMatrix.Scale(m, 2, 2, m);
+				tmp := map
+			END;
 			GfxMatrix.ApplyToVector(font.bmat, bx, by, x, y);
 			GfxMatrix.ApplyToRect(font.bmat, 0, 0, bmap.width, bmap.height, llx, lly, urx, ury);
-			NEW(map); GfxMaps.Create(map, -SHORT(ENTIER(llx - urx)), -SHORT(ENTIER(lly - ury)), font.fmt);
-			m := font.bmat; m[2, 0] := m[2, 0] - llx; m[2, 1] := m[2, 1] - lly;
-			GfxMaps.Transform(bmap, map, m, GfxMaps.LinearFilter);
+			NEW(map); Images.Create(map, -SHORT(ENTIER(llx - urx)), -SHORT(ENTIER(lly - ury)), font.fmt);
+			m[2, 0] := m[2, 0] - llx; m[2, 1] := m[2, 1] - lly;
+			GfxImages.Transform(tmp, map, m, GfxImages.LinearFilter);
 			x := x + llx; y := y + lly
 		END
 	END GetMap;
@@ -436,8 +452,8 @@ MODULE GfxPKFonts;	(** eos   **)
 			NEW(font); font.class := Class; font.base := base; font.niceMaps := TRUE;
 			scale := ptsize/(base.ptsize * base.scale);
 			GfxMatrix.Scale(mat, scale, scale, font.bmat);
-			IF GfxMatrix.Equal(font.mat, GfxMatrix.Identity) THEN font.fmt := GfxMaps.A1
-			ELSE font.fmt := GfxMaps.A8
+			IF GfxMatrix.Equal(font.mat, GfxMatrix.Identity) THEN font.fmt := Images.A1
+			ELSE font.fmt := Images.A8
 			END;
 			GfxMatrix.ApplyToRect(font.bmat, base.xmin, base.ymin, base.xmax, base.ymax, xmin, ymin, xmax, ymax);
 			font.xmin := SHORT(ENTIER(xmin)); font.ymin := SHORT(ENTIER(ymin));

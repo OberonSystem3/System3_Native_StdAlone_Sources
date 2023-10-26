@@ -1,8 +1,15 @@
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
+
 MODULE OType;	(** eos   **)
 
 	(**
 		OpenType library (partial implementation; supports only TrueType so far)
 	**)
+	
+	(*
+		24.05.2000 - introduced cvtLen to deal with fonts that have no CVT
+	*)
 	
 	IMPORT
 		Files, Strings, Out, OTInt, OTScan;
@@ -127,6 +134,7 @@ MODULE OType;	(** eos   **)
 			instr: OTInt.Instructions;
 			store: OTInt.Store;
 			cvt: OTInt.CVT;
+			cvtLen: LONGINT;
 			twilight: OTInt.Zone;
 		END;
 		
@@ -436,12 +444,12 @@ MODULE OType;	(** eos   **)
 	PROCEDURE LoadCVT (font: Font);
 		VAR pos, len, n: LONGINT; r: Files.Rider; val: FUnit;
 	BEGIN
-		font.cvt := NIL;
+		font.cvt := NIL; font.cvtLen := 0;
 		IF FindTable(font, "cvt ", pos, len) THEN
-			len := len DIV 2;
-			OTInt.NewCVT(font.cvt, len);
+			font.cvtLen := len DIV 2;
+			OTInt.NewCVT(font.cvt, font.cvtLen);
 			Files.Set(r, font.file, pos);
-			FOR n := 0 TO len-1 DO
+			FOR n := 0 TO font.cvtLen-1 DO
 				ReadInt(r, val); font.cvt[n] := val
 			END
 		END
@@ -683,13 +691,13 @@ MODULE OType;	(** eos   **)
 		OTInt.NewFunctions(inst.func, font.maxp.maxFunctionDefs);
 		OTInt.NewInstructions(inst.instr, font.maxp.maxInstructionDefs);
 		OTInt.NewStore(inst.store, font.maxp.maxStorage);
-		OTInt.NewCVT(inst.cvt, LEN(font.cvt^));
+		OTInt.NewCVT(inst.cvt, font.cvtLen);
 		OTInt.NewZone(inst.twilight, 1, font.maxp.maxTwilightPoints);
 		
 		FOR i := 0 TO font.maxp.maxFunctionDefs-1 DO inst.func[i] := font.func[i] END;
 		FOR i := 0 TO font.maxp.maxInstructionDefs-1 DO inst.instr[i] := font.instr[i] END;
 		FOR i := 0 TO font.maxp.maxStorage-1 DO inst.store[i] := font.store[i] END;
-		FOR i := 0 TO LEN(font.cvt^)-1 DO
+		FOR i := 0 TO font.cvtLen-1 DO
 			inst.cvt[i] := OTInt.MulDiv(font.cvt[i], ppm, font.head.unitsPerEm)
 		END;
 		
@@ -766,7 +774,7 @@ MODULE OType;	(** eos   **)
 		OTInt.NewZone(glyph.simple, font.maxp.maxContours, font.maxp.maxPoints+2);
 		OTInt.NewZone(glyph.comp, font.maxp.maxCompositeContours, font.maxp.maxCompositePoints+2);
 		OTInt.NewStore(glyph.store, font.maxp.maxStorage);
-		OTInt.NewCVT(glyph.cvt, LEN(font.cvt^))
+		OTInt.NewCVT(glyph.cvt, font.cvtLen)
 	END InitGlyph;
 	
 	PROCEDURE LoadSimpleOutline (VAR r: Files.Rider; glyph: Glyph; inst: Instance; num, contours: INTEGER; hinted, rotated, stretched: BOOLEAN);
@@ -876,7 +884,7 @@ MODULE OType;	(** eos   **)
 				OTInt.InitState(context)
 			END;
 			FOR i := 0 TO font.maxp.maxStorage-1 DO glyph.store[i] := inst.store[i] END;
-			FOR i := 0 TO SHORT(LEN(glyph.cvt^)-1) DO glyph.cvt[i] := inst.cvt[i] END;
+			FOR i := 0 TO SHORT(font.cvtLen-1) DO glyph.cvt[i] := inst.cvt[i] END;
 			FOR i := 0 TO font.maxp.maxTwilightPoints-1 DO font.twilight.pt[i] := inst.twilight.pt[i] END;
 			OTInt.SetStacks(context, font.stack, font.callStack);
 			OTInt.SetStructures(context, inst.func, inst.instr, glyph.store, glyph.cvt);
@@ -1031,7 +1039,7 @@ MODULE OType;	(** eos   **)
 							OTInt.InitState(context)
 						END;
 						FOR i := 0 TO font.maxp.maxStorage-1 DO glyph.store[i] := inst.store[i] END;
-						FOR i := 0 TO SHORT(LEN(glyph.cvt^)-1) DO glyph.cvt[i] := inst.cvt[i] END;
+						FOR i := 0 TO SHORT(font.cvtLen-1) DO glyph.cvt[i] := inst.cvt[i] END;
 						FOR i := 0 TO font.maxp.maxTwilightPoints-1 DO font.twilight.pt[i] := inst.twilight.pt[i] END;
 						OTInt.SetStacks(context, font.stack, font.callStack);
 						OTInt.SetStructures(context, inst.func, inst.instr, glyph.store, glyph.cvt);
@@ -1413,7 +1421,7 @@ MODULE OType;	(** eos   **)
 	
 
 BEGIN
-	Out.String("OpenType 0.4 - Nov 98/eos"); Out.Ln;
+	Out.String("OpenType 0.45/24.05.2000  eos"); Out.Ln;
 	InitCharMaps;
 	InitCache(FontCache);
 	Identity[0] := 10000H; Identity[1] := 0;

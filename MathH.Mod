@@ -1,17 +1,5 @@
-(* OBERON System 3, Release 2.3.
-
-Copyright 1999 ETH Zürich Institute for Computer Systems, 
-ETH Center, CH-8092 Zürich. e-mail: oberon@inf.ethz.ch.
-
-This module may be used under the conditions of the general Oberon 
-System 3 license contract. The full text can be downloaded from
-
-	"ftp://ftp.inf.ethz.ch/pub/software/Oberon/System3/license.txt;A"
-
-Under the license terms stated it is in particular (a) prohibited to modify
-the interface of this module in any way that disagrees with the style
-or content of the system and (b) requested to provide all conversions
-of the source code to another platform with the name OBERON. *)
+(* ETH Oberon, Copyright 1990-2003 Computer Systems Institute, ETH Zurich, CH-8092 Zurich.
+Refer to the license.txt file provided with this distribution. *)
 
 MODULE MathH;	(** non-portable, pc native oberon only *)  (** prk  **)
 
@@ -25,26 +13,15 @@ MODULE MathH;	(** non-portable, pc native oberon only *)  (** prk  **)
 	06.05.99 prk: fix in DIV/MOD, divisor must be => 0 (check only msb)
 	06.05.99 prk: fix in DIV/MOD: rounding towards -infty. Issue Trap for divide by 0 exception
 	11.05.99 prk: optimization of LIntToHInt, no longer uses FPU arithmetic
-	12.05.99 adf: added methods Get and Set (allows HUGEINT to be made persistent via Objects)
+	26.05.99 adf: exported low and hi so that HUGEINT can be saved to file
+	03.06.99 prk: fix in DIV/MOD: exceptions must be cleared before changing the mask
 *)
 
 IMPORT
 		SYSTEM;
 
 TYPE
-	HUGEINT* = RECORD		(* 64 bits *)
-		VAR
-			low, hi: LONGINT;
-
-		PROCEDURE Get* (VAR low, hi: LONGINT);
-		BEGIN low := SELF.low; hi := SELF.hi
-		END Get;
-
-		PROCEDURE Set* (low, hi: LONGINT);
-		BEGIN SELF.low := low; SELF.hi := hi
-		END Set;
-
-	END;
+	HUGEINT* = RECORD low*, hi*: LONGINT END;	(* 64 bits *)
 
 VAR
 	MINH*, MAXH*, ZERO*, ONE*, TWO*, TEN*: HUGEINT;
@@ -261,6 +238,7 @@ CODE {SYSTEM.i386, SYSTEM.FPU}
 	PUSH	8							; ASSERT Trap
 	INT	3
 ok:
+	FNCLEX
 	FSTCW	cw[EBP]
 	MOV	cw0[EBP], 077AH			; rounding to -infty, allow zero divide, invalid operation
 	FLDCW	cw0[EBP]					;set rounding to 01, round down
@@ -292,9 +270,10 @@ CODE {SYSTEM.i386, SYSTEM.FPU}
 	PUSH	8							; ASSERT Trap
 	INT	3
 ok:
+	FNCLEX
 	FSTCW	cw[EBP]
-	MOV	cw0[EBP], 077AH
-	FLDCW	cw0[EBP]					;set rounding to 01, round down
+	MOV	cw0[EBP], 077FH			; was 77AH -> wrong because zero is not an exception here
+	FLDCW	cw0[EBP]					;set rounding to 01, round down, mask exceptions
 	
 	FILD	QWORD a[EBP]
 	FILD	QWORD b[EBP]
